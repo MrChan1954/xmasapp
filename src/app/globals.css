@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f7f6f1;
+  --foreground: #1d2926;
+  --christmas-green: #174f45;
+  --christmas-red: #a64235;
+  --christmas-gold: #c5a65a;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: Arial, Helvetica, sans-serif;
+  --font-mono: "Courier New", Courier, monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+::selection {
+  background: #d8c383;
+  color: #103f36;
+}
+
+button:not(:disabled),
+a {
+  cursor: pointer;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+  transition-duration: 150ms;
+}
+
+:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--christmas-gold) 75%, white);
+  outline-offset: 2px;
+}
+
+* {
+  scrollbar-color: #aebfb9 #f0efe9;
+  scrollbar-width: thin;
+}

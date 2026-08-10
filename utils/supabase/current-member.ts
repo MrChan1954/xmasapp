@@ -1,0 +1,2 @@
+import { createClient } from "./server";
+export async function getCurrentMember() { const db = await createClient(); const { data: { user } } = await db.auth.getUser(); if (!user) return { user: null, member: null }; const { data: member } = await db.from("app_members").select("id,email,person_id,contributor_id,role,active").eq("user_id", user.id).eq("active", true).maybeSingle(); return { user, member }; }

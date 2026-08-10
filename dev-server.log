@@ -1,0 +1,11 @@
+
+> christmas-budget-setup@0.1.0 dev
+> next dev --hostname 0.0.0.0
+
+▲ Next.js 16.3.0 (Turbopack)
+- Local:         http://localhost:3001
+- Network:       http://0.0.0.0:3001
+- Environments: .env.local
+✓ Ready in 390ms
+✓ Running next.config.ts took 22ms
+[?25h
