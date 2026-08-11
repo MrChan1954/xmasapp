@@ -1,5 +1,6 @@
 @import "tailwindcss";
 
+<<<<<<< HEAD
 :root {
   --background: #f7f6f1;
   --foreground: #1d2926;
@@ -28,6 +29,310 @@ body {
 
 button:not(:disabled),
 a {
+=======
+/*
+ * Tailwind v4 has no `darkMode` config, so the `dark:` variant needs an explicit
+ * trigger. The `, .dark *` half is what makes "dark islands" work: any element
+ * carrying `.dark` (an ink plate on a cream page) themes its whole subtree.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ==========================================================================
+   Runtime palette — warm editorial
+   Light is warm paper with ink text; dark is deep pine-black with mist text.
+   The `.dark` block and the prefers-color-scheme block below must stay in sync:
+   the media query is the pre-hydration safety net, `.dark` is what next-themes
+   actually writes onto <html> (and what dark islands set locally).
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  --ground: #fbf8f3;
+  --ground-sunken: #f3ede3;
+  --surface: #fffdf9;
+  --surface-2: #f6f1e8;
+  --surface-3: #ede6d9;
+
+  --line: #e4daca;
+  --line-strong: #d2c4ae;
+
+  --ink-900: #1b211e;
+  --ink-700: #2c3531;
+  --ink-600: #5a655f;
+  --ink-400: #8a948e;
+
+  --accent: #0f6b4f;
+  --accent-hover: #0b563f;
+  --accent-active: #083f2e;
+  --accent-contrast: #fbf8f3;
+  --accent-soft: #e6f1eb;
+  --accent-soft-border: #bfdccc;
+
+  --gold: #8a6b18;
+  --gold-line: #d9c48a;
+  --gold-fill: #c99b2e;
+  --gold-fill-contrast: #241a05;
+  --gold-soft: #fbf2dc;
+
+  --berry: #a32e22;
+  --berry-strong: #8e2418;
+  --berry-soft: #fbeae6;
+  --berry-soft-border: #efc9c1;
+
+  --success: #166b45;
+  --success-soft: #e9f3ed;
+  --success-border: #bfdccc;
+
+  --warning: #8a5a0b;
+  --warning-soft: #fbf0dc;
+  --warning-border: #e7ce9b;
+
+  --ring: #0f6b4f;
+  --scrim: rgb(27 33 30 / 0.42);
+  --hover-veil: rgb(27 33 30 / 0.06);
+
+  /* Native date-picker glyph is drawn dark; leave it alone on paper. */
+  --picker-invert: 0;
+
+  /* Editorial light leans on hairlines, not elevation. */
+  --shadow-card-raw: 0 1px 2px rgb(38 30 18 / 0.05), 0 1px 3px rgb(38 30 18 / 0.06);
+  --shadow-lift-raw: 0 2px 4px rgb(38 30 18 / 0.06), 0 12px 28px -12px rgb(38 30 18 / 0.18);
+  --shadow-modal-raw: 0 24px 64px -20px rgb(38 30 18 / 0.28);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --ground: #0c1211;
+  --ground-sunken: #080d0c;
+  --surface: #131a18;
+  --surface-2: #19221f;
+  --surface-3: #212c28;
+
+  --line: #232e2a;
+  --line-strong: #35443e;
+
+  --ink-900: #e8efea;
+  --ink-700: #cfdad4;
+  --ink-600: #9baaa3;
+  --ink-400: #6b7a73;
+
+  --accent: #3fd6a4;
+  --accent-hover: #6ce6bd;
+  --accent-active: #2fbf8f;
+  --accent-contrast: #06201b;
+  --accent-soft: #10241d;
+  --accent-soft-border: #1d4a3a;
+
+  --gold: #d9b45c;
+  --gold-line: #4a3c18;
+  --gold-fill: #d2ab4f;
+  --gold-fill-contrast: #06201b;
+  --gold-soft: #241c0a;
+
+  --berry: #e2695a;
+  --berry-strong: #b5483a;
+  --berry-soft: #2a1310;
+  --berry-soft-border: #4a231c;
+
+  --success: #4fd8a6;
+  --success-soft: #10241d;
+  --success-border: #1d4a3a;
+
+  --warning: #e0ae5b;
+  --warning-soft: #2a2009;
+  --warning-border: #4a3714;
+
+  --ring: #3fd6a4;
+  --scrim: rgb(6 15 13 / 0.66);
+  --hover-veil: rgb(232 239 234 / 0.08);
+
+  --picker-invert: 0.85;
+
+  --shadow-card-raw: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -12px rgb(0 0 0 / 0.55);
+  --shadow-lift-raw: 0 2px 6px rgb(0 0 0 / 0.45), 0 16px 36px -14px rgb(0 0 0 / 0.7);
+  --shadow-modal-raw: 0 24px 64px -16px rgb(0 0 0 / 0.8);
+}
+
+/*
+ * Pre-hydration safety net. `:not(.light):not(.dark)` means an explicit user
+ * choice always wins once next-themes has written the class.
+ * Keep in sync with `.dark` above.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not(.light):not(.dark) {
+    color-scheme: dark;
+
+    --ground: #0c1211;
+    --ground-sunken: #080d0c;
+    --surface: #131a18;
+    --surface-2: #19221f;
+    --surface-3: #212c28;
+
+    --line: #232e2a;
+    --line-strong: #35443e;
+
+    --ink-900: #e8efea;
+    --ink-700: #cfdad4;
+    --ink-600: #9baaa3;
+    --ink-400: #6b7a73;
+
+    --accent: #3fd6a4;
+    --accent-hover: #6ce6bd;
+    --accent-active: #2fbf8f;
+    --accent-contrast: #06201b;
+    --accent-soft: #10241d;
+    --accent-soft-border: #1d4a3a;
+
+    --gold: #d9b45c;
+    --gold-line: #4a3c18;
+    --gold-fill: #d2ab4f;
+    --gold-fill-contrast: #06201b;
+    --gold-soft: #241c0a;
+
+    --berry: #e2695a;
+    --berry-strong: #b5483a;
+    --berry-soft: #2a1310;
+    --berry-soft-border: #4a231c;
+
+    --success: #4fd8a6;
+    --success-soft: #10241d;
+    --success-border: #1d4a3a;
+
+    --warning: #e0ae5b;
+    --warning-soft: #2a2009;
+    --warning-border: #4a3714;
+
+    --ring: #3fd6a4;
+    --scrim: rgb(6 15 13 / 0.66);
+    --hover-veil: rgb(232 239 234 / 0.08);
+
+      --picker-invert: 0.85;
+
+    --shadow-card-raw: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -12px rgb(0 0 0 / 0.55);
+    --shadow-lift-raw: 0 2px 6px rgb(0 0 0 / 0.45), 0 16px 36px -14px rgb(0 0 0 / 0.7);
+    --shadow-modal-raw: 0 24px 64px -16px rgb(0 0 0 / 0.8);
+  }
+}
+
+/* ==========================================================================
+   Static design primitives
+   ========================================================================== */
+
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: var(--font-fraunces), ui-serif, Georgia, "Times New Roman", serif;
+
+  /* Tighter than Tailwind's defaults — editorial wants crisper corners. */
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.625rem;
+  --radius-2xl: 0.875rem;
+  --radius-3xl: 1.125rem;
+
+  --tracking-eyebrow: 0.16em;
+
+  /*
+   * Theme-invariant ink-plate palette. These are the deep evergreen panels that
+   * read as "printed plates" on paper and as raised panels in the dark. They do
+   * NOT flip — which is the only reason the app's `text-white` usages are safe.
+   * Any element using them should also carry `class="dark"` so its subtree
+   * themes correctly (see `Card tone="ink"`).
+   */
+  --color-pine-100: #cfe8de;
+  --color-pine-200: #9cc9b8;
+  --color-pine-600: #27ab84;
+  --color-pine-700: #1d6553;
+  --color-pine-800: #124237;
+  --color-pine-900: #0d2f27;
+  --color-pine-950: #06201b;
+  --color-ink-inverse: #eef5f0;
+}
+
+/* ==========================================================================
+   Semantic tokens — pointers into the runtime palette.
+   `inline` is load-bearing: it substitutes `var(--x)` into every generated
+   utility so the value resolves AT THE ELEMENT. Without it Tailwind emits the
+   pointer once at :root and dark islands could never override it.
+   ========================================================================== */
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-ground-sunken: var(--ground-sunken);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-ink-900: var(--ink-900);
+  --color-ink-700: var(--ink-700);
+  --color-ink-600: var(--ink-600);
+  --color-ink-400: var(--ink-400);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-active: var(--accent-active);
+  --color-accent-contrast: var(--accent-contrast);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-border: var(--accent-soft-border);
+
+  --color-gold: var(--gold);
+  --color-gold-line: var(--gold-line);
+  --color-gold-fill: var(--gold-fill);
+  --color-gold-fill-contrast: var(--gold-fill-contrast);
+  --color-gold-soft: var(--gold-soft);
+
+  --color-berry: var(--berry);
+  --color-berry-strong: var(--berry-strong);
+  --color-berry-soft: var(--berry-soft);
+  --color-berry-soft-border: var(--berry-soft-border);
+
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-success-border: var(--success-border);
+
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-border: var(--warning-border);
+
+  --color-ring: var(--ring);
+  --color-scrim: var(--scrim);
+  --color-hover-veil: var(--hover-veil);
+
+  --shadow-card: var(--shadow-card-raw);
+  --shadow-lift: var(--shadow-lift-raw);
+  --shadow-modal: var(--shadow-modal-raw);
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+html {
+  height: 100%;
+}
+
+body {
+  min-height: 100%;
+  background: var(--ground);
+  color: var(--ink-900);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+button:not(:disabled),
+a,
+label[for],
+summary {
+>>>>>>> 7534a2d (redesign and realtime)
   cursor: pointer;
 }
 
@@ -35,6 +340,7 @@ button,
 a,
 input,
 select,
+<<<<<<< HEAD
 textarea {
   transition-property: color, background-color, border-color, box-shadow, opacity, transform;
   transition-duration: 150ms;
@@ -49,3 +355,375 @@ textarea {
   scrollbar-color: #aebfb9 #f0efe9;
   scrollbar-width: thin;
 }
+=======
+textarea,
+summary {
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ring) 80%, transparent);
+  outline-offset: 2px;
+}
+
+/*
+ * A money field is a wrapper holding the £ prefix and a bare input. Left to
+ * itself the input draws the ring above around *itself*, which starts after
+ * the £ and reads as a box inside a box — so the wrapper wears it instead.
+ * Unlayered on purpose: Tailwind's `outline-none` is in a layer and would
+ * otherwise lose to the rule above.
+ */
+.money-field:has(input:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--ring) 80%, transparent);
+  outline-offset: 2px;
+}
+
+.money-field input:focus-visible {
+  outline: none;
+}
+
+* {
+  scrollbar-color: var(--line-strong) var(--ground);
+  scrollbar-width: thin;
+}
+
+/* Native date inputs keep a comfortable height on iOS */
+input[type="date"] {
+  -webkit-appearance: none;
+  appearance: none;
+  min-height: 3rem;
+}
+
+/* The glyph ships dark: leave it on paper, invert it on pine-black. */
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(var(--picker-invert));
+}
+
+/* ==========================================================================
+   Festive layer
+   ========================================================================== */
+
+/* Gold rule that fades out at both ends. */
+.garland-hairline {
+  background: linear-gradient(90deg, transparent, var(--gold-line) 12%, var(--gold-line) 88%, transparent);
+}
+
+/*
+ * `swag` is the hero placement. It used to paint a tinted band behind the
+ * string, which at this width read as a smudge rather than as light; the
+ * baubles carry their own halos now, so it just gives them more room.
+ */
+.garland-swag .garland-bulb::after {
+  inset: -185%;
+}
+
+/*
+ * The band owns its own height: the baubles are placed in percentages of it,
+ * so a caller passing a utility height would rescale the whole curve.
+ */
+.garland-lights {
+  --bulb-size: 8px;
+  /* A halo is light spilling onto the ground behind it, so it has to be
+     weaker on paper — at dark-mode strength it reads as haze, not glow. */
+  --bulb-halo: 20%;
+  height: 2.25rem;
+}
+
+.dark .garland-lights {
+  --bulb-halo: 34%;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light):not(.dark) .garland-lights {
+    --bulb-halo: 34%;
+  }
+}
+
+@media (min-width: 640px) {
+  .garland-lights {
+    --bulb-size: 9px;
+    height: 2.75rem;
+  }
+}
+
+/* Where the string is tacked up, between swags. */
+.garland-pin {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--gold-fill);
+  opacity: 0.7;
+}
+
+/*
+ * One bauble: glass body, brass cap above it, halo behind it. The cap is 3px
+ * tall and the body is nudged down by exactly that, so the cap bridges the
+ * wire and the glass instead of overlapping either.
+ */
+.garland-bulb {
+  position: absolute;
+  width: calc(var(--bulb-size) * var(--bulb-scale, 1));
+  aspect-ratio: 1;
+  border-radius: 50%;
+  transform: translate(-50%, 3px);
+  /* Keeps the halo's z-index: -1 inside the bauble — without a stacking
+     context here it would fall behind the swag band and disappear. */
+  isolation: isolate;
+  background:
+    /* specular highlight, up and to the left */
+    radial-gradient(circle at 34% 27%, rgb(255 255 255 / 0.9) 0 14%, rgb(255 255 255 / 0) 46%),
+    radial-gradient(
+      circle at 44% 38%,
+      color-mix(in srgb, var(--bauble) 72%, white) 0%,
+      var(--bauble) 52%,
+      color-mix(in srgb, var(--bauble) 74%, black) 100%
+    );
+  box-shadow:
+    inset 0 -0.5px 1px rgb(0 0 0 / 0.25),
+    0 1px 2px rgb(20 16 8 / 0.22);
+}
+
+.garland-bulb::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  width: 2.5px;
+  height: 3px;
+  transform: translateX(-50%);
+  border-radius: 1px 1px 0 0;
+  background: linear-gradient(var(--gold-line), var(--gold-fill));
+}
+
+/*
+ * Lit-ness. A separate layer so the twinkle animates opacity only — no paint,
+ * no layout, and the glass itself never dims.
+ */
+.garland-bulb::after {
+  content: "";
+  position: absolute;
+  inset: -150%;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--bauble) var(--bulb-halo), transparent) 0%, transparent 62%);
+  animation: bulb-glow 7s ease-in-out infinite;
+  animation-delay: var(--bulb-delay, 0s);
+}
+
+.garland-bulb-gold { --bauble: var(--gold-fill); }
+.garland-bulb-berry { --bauble: var(--berry); }
+.garland-bulb-green { --bauble: var(--accent); }
+/* Warm white is the one tone that has to shift per theme: near-white vanishes
+ * into the cream ground, so on paper it deepens to ivory. */
+.garland-bulb-warm { --bauble: #e6d2a2; }
+.dark .garland-bulb-warm { --bauble: #f7ecd2; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light):not(.dark) .garland-bulb-warm { --bauble: #f7ecd2; }
+}
+
+/* Slow, shallow, and out of phase — presence, not blinking. */
+@keyframes bulb-glow {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.85; }
+}
+
+/*
+ * Snow is three stacked textures, not N elements: a repeating radial-gradient
+ * translated on the compositor. No layout, no paint, and nothing for React to
+ * reconcile — the component never re-renders.
+ */
+.snow {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.snow-layer {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  /* One extra tile of slack below, so the shifted layer never exposes a gap. */
+  height: calc(100% + var(--snow-shift));
+  background-repeat: repeat;
+  will-change: transform;
+  animation-name: snow-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+/*
+ * Downwards, by exactly one background tile so the repeat lines up and the
+ * loop restart is invisible. Each layer sets --snow-shift to its own tile size.
+ */
+@keyframes snow-fall {
+  from { transform: translate3d(0, calc(var(--snow-shift) * -1), 0); }
+  to { transform: translate3d(0, 0, 0); }
+}
+
+/*
+ * Each layer is one tile holding a handful of scattered flakes. The radius is
+ * an explicit length — a percentage stop would scale with the tile and produce
+ * dinner plates rather than snow.
+ */
+.snow-1 {
+  background-image:
+    radial-gradient(circle 1.7px at 12% 9%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 1.3px at 47% 23%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 1.9px at 78% 14%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 1.2px at 27% 52%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 1.6px at 63% 61%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 1.4px at 89% 74%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 1.8px at 8% 84%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 1.2px at 40% 91%, var(--snow-tint) 99%, transparent 100%);
+  background-size: 300px 300px;
+  --snow-shift: 300px;
+  animation-duration: 22s;
+  opacity: var(--snow-opacity-near);
+}
+
+.snow-2 {
+  background-image:
+    radial-gradient(circle 1.2px at 22% 16%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 1px at 58% 7%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 1.3px at 85% 34%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 1px at 37% 45%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 1.2px at 71% 68%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 1px at 14% 77%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 1.3px at 52% 88%, var(--snow-tint) 99%, transparent 100%);
+  background-size: 420px 420px;
+  --snow-shift: 420px;
+  animation-duration: 34s;
+  opacity: var(--snow-opacity-mid);
+}
+
+.snow-3 {
+  background-image:
+    radial-gradient(circle 0.9px at 31% 12%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 0.8px at 67% 29%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 1px at 18% 48%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 0.8px at 82% 59%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 0.9px at 44% 81%, var(--snow-tint) 99%, transparent 100%),
+    radial-gradient(circle 0.8px at 92% 93%, var(--snow-tint) 99%, transparent 100%);
+  background-size: 560px 560px;
+  --snow-shift: 560px;
+  animation-duration: 50s;
+  opacity: var(--snow-opacity-far);
+}
+
+@media (max-width: 639px) {
+  .snow-3 { display: none; }
+}
+
+/* Nothing to animate while the tab is hidden. */
+.snow-paused .snow-layer { animation-play-state: paused; }
+
+/*
+ * Scroll areas inside a dialog. The panel itself clips to its radius, so the
+ * bar can no longer square off a corner; this slims it and insets the thumb
+ * with a transparent border so it reads as part of the panel rather than as a
+ * browser artifact pinned to the edge. Colours are tokens, so it follows the
+ * theme. Firefox gets the standard properties, Chrome/Safari the -webkit ones.
+ */
+.dialog-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.dialog-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.dialog-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dialog-scroll::-webkit-scrollbar-thumb {
+  /* The transparent border plus content-box clip is what insets the thumb; a
+     margin is not honoured on a scrollbar thumb. */
+  background-color: var(--line-strong);
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 9999px;
+}
+
+.dialog-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: var(--ink-600);
+}
+
+/* One-shot celebration specks; the component unmounts itself on animation end. */
+.burst-speck {
+  animation: burst 900ms cubic-bezier(0.15, 0.7, 0.3, 1) forwards;
+}
+
+@keyframes burst {
+  from {
+    transform: translate3d(0, 0, 0) scale(0.4);
+    opacity: 1;
+  }
+  to {
+    transform: translate3d(var(--burst-x), var(--burst-y), 0) scale(1);
+    opacity: 0;
+  }
+}
+
+/*
+ * White flakes vanish on paper, so light mode tints them instead — a soft slate
+ * blue, which is how snow reads against white.
+ *
+ * Layer opacity is a token rather than a fixed value because the two themes need
+ * opposite amounts. Dark mode composites near-white onto a dark ground, so a
+ * little goes a long way; light mode composites a mid tone onto #fbf8f3, where
+ * the same figures left the flakes effectively invisible (0.9px–1.9px dots at a
+ * combined ~0.2–0.375 alpha). Light mode therefore carries roughly double.
+ */
+:root {
+  --snow-tint: rgb(93 122 158 / 0.95);
+  --snow-opacity-near: 0.84;
+  --snow-opacity-mid: 0.66;
+  --snow-opacity-far: 0.46;
+}
+
+.dark {
+  --snow-tint: rgb(255 255 255 / 0.9);
+  --snow-opacity-near: 0.5;
+  --snow-opacity-mid: 0.38;
+  --snow-opacity-far: 0.26;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light):not(.dark) {
+    --snow-tint: rgb(255 255 255 / 0.9);
+    --snow-opacity-near: 0.5;
+    --snow-opacity-mid: 0.38;
+    --snow-opacity-far: 0.26;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /*
+   * The rule above would freeze snow mid-fall rather than remove it, which
+   * looks broken. Take it away entirely, and let the bulbs sit lit.
+   */
+  .snow { display: none !important; }
+  .garland-bulb::after {
+    animation: none !important;
+    opacity: 0.6 !important;
+  }
+}
+>>>>>>> 7534a2d (redesign and realtime)

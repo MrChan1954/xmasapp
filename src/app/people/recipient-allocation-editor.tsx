@@ -11,6 +11,10 @@ import {
   splitPenniesEqually,
   type RecipientAllocation,
 } from "@/lib/recipient-allocations";
+<<<<<<< HEAD
+=======
+import { Button, cx } from "../components/ui";
+>>>>>>> 7534a2d (redesign and realtime)
 
 export type RecipientAllocationDraftRow = {
   contributorId: string;
@@ -117,7 +121,11 @@ export function RecipientAllocationEditor({
     <div className="mt-5">
       <div className="space-y-3">
         {rows.length === 0 ? (
+<<<<<<< HEAD
           <p className="rounded-xl border border-dashed border-[#d8dbd3] bg-[#faf9f5] p-4 text-sm text-[#7b8581]">
+=======
+          <p className="rounded-xl border border-dashed border-line-strong bg-surface-2 p-4 text-sm text-ink-600">
+>>>>>>> 7534a2d (redesign and realtime)
             No active contributors are available.
           </p>
         ) : rows.map((row) => {
@@ -127,7 +135,11 @@ export function RecipientAllocationEditor({
           const amountPennies = amount.ok ? amount.value : null;
           const checkboxId = `${idPrefix}-${row.contributorId}`;
           return (
+<<<<<<< HEAD
             <div key={row.contributorId} className="rounded-xl border border-[#e2e3dc] bg-white p-4">
+=======
+            <div key={row.contributorId} className={cx("rounded-xl border bg-surface p-4", row.selected ? "border-accent-soft-border" : "border-line")}>
+>>>>>>> 7534a2d (redesign and realtime)
               <label htmlFor={checkboxId} className="flex cursor-pointer items-center justify-between gap-3">
                 <span className="flex min-w-0 items-center gap-3">
                   <input
@@ -144,21 +156,38 @@ export function RecipientAllocationEditor({
                         : item));
                       setActionError(null);
                     }}
+<<<<<<< HEAD
                     className="h-5 w-5 shrink-0 accent-[#1f5b50]"
                   />
                   <strong className="truncate">{row.name}</strong>
                 </span>
                 <span className={`shrink-0 ${amountPennies === null ? "text-[#a5543f]" : ""}`}>
+=======
+                    className="h-5 w-5 shrink-0 rounded accent-mint"
+                  />
+                  <strong className="truncate font-semibold">{row.name}</strong>
+                </span>
+                <span className={cx("shrink-0 font-semibold tabular-nums", amountPennies === null && "text-berry")}>
+>>>>>>> 7534a2d (redesign and realtime)
                   {amountPennies === null ? "Invalid amount" : formatPennies(amountPennies)}
                 </span>
               </label>
               {showSpending && (
+<<<<<<< HEAD
                 <p className="mt-3 border-t border-[#e7e6df] pt-3 text-xs text-[#747e7a]">
                   Existing purchase responsibility <strong className="text-[#27322e]">{formatPennies(row.spentPennies ?? 0)}</strong>
                 </p>
               )}
               {adjusting && row.selected && (
                 <label className="mt-3 block text-xs font-bold text-[#5e6965]">
+=======
+                <p className="mt-3 border-t border-line pt-3 text-xs text-ink-600">
+                  Existing purchase responsibility <strong className="font-semibold tabular-nums text-ink-900">{formatPennies(row.spentPennies ?? 0)}</strong>
+                </p>
+              )}
+              {adjusting && row.selected && (
+                <label className="mt-3 block text-xs font-semibold text-ink-600">
+>>>>>>> 7534a2d (redesign and realtime)
                   Planned amount
                   <input
                     aria-label={`${row.name} planned amount in pounds`}
@@ -171,7 +200,14 @@ export function RecipientAllocationEditor({
                       setActionError(null);
                     }}
                     inputMode="decimal"
+<<<<<<< HEAD
                     className={`mt-2 h-11 w-full rounded-lg border px-3 text-base ${amount.ok ? "" : "border-[#c96f60] ring-2 ring-[#f7d9d2]"}`}
+=======
+                    className={cx(
+                      "mt-2 h-11 w-full rounded-lg border bg-surface px-3 text-base font-normal tabular-nums text-ink-900 outline-none focus:border-accent/60 focus:ring-4 focus:ring-accent/20",
+                      amount.ok ? "border-line-strong" : "border-berry/45 ring-2 ring-berry/25",
+                    )}
+>>>>>>> 7534a2d (redesign and realtime)
                   />
                 </label>
               )}
@@ -181,6 +217,7 @@ export function RecipientAllocationEditor({
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-3">
+<<<<<<< HEAD
         <button type="button" onClick={splitEqually} className="min-h-12 rounded-xl bg-[#e6f1ed] px-3 py-3 text-sm font-bold text-[#174f45]">
           Split equally
         </button>
@@ -192,6 +229,23 @@ export function RecipientAllocationEditor({
         {allocationMessage}
       </div>
       {actionError && <p className="mt-2 text-sm text-[#a5543f]">{actionError}</p>}
+=======
+        <Button variant="tonal" size="lg" onClick={splitEqually}>Split equally</Button>
+        <Button variant="secondary" size="lg" onClick={() => setAdjusting((current) => !current)}>
+          {adjusting ? "Hide amounts" : "Adjust amounts"}
+        </Button>
+      </div>
+      <div
+        className={cx(
+          "mt-4 rounded-xl border px-4 py-3 text-sm font-medium",
+          matchesBudget ? "border-accent-soft-border bg-accent-soft text-accent" : "border-warning-border bg-warning-soft text-warning",
+        )}
+        aria-live="polite"
+      >
+        {allocationMessage}
+      </div>
+      {actionError && <p className="mt-2 text-sm font-medium text-berry">{actionError}</p>}
+>>>>>>> 7534a2d (redesign and realtime)
     </div>
   );
 }

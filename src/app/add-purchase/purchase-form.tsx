@@ -19,7 +19,26 @@ import {
   type PurchaseStatus,
 } from "@/lib/purchases";
 import { createClient } from "../../../utils/supabase/client";
+<<<<<<< HEAD
 import { FinancialProgressBar } from "../components/financial-progress";
+=======
+import { PageHeader } from "../components/app-shell";
+import { GarlandRule } from "../components/festive/garland";
+import { FinancialProgressBar } from "../components/financial-progress";
+import {
+  Badge,
+  Button,
+  Field,
+  Input,
+  MoneyInput,
+  Notice,
+  SectionCard,
+  Segmented,
+  Select,
+  Textarea,
+  cx,
+} from "../components/ui";
+>>>>>>> 7534a2d (redesign and realtime)
 import { useFamily } from "../family-context";
 
 type RecipientOption = {
@@ -377,6 +396,7 @@ export function PurchaseForm() {
   };
 
   if (loading) {
+<<<<<<< HEAD
     return <div className="mx-auto max-w-6xl px-5 py-10 sm:px-8"><p className="text-sm font-semibold text-[#7b8581]">Loading purchase form...</p></div>;
   }
 
@@ -481,11 +501,130 @@ export function PurchaseForm() {
                   {splitType === "custom" ? (
                     <MoneyAllocationInput name={row.name} pennies={row.responsibilityPennies} onChange={(pennies) => setAllocations((current) => ({ ...current, [row.id]: pennies }))} />
                   ) : <strong>{formatPennies(row.responsibilityPennies)}</strong>}
+=======
+    return <p className="py-6 text-sm font-medium text-ink-600">Loading purchase form...</p>;
+  }
+
+  return (
+    // Extra bottom padding on mobile so the sticky submit bar never covers the
+    // end of the form; on desktop the submit lives in the sticky rail instead.
+    <form onSubmit={(event) => void save(event)} className="pb-36 lg:pb-0">
+      <PageHeader
+        title={editId ? "Edit purchase" : "Add purchase"}
+        description="Record what was bought, who paid at checkout, and who is responsible for the cost."
+        actions={<Button variant="secondary" size="lg" onClick={() => router.push("/people")} className="w-full sm:w-auto">Cancel</Button>}
+      />
+
+      {prefillNotice && <Notice tone="warning" className="mt-5">{prefillNotice}</Notice>}
+      {error && <Notice tone="danger" className="mt-5">{error}</Notice>}
+
+      <div className="mt-8 grid items-start gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(340px,0.85fr)]">
+        <div className="space-y-5">
+          <SectionCard eyebrow="Step one" title="The gift">
+            <GarlandRule className="mt-4" />
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <Field label="Recipient" required className="sm:col-span-2">
+                <Select required disabled={Boolean(editId || ideaId)} value={recipientId} onChange={(event) => { setRecipientId(event.target.value); setAllocations({}); setAutomaticSnapshotLocked(false); }}>
+                  <option value="">Choose a person</option>
+                  {recipients.filter((row) => row.active || row.id === recipientId).map((row) => <option key={row.id} value={row.id}>{row.name} — Budget {formatPennies(row.budgetPennies)}</option>)}
+                </Select>
+              </Field>
+
+              {selectedRecipient && (
+                <RecipientBudgetSummary
+                  recipient={selectedRecipient}
+                  projectedSpentPennies={projectedBudget?.projectedSpentPennies ?? null}
+                  editing={Boolean(editId)}
+                />
+              )}
+
+              <Field label="Gift / item" required className="sm:col-span-2">
+                <Input required maxLength={INPUT_LIMITS.title} value={description} onChange={(event) => setDescription(event.target.value)} />
+              </Field>
+
+              <Field label="Price paid" required>
+                <MoneyInput
+                  required
+                  maxLength={INPUT_LIMITS.money}
+                  value={price}
+                  onValueChange={(value) => { setPrice(value); if (splitType === "automatic") setAutomaticSnapshotLocked(false); }}
+                />
+              </Field>
+
+              <Field label="Who paid?" required hint="The person who physically paid the shop or website.">
+                <Select required value={payerId} onChange={(event) => setPayerId(event.target.value)}>
+                  <option value="">Choose contributor</option>
+                  {contributors.filter((row) => row.active).map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+                </Select>
+              </Field>
+            </div>
+          </SectionCard>
+
+          <SectionCard eyebrow="Step two" title="Details">
+            <GarlandRule className="mt-4" />
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <Field label="Gift is at" hint="Where the physical gift is currently stored.">
+                <Select value={giftLocationPersonId} onChange={(event) => setGiftLocationPersonId(event.target.value)}>
+                  <option value="">Not recorded</option>
+                  {giftLocations.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+                </Select>
+              </Field>
+
+              <Field label="Purchase date" required>
+                <Input required type="date" value={purchaseDate} onChange={(event) => setPurchaseDate(event.target.value)} />
+              </Field>
+
+              <Field label="Retailer" className="sm:col-span-2">
+                <Input maxLength={INPUT_LIMITS.retailer} value={retailer} onChange={(event) => setRetailer(event.target.value)} placeholder="Amazon, Boots, Next..." />
+              </Field>
+
+              <Field label="Notes" className="sm:col-span-2">
+                <Textarea rows={4} maxLength={INPUT_LIMITS.notes} value={notes} onChange={(event) => setNotes(event.target.value)} />
+              </Field>
+
+              <fieldset className="sm:col-span-2">
+                <legend className="text-sm font-semibold">Status</legend>
+                <div className="mt-2">
+                  <Segmented
+                    options={[{ value: "purchased", label: "Purchased" }, { value: "wrapped", label: "Wrapped" }]}
+                    value={status}
+                    onChange={setStatus}
+                    ariaLabel="Purchase status"
+                  />
+                </div>
+              </fieldset>
+            </div>
+          </SectionCard>
+        </div>
+
+        <section className="rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6 lg:sticky lg:top-24">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="font-display text-lg font-semibold">Contribution split</h2>
+              <p className="mt-1 text-xs leading-5 text-ink-600">Financial responsibility, not who paid at checkout.</p>
+            </div>
+            <Badge tone={splitType === "automatic" ? "success" : "warning"}>{splitType === "automatic" ? "Automatic split" : "Custom split"}</Badge>
+          </div>
+
+          {weightsLoading ? (
+            <p className="mt-5 text-sm text-ink-600">Calculating split...</p>
+          ) : allocationRows.length === 0 ? (
+            <Notice tone="danger" className="mt-5">This recipient has no active contributor allocation to split against.</Notice>
+          ) : (
+            <div className="mt-5 divide-y divide-line border-y border-line">
+              {allocationRows.map((row) => (
+                <div key={row.id} className="flex items-center justify-between gap-3 py-2.5">
+                  <span className="min-w-0 truncate font-semibold">{row.name}</span>
+                  {splitType === "custom" ? (
+                    <MoneyAllocationInput name={row.name} pennies={row.responsibilityPennies} onChange={(pennies) => setAllocations((current) => ({ ...current, [row.id]: pennies }))} />
+                  ) : <strong className="font-semibold tabular-nums">{formatPennies(row.responsibilityPennies)}</strong>}
+>>>>>>> 7534a2d (redesign and realtime)
                 </div>
               ))}
             </div>
           )}
 
+<<<<<<< HEAD
           <div className="mt-4 flex items-center justify-between border-t pt-4 text-sm"><span className="font-semibold">Allocated</span><strong className={balanced ? "text-[#28685c]" : "text-[#9a503c]"}>{formatPennies(allocationTotal)}{expectedPrice !== null && ` of ${formatPennies(expectedPrice)}`}</strong></div>
 
           <button type="button" onClick={() => { if (splitType === "automatic") { setAllocations(effectiveAllocations); setSplitType("custom"); } else { setSplitType("automatic"); setAutomaticSnapshotLocked(false); } }} className="mt-4 min-h-11 w-full rounded-xl border text-sm font-bold text-[#28685c]">{splitType === "automatic" ? "Adjust split" : "Use automatic split"}</button>
@@ -493,6 +632,50 @@ export function PurchaseForm() {
           <button disabled={saving || !balanced} className="mt-5 min-h-14 w-full rounded-xl bg-[#174f45] px-5 text-base font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-45">{saving ? "Saving purchase..." : editId ? "Save purchase changes" : "Save purchase"}</button>
         </section>
       </div>
+=======
+          <GarlandRule className="mt-4" />
+
+          <div className="mt-4 flex items-center justify-between text-sm">
+            <span className="font-medium text-ink-600">Allocated</span>
+            <strong className={cx("font-semibold tabular-nums", balanced ? "text-accent" : "text-berry")}>
+              {formatPennies(allocationTotal)}{expectedPrice !== null && ` of ${formatPennies(expectedPrice)}`}
+            </strong>
+          </div>
+
+          <Button
+            variant="tonal"
+            onClick={() => { if (splitType === "automatic") { setAllocations(effectiveAllocations); setSplitType("custom"); } else { setSplitType("automatic"); setAutomaticSnapshotLocked(false); } }}
+            className="mt-4 w-full"
+          >
+            {splitType === "automatic" ? "Adjust split" : "Use automatic split"}
+          </Button>
+
+          {/* Desktop submit lives in the sticky rail; mobile gets the bar below. */}
+          <Button type="submit" size="lg" disabled={saving || !balanced} className="mt-4 hidden min-h-14 w-full text-base lg:inline-flex">
+            {saving ? "Saving purchase..." : editId ? "Save purchase changes" : "Save purchase"}
+          </Button>
+        </section>
+      </div>
+
+      {/*
+        On mobile the split rail is the last thing on a long page, so the submit
+        button would sit far below the fold. Pin it, with the running total, just
+        above the tab bar.
+      */}
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-ground/95 px-4 pt-3 pb-[max(6.25rem,calc(env(safe-area-inset-bottom)+5.75rem))] backdrop-blur-md lg:hidden">
+        <div className="mx-auto flex max-w-[1240px] items-center gap-3">
+          <p className="min-w-0 flex-1 text-xs leading-4 text-ink-600">
+            Allocated
+            <strong className={cx("ml-1.5 font-semibold tabular-nums", balanced ? "text-accent" : "text-berry")}>
+              {formatPennies(allocationTotal)}{expectedPrice !== null && ` of ${formatPennies(expectedPrice)}`}
+            </strong>
+          </p>
+          <Button type="submit" size="lg" disabled={saving || !balanced} className="shrink-0">
+            {saving ? "Saving..." : editId ? "Save changes" : "Save purchase"}
+          </Button>
+        </div>
+      </div>
+>>>>>>> 7534a2d (redesign and realtime)
     </form>
   );
 }
@@ -513,8 +696,19 @@ function RecipientBudgetSummary({
   const currentDifference = recipient.budgetPennies - recipient.spentPennies;
   const projectedDifference = projectedSpentPennies === null ? null : recipient.budgetPennies - projectedSpentPennies;
   return (
+<<<<<<< HEAD
     <section className="min-w-0 rounded-2xl border border-[#cddbd6] bg-[#f2f8f6] p-4 sm:col-span-2 sm:p-5" aria-label={`${recipient.name} budget position`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2"><div><p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#28685c]">Budget position</p><h2 className="mt-1 break-words text-lg font-bold">{recipient.name}</h2></div>{editing && <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold uppercase text-[#60706a]">Editing purchase</span>}</div>
+=======
+    <section className="dark min-w-0 rounded-2xl border border-pine-700 bg-linear-to-br from-pine-900 to-pine-800 p-4 text-white shadow-card sm:col-span-2 sm:p-5" aria-label={`${recipient.name} budget position`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold tracking-eyebrow text-gold uppercase">Budget position</p>
+          <h3 className="mt-1 break-words font-display text-lg font-semibold">{recipient.name}</h3>
+        </div>
+        {editing && <Badge tone="neutral" dot={false}>Editing purchase</Badge>}
+      </div>
+>>>>>>> 7534a2d (redesign and realtime)
       <dl className="mt-4 grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-3">
         <BudgetMetric label="Budget" value={formatPennies(recipient.budgetPennies)} />
         <BudgetMetric label="Already spent" value={formatPennies(recipient.spentPennies)} />
@@ -522,9 +716,20 @@ function RecipientBudgetSummary({
       </dl>
       <FinancialProgressBar actualPennies={recipient.spentPennies} plannedPennies={recipient.budgetPennies} mode="budget" showDifference={false} />
       {projectedSpentPennies !== null && projectedDifference !== null && (
+<<<<<<< HEAD
         <div className={`mt-4 border-t pt-4 ${projectedDifference < 0 ? "border-[#e3b3aa]" : "border-[#cddbd6]"}`}>
           <p className={`text-xs font-bold uppercase tracking-wide ${projectedDifference < 0 ? "text-[#a63f33]" : "text-[#28685c]"}`}>After this purchase</p>
           <div className="mt-2 flex min-w-0 flex-wrap items-baseline justify-between gap-x-4 gap-y-1"><strong className="break-words text-xl tabular-nums">{formatPennies(projectedSpentPennies)} spent</strong><strong className={`break-words text-sm tabular-nums ${projectedDifference < 0 ? "text-[#a63f33]" : "text-[#174f45]"}`}>{projectedDifference < 0 ? `${formatPennies(Math.abs(projectedDifference))} over budget` : projectedDifference === 0 ? "Budget reached" : `${formatPennies(projectedDifference)} remaining`}</strong></div>
+=======
+        <div className="mt-4 border-t border-line pt-4">
+          <p className={cx("text-xs font-semibold tracking-eyebrow uppercase", projectedDifference < 0 ? "text-berry" : "text-accent")}>After this purchase</p>
+          <div className="mt-2 flex min-w-0 flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <strong className="break-words font-display text-xl font-semibold tabular-nums">{formatPennies(projectedSpentPennies)} spent</strong>
+            <strong className={cx("text-sm font-semibold tabular-nums break-words", projectedDifference < 0 ? "text-berry" : "text-accent")}>
+              {projectedDifference < 0 ? `${formatPennies(Math.abs(projectedDifference))} over budget` : projectedDifference === 0 ? "Budget reached" : `${formatPennies(projectedDifference)} remaining`}
+            </strong>
+          </div>
+>>>>>>> 7534a2d (redesign and realtime)
           <FinancialProgressBar actualPennies={projectedSpentPennies} plannedPennies={recipient.budgetPennies} mode="budget" showDifference={false} />
         </div>
       )}
@@ -533,12 +738,22 @@ function RecipientBudgetSummary({
 }
 
 function BudgetMetric({ label, value, warning = false, className = "" }: { label: string; value: string; warning?: boolean; className?: string }) {
+<<<<<<< HEAD
   return <div className={`min-w-0 rounded-xl bg-white p-3 ${className}`}><dt className="text-[10px] font-bold uppercase tracking-wide text-[#7b8581]">{label}</dt><dd className={`mt-1 break-words font-bold tabular-nums ${warning ? "text-[#a63f33]" : ""}`}>{value}</dd></div>;
+=======
+  return (
+    <div className={cx("min-w-0 rounded-xl border border-line bg-surface p-3", className)}>
+      <dt className="text-xs font-medium text-ink-600">{label}</dt>
+      <dd className={cx("mt-1 break-words font-semibold tabular-nums", warning && "text-berry")}>{value}</dd>
+    </div>
+  );
+>>>>>>> 7534a2d (redesign and realtime)
 }
 
 function MoneyAllocationInput({ name, pennies, onChange }: { name: string; pennies: number; onChange: (pennies: number) => void }) {
   const [value, setValue] = useState(priceInput(pennies));
   return (
+<<<<<<< HEAD
     <span className="flex h-10 w-32 items-center rounded-lg border bg-white">
       <span className="pl-2 text-sm text-[#69746f]">£</span>
       <input
@@ -559,6 +774,24 @@ function MoneyAllocationInput({ name, pennies, onChange }: { name: string; penni
         className="h-full min-w-0 flex-1 rounded-lg px-1 text-right outline-none"
       />
     </span>
+=======
+    <MoneyInput
+      compact
+      aria-label={`${name} responsibility`}
+      maxLength={INPUT_LIMITS.money}
+      value={value}
+      onValueChange={(next) => {
+        setValue(next);
+        const parsed = parsePoundsToPennies(next);
+        if (parsed.ok) onChange(parsed.pennies);
+      }}
+      onBlur={() => {
+        const parsed = parsePoundsToPennies(value);
+        if (!parsed.ok) setValue(priceInput(pennies));
+      }}
+      className="w-32 shrink-0"
+    />
+>>>>>>> 7534a2d (redesign and realtime)
   );
 }
 

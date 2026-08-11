@@ -28,7 +28,16 @@ const contentSecurityPolicy = [
 ].join("; ");
 
 const nextConfig: NextConfig = {
+<<<<<<< HEAD
   allowedDevOrigins: ["192.168.1.55"],
+=======
+  // Development only; `next build` and `next start` never read this. The dev
+  // server binds 0.0.0.0, so Next auto-allows "0.0.0.0" rather than the LAN
+  // address a phone actually connects to, which blocks HMR and the error
+  // overlay for on-device testing.
+  allowedDevOrigins: ["localhost", "192.168.0.11"],
+
+>>>>>>> 7534a2d (redesign and realtime)
   async headers() {
     return [{
       source: "/:path*",

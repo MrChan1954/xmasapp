@@ -12,6 +12,10 @@ const authorizationMigrationName = "202608100010_harden_row_level_security.sql";
 const validationMigrationName = "202608100011_validate_user_input.sql";
 const atomicRecipientMigrationName = "202608100012_atomic_recipient_budget_allocations.sql";
 const purchaseTrackingMigrationName = "202608100013_simplify_purchase_status_and_add_gift_location.sql";
+<<<<<<< HEAD
+=======
+const realtimeMigrationName = "202608100014_enable_realtime_for_shared_data.sql";
+>>>>>>> 7534a2d (redesign and realtime)
 const authorizationMigration = readFileSync(
   join(migrationsDirectory, authorizationMigrationName),
   "utf8",
@@ -25,6 +29,10 @@ const purchaseTrackingMigration = readFileSync(
   join(migrationsDirectory, purchaseTrackingMigrationName),
   "utf8",
 );
+<<<<<<< HEAD
+=======
+const realtimeMigration = readFileSync(join(migrationsDirectory, realtimeMigrationName), "utf8");
+>>>>>>> 7534a2d (redesign and realtime)
 
 const applicationTables = [
   "christmas_events",
@@ -40,7 +48,11 @@ const applicationTables = [
 ];
 
 test("the authorization migration explicitly enables RLS on every application table", () => {
+<<<<<<< HEAD
   assert.equal(migrationFiles.at(-1), purchaseTrackingMigrationName);
+=======
+  assert.equal(migrationFiles.at(-1), realtimeMigrationName);
+>>>>>>> 7534a2d (redesign and realtime)
 
   for (const table of applicationTables) {
     assert.match(
@@ -277,6 +289,7 @@ test("changing gift location cannot rewrite purchase responsibility or Owed inpu
 });
 
 test("secondary Payment Log navigation remains under More", () => {
+<<<<<<< HEAD
   const appNav = readFileSync(join(root, "src", "app", "components", "app-nav.tsx"), "utf8");
   const desktopSidebar = appNav.match(/<aside[\s\S]*?<\/aside>/)?.[0];
   assert.ok(desktopSidebar);
@@ -285,6 +298,20 @@ test("secondary Payment Log navigation remains under More", () => {
 
   const morePage = readFileSync(join(root, "src", "app", "more", "page.tsx"), "utf8");
   assert.match(morePage, /href="\/payment-log"[\s\S]*?Payment Log/);
+=======
+  // The primary nav is now one shared list consumed by both the desktop icon
+  // rail and the mobile tab bar, so this asserts against that list directly.
+  const navItems = readFileSync(join(root, "src", "app", "components", "nav-items.ts"), "utf8");
+  const primaryNav = navItems.match(/export const navItems[\s\S]*?\n\];/)?.[0];
+  assert.ok(primaryNav);
+  assert.doesNotMatch(primaryNav, /"\/payment-log"/);
+  assert.match(primaryNav, /href: "\/more"/);
+  // Payment Log still counts as being "under More" for active highlighting.
+  assert.match(navItems, /moreMatch[\s\S]*?startsWith\("\/payment-log"\)/);
+
+  const morePage = readFileSync(join(root, "src", "app", "more", "page.tsx"), "utf8");
+  assert.match(morePage, /href="\/payment-log"[\s\S]*?Payment log/i);
+>>>>>>> 7534a2d (redesign and realtime)
 });
 
 test("contributor cards present responsibility spending without checkout totals", () => {
@@ -380,6 +407,134 @@ test("source does not build PostgREST filter expressions from user input", () =>
   }
 });
 
+<<<<<<< HEAD
+=======
+test("the request origin only relaxes to plain HTTP under next dev", async () => {
+  // Executing the resolver is stronger than pattern-matching it: any refactor
+  // that leaks the development relaxation into a built server fails here.
+  const { resolveRequestOrigin } = await import("../src/lib/request-origin.ts");
+
+  for (const host of [
+    "192.168.0.11:3000",
+    "10.0.0.5",
+    "christmas.example.com",
+    "localhost.attacker.example",
+    "127.0.0.1.attacker.example",
+  ]) {
+    assert.equal(
+      resolveRequestOrigin({ host, isDevelopment: false }),
+      `https://${host}`,
+      `${host} must stay HTTPS in a built server`,
+    );
+    // An unset NODE_ENV must fail closed rather than count as development.
+    assert.equal(resolveRequestOrigin({ host }), `https://${host}`);
+  }
+
+  // The relaxation exists, and only under `next dev`.
+  assert.equal(
+    resolveRequestOrigin({ host: "192.168.0.11:3000", isDevelopment: true }),
+    "http://192.168.0.11:3000",
+  );
+
+  // The resolver must stay environment-free, so the behaviour above is decided
+  // entirely by the flag its caller passes. (Comments may still name NODE_ENV;
+  // what must not appear is a read of it.)
+  const resolver = readFileSync(join(root, "src", "lib", "request-origin.ts"), "utf8");
+  assert.doesNotMatch(resolver, /process\.env/);
+  assert.doesNotMatch(resolver, /globalThis\.process/);
+
+  // The one caller that supplies that flag must derive it from NODE_ENV, as a
+  // literal member expression the proxy bundle can inline.
+  const wrapper = readFileSync(join(root, "src", "utils", "request-origin.ts"), "utf8");
+  assert.match(wrapper, /^import "server-only";/);
+  assert.match(wrapper, /isDevelopment: process\.env\.NODE_ENV === "development"/);
+  assert.doesNotMatch(wrapper, /isDevelopment:\s*(?:true|false)/);
+
+  // A configured origin must still reject embedded credentials and non-http(s)
+  // schemes before it is trusted over the request headers.
+  assert.match(resolver, /configuredUrl\.protocol === "http:" \|\| configuredUrl\.protocol === "https:"/);
+  assert.match(resolver, /!configuredUrl\.username &&\s*!configuredUrl\.password/);
+});
+
+test("every request origin is derived through the single server helper", () => {
+  const owners = new Set([
+    join(root, "src", "lib", "request-origin.ts"),
+    join(root, "src", "lib", "request-origin.test.ts"),
+    join(root, "src", "utils", "request-origin.ts"),
+  ]);
+  const sourceFiles = walk(join(root, "src"))
+    .filter((path) => /\.(?:ts|tsx|js|jsx)$/.test(path) && !owners.has(path));
+
+  for (const path of sourceFiles) {
+    const source = readFileSync(path, "utf8");
+    assert.doesNotMatch(source, /x-forwarded-proto/i, `${path} must use getRequestOrigin`);
+    assert.doesNotMatch(source, /x-forwarded-host/i, `${path} must use getRequestOrigin`);
+  }
+});
+
+test("admin mutations still compare the full request origin for exact equality", () => {
+  const source = readFileSync(
+    join(root, "src", "app", "api", "admin", "family-access", "route.ts"),
+    "utf8",
+  );
+
+  // Every mutation must run the origin check, and it must compare whole origins
+  // (scheme included) rather than only the host.
+  assert.match(source, /const requestOrigin = assertSameOrigin\(request\);/);
+  assert.match(source, /normalizedOrigin !== requestOrigin/);
+  assert.match(source, /const requestOrigin = getRequestOrigin\(request\);/);
+  assert.doesNotMatch(source, /\.host !==/);
+});
+
+test("realtime only streams tables that RLS already restricts to app members", () => {
+  // Anything published here is delivered to browser clients, so the publication
+  // must never contain a table an unauthenticated or non-member client can read.
+  // Assert against executable SQL only; the comments in this migration discuss
+  // the settings it deliberately does not use.
+  const realtimeStatements = realtimeMigration.replace(/--[^\n]*/g, "");
+  const published = [...realtimeStatements.matchAll(/^\s*'([a-z_]+)',?\s*$/gm)].map((m) => m[1]);
+  assert.ok(published.length > 0, "the realtime migration must publish at least one table");
+
+  for (const table of published) {
+    assert.ok(
+      applicationTables.includes(table),
+      `${table} is published to realtime but is not a known application table`,
+    );
+    // Migration 010 revoked blanket grants and re-granted select to authenticated
+    // only; that revoke is what keeps anon off the stream.
+    assert.match(
+      authorizationMigration,
+      new RegExp(
+        `revoke all privileges on table public\\.${table} from public, anon, authenticated;`,
+        "i",
+      ),
+      `${table} must have normalized grants before it is streamed`,
+    );
+  }
+
+  // app_members carries login emails and only ever resolves to the caller's own
+  // row, so publishing it would add exposure without adding usefulness.
+  assert.ok(!published.includes("app_members"), "app_members must not be streamed to clients");
+
+  // `replica identity full` would put complete pre-change rows, including
+  // financial columns, on the wire for every update.
+  assert.doesNotMatch(realtimeStatements, /replica\s+identity\s+full/i);
+});
+
+test("realtime subscriptions never trust the streamed payload as data", () => {
+  const sourceFiles = walk(join(root, "src")).filter((path) => /\.(?:ts|tsx)$/.test(path));
+
+  for (const path of sourceFiles) {
+    const source = readFileSync(path, "utf8");
+    if (!/postgres_changes/.test(source)) continue;
+
+    // The stream is a change notification only. Reading `payload.new` / `payload.old`
+    // would bypass the authorized fetch path that applies RLS and admin checks.
+    assert.doesNotMatch(source, /payload\s*\.\s*(?:new|old)\b/, `${path} must refetch, not read the payload`);
+  }
+});
+
+>>>>>>> 7534a2d (redesign and realtime)
 test("the application CSP blocks object and frame embedding and production eval", () => {
   const source = readFileSync(join(root, "next.config.ts"), "utf8");
   assert.match(source, /object-src 'none'/);

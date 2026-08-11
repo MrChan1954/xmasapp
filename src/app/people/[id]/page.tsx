@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 "use client";
 
 import Link from "next/link";
@@ -97,3 +98,17 @@ function ContributionEditor({ recipientId, detail, onCancel, onSaved }: { recipi
 
 function Metric({ label, value }: { label: string; value: number }) { return <div><p className="text-xs text-[#c6ded8]">{label}</p><p className="mt-1 text-xl font-bold">{formatPennies(value)}</p></div>; }
 function ErrorPage() { return <main className="min-h-screen bg-[#f8f8f6] p-6"><Link href="/people" className="font-semibold text-[#28685c]">Back to People</Link><p className="mt-8 rounded-2xl bg-white p-5 text-sm text-[#a5543f]">Unable to load this person. Check the link and try again.</p></main>; }
+=======
+import { redirect } from "next/navigation";
+
+/**
+ * This route used to render a second, parallel person detail screen that
+ * bypassed the app shell, hand-rolled its own modal and contributor editor, and
+ * reported Spent as £0. `/people` opens the real person modal instead, so the
+ * deep link is preserved by forwarding to it.
+ */
+export default async function PersonRedirect({ params }: PageProps<"/people/[id]">) {
+  const { id } = await params;
+  redirect(`/people?person=${encodeURIComponent(id)}`);
+}
+>>>>>>> 7534a2d (redesign and realtime)

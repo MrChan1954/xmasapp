@@ -11,7 +11,28 @@ import {
 } from "../../lib/owed";
 import { parsePoundsToPennies } from "../../lib/purchases";
 import { INPUT_LIMITS, validateDateInput, validateOptionalText, validateUuid } from "../../lib/input-validation";
+<<<<<<< HEAD
 import { AppNav } from "../components/app-nav";
+=======
+import { AppShell, PageHeader } from "../components/app-shell";
+import { GarlandRule } from "../components/festive/garland";
+import {
+  Button,
+  ConfirmDialog,
+  EmptyState,
+  Field,
+  Input,
+  Modal,
+  ModalHeader,
+  MoneyInput,
+  Notice,
+  Segmented,
+  Skeleton,
+  Textarea,
+  cx,
+} from "../components/ui";
+import { useRealtimeRefresh } from "../components/use-realtime-refresh";
+>>>>>>> 7534a2d (redesign and realtime)
 import { loadOwedData, type OwedData } from "./owed-data";
 
 type ViewMode = "mine" | "all";
@@ -46,6 +67,24 @@ export default function OwedPage() {
     return () => { active = false; };
   }, []);
 
+<<<<<<< HEAD
+=======
+  // Balances are recomputed from purchases, their allocations, and settlements;
+  // who appears at all depends on contributors and recipients. `refresh` never
+  // re-raises the loading flag, so this updates the figures in place.
+  useRealtimeRefresh(
+    [
+      "settlements",
+      "purchases",
+      "purchase_allocations",
+      "contributors",
+      "christmas_recipients",
+      "people",
+    ],
+    refresh,
+  );
+
+>>>>>>> 7534a2d (redesign and realtime)
   const personalBalances = useMemo(() => data?.balances.filter((balance) =>
     balance.debtorContributorId === data.currentContributorId
     || balance.creditorContributorId === data.currentContributorId,
@@ -59,6 +98,7 @@ export default function OwedPage() {
   const youOwe = data ? personalBalances.filter((row) => row.debtorContributorId === data.currentContributorId) : [];
 
   return (
+<<<<<<< HEAD
     <main className="flex min-h-screen bg-[#f7f6f1] text-[#1d2926]">
       <AppNav />
       <div className="min-w-0 flex-1 pb-28 lg:pb-10">
@@ -134,10 +174,94 @@ export default function OwedPage() {
         </div>
       </div>
     </main>
+=======
+    <AppShell width="narrow">
+      <PageHeader
+        title="Owed"
+        description="See who owes whom, why, and which payments have been recorded."
+      />
+
+      {error && <Notice tone="danger" className="mt-6">{error}</Notice>}
+      {loading && <LoadingState />}
+
+      {!loading && data && <>
+        <section className="mt-6 grid gap-4 sm:grid-cols-2">
+          <BalanceSummary label="You are owed" value={personalSummary.owedToYouPennies} detail="Money other contributors need to repay you" positive />
+          <BalanceSummary label="You owe" value={personalSummary.youOwePennies} detail="Money you need to repay other contributors" />
+        </section>
+
+        {data.isAdmin && (
+          <div className="mt-8 max-w-sm">
+            <Segmented
+              ariaLabel="Balance view"
+              value={view}
+              onChange={setView}
+              options={[
+                { value: "mine", label: "My balances" },
+                { value: "all", label: "All balances" },
+              ]}
+            />
+          </div>
+        )}
+
+        {view === "mine" ? (
+          personalBalances.length === 0
+            ? <AllSettled />
+            : <div className="mt-6 grid items-start gap-5 lg:grid-cols-2">
+                <BalanceSection
+                  title="You are owed"
+                  empty="Nobody currently owes you."
+                  balances={owedToYou}
+                  currentContributorId={data.currentContributorId}
+                  names={names}
+                  isAdmin={data.isAdmin}
+                  onView={(balance) => setOpenPairKey(balance.pairKey)}
+                  onPay={setPaymentBalance}
+                />
+                <BalanceSection
+                  title="You owe"
+                  empty="You do not currently owe anyone."
+                  balances={youOwe}
+                  currentContributorId={data.currentContributorId}
+                  names={names}
+                  isAdmin={data.isAdmin}
+                  onView={(balance) => setOpenPairKey(balance.pairKey)}
+                  onPay={setPaymentBalance}
+                />
+              </div>
+        ) : (
+          <section className="mt-6 rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
+            <h2 className="font-display text-xl font-semibold">All balances</h2>
+            <p className="mt-1 text-sm text-ink-600">Current balances after purchases and recorded payments.</p>
+            {data.balances.length === 0 ? <AllSettled compact /> : (
+              <div className="mt-5 grid gap-3 md:grid-cols-2">
+                {data.balances.map((balance) => <BalanceCard key={balance.pairKey} balance={balance} currentContributorId={data.currentContributorId} names={names} isAdmin onView={() => setOpenPairKey(balance.pairKey)} onPay={() => setPaymentBalance(balance)} allView />)}
+              </div>
+            )}
+          </section>
+        )}
+
+        {openPairKey && <Breakdown
+          pairKeyValue={openPairKey}
+          data={data}
+          onClose={() => setOpenPairKey(null)}
+          onPay={(balance) => setPaymentBalance(balance)}
+          onRefresh={refresh}
+        />}
+        {paymentBalance && <PaymentSheet
+          balance={paymentBalance}
+          data={data}
+          onClose={() => setPaymentBalance(null)}
+          onSaved={async () => { setPaymentBalance(null); await refresh(); }}
+        />}
+      </>}
+    </AppShell>
+>>>>>>> 7534a2d (redesign and realtime)
   );
 }
 
 function BalanceSummary({ label, value, detail, positive = false }: { label: string; value: number; detail: string; positive?: boolean }) {
+<<<<<<< HEAD
   return <div className={`rounded-2xl border p-6 shadow-sm ${positive ? "border-[#2c655a] bg-[#123f37] text-white" : "border-[#e2e1d8] bg-white"}`}><p className={`text-sm font-semibold ${positive ? "text-[#d5e3df]" : "text-[#75807c]"}`}>{label}</p><p className="mt-2 text-4xl font-bold">{formatPennies(value)}</p><p className={`mt-2 text-xs leading-5 ${positive ? "text-[#d7e8e3]" : "text-[#89938f]"}`}>{detail}</p></div>;
 }
 
@@ -149,6 +273,33 @@ function BalanceSection({ title, empty, balances, currentContributorId, names, i
   return <section className="rounded-2xl border border-[#e2e1d8] bg-white p-5 shadow-sm sm:p-7"><h2 className="text-xl font-bold">{title}</h2>{balances.length === 0 ? <p className="mt-4 rounded-xl bg-[#faf9f5] p-4 text-sm text-[#75807c]">{empty}</p> : <div className="mt-5 space-y-3">{balances.map((balance) => <BalanceCard key={balance.pairKey} balance={balance} currentContributorId={currentContributorId} names={names} isAdmin={isAdmin} onView={() => onView(balance)} onPay={() => onPay(balance)} />)}</div>}</section>;
 }
 
+=======
+  return (
+    <div className={cx(
+      "rounded-2xl border p-5 shadow-card sm:p-6",
+      positive ? "dark border-pine-700 bg-linear-to-br from-pine-900 to-pine-800 text-white" : "border-line bg-surface",
+    )}>
+      <p className={cx("text-sm font-medium", positive ? "text-pine-100" : "text-ink-600")}>{label}</p>
+      <p className="mt-2 font-display text-3xl font-semibold tabular-nums sm:text-4xl">{formatPennies(value)}</p>
+      <p className={cx("mt-2 text-xs leading-5", positive ? "text-pine-100/90" : "text-ink-600")}>{detail}</p>
+    </div>
+  );
+}
+
+function BalanceSection({ title, empty, balances, currentContributorId, names, isAdmin, onView, onPay }: { title: string; empty: string; balances: NetOwedBalance[]; currentContributorId: string; names: Map<string, string>; isAdmin: boolean; onView: (balance: NetOwedBalance) => void; onPay: (balance: NetOwedBalance) => void }) {
+  return (
+    <section className="rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
+      <h2 className="font-display text-xl font-semibold">{title}</h2>
+      <GarlandRule className="mt-4" />
+      {balances.length === 0
+        ? <p className="mt-4 text-sm text-ink-600">{empty}</p>
+        : <div className="mt-2 divide-y divide-line">{balances.map((balance) => <BalanceCard key={balance.pairKey} balance={balance} currentContributorId={currentContributorId} names={names} isAdmin={isAdmin} onView={() => onView(balance)} onPay={() => onPay(balance)} />)}</div>}
+    </section>
+  );
+}
+
+/** A ledger line, not a card-in-card: name left, amount right, actions beneath. */
+>>>>>>> 7534a2d (redesign and realtime)
 function BalanceCard({ balance, currentContributorId, names, isAdmin, onView, onPay, allView = false }: { balance: NetOwedBalance; currentContributorId: string; names: Map<string, string>; isAdmin: boolean; onView: () => void; onPay: () => void; allView?: boolean }) {
   const debtor = contributorName(names, balance.debtorContributorId);
   const creditor = contributorName(names, balance.creditorContributorId);
@@ -158,12 +309,33 @@ function BalanceCard({ balance, currentContributorId, names, isAdmin, onView, on
     : balance.creditorContributorId === currentContributorId
       ? `${debtor} owes you`
       : `You owe ${creditor}`;
+<<<<<<< HEAD
   return <article className="rounded-xl border border-[#e2e8e4] p-4 sm:p-5"><p className="font-bold">{title}</p><p className="mt-1 text-3xl font-bold text-[#1f5b50]">{formatPennies(balance.amountPennies)}</p><div className="mt-4 grid grid-cols-2 gap-2"><button type="button" onClick={onView} className="min-h-12 rounded-xl border border-[#cad8d3] px-3 text-sm font-bold text-[#28685c]">Why this balance?</button>{receiverCanConfirm ? <button type="button" onClick={onPay} className="min-h-12 rounded-xl bg-[#1f5b50] px-3 text-sm font-bold text-white">Record payment</button> : <span className="flex min-h-12 items-center justify-center rounded-xl bg-[#f4f5f4] px-3 text-center text-xs text-[#75807c]">Receiver records payment</span>}</div></article>;
+=======
+  return (
+    <article className="py-4">
+      <div className="flex items-baseline justify-between gap-4">
+        <p className="min-w-0 truncate font-semibold">{title}</p>
+        <p className="shrink-0 font-display text-2xl font-semibold tabular-nums text-ink-900">{formatPennies(balance.amountPennies)}</p>
+      </div>
+      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+        <Button variant="ghost" size="sm" onClick={onView}>Why this balance?</Button>
+        {receiverCanConfirm
+          ? <Button variant="tonal" size="sm" onClick={onPay}>Record payment</Button>
+          : <span className="text-xs font-medium text-ink-400">Receiver records payment</span>}
+      </div>
+    </article>
+  );
+>>>>>>> 7534a2d (redesign and realtime)
 }
 
 function Breakdown({ pairKeyValue, data, onClose, onPay, onRefresh }: { pairKeyValue: string; data: OwedData; onClose: () => void; onPay: (balance: NetOwedBalance) => void; onRefresh: () => Promise<void> }) {
   const [voidingId, setVoidingId] = useState<string | null>(null);
   const [voidError, setVoidError] = useState<string | null>(null);
+<<<<<<< HEAD
+=======
+  const [confirmingVoid, setConfirmingVoid] = useState<{ id: string; label: string } | null>(null);
+>>>>>>> 7534a2d (redesign and realtime)
   const ids = pairKeyValue.split("|");
   const pairObligations = data.obligations.filter((row) => pairKey(row.debtorContributorId, row.creditorContributorId) === pairKeyValue);
   const pairSettlements = data.settlements.filter((row) => pairKey(row.payerContributorId, row.payeeContributorId) === pairKeyValue);
@@ -172,16 +344,25 @@ function Breakdown({ pairKeyValue, data, onClose, onPay, onRefresh }: { pairKeyV
   const balance = explanation.currentBalance;
   const canConfirm = balance && (data.isAdmin || balance.creditorContributorId === data.currentContributorId);
 
+<<<<<<< HEAD
   const voidPayment = async (settlementId: string, label: string) => {
     if (!window.confirm(`Void ${label}?\n\nThis removes its effect from the current balance. The history record will be kept.`)) return;
     setVoidingId(settlementId);
     setVoidError(null);
     const validSettlementId = validateUuid(settlementId, "This payment record is invalid.");
     if (!validSettlementId.ok) { setVoidError(validSettlementId.error); setVoidingId(null); return; }
+=======
+  const voidPayment = async (settlementId: string) => {
+    setVoidingId(settlementId);
+    setVoidError(null);
+    const validSettlementId = validateUuid(settlementId, "This payment record is invalid.");
+    if (!validSettlementId.ok) { setVoidError(validSettlementId.error); setVoidingId(null); setConfirmingVoid(null); return; }
+>>>>>>> 7534a2d (redesign and realtime)
     const result = await createClient().rpc("void_settlement", { p_settlement_id: validSettlementId.value });
     if (result.error) setVoidError("This payment could not be voided. Nothing was changed.");
     else await onRefresh();
     setVoidingId(null);
+<<<<<<< HEAD
   };
 
   return (
@@ -196,6 +377,23 @@ function Breakdown({ pairKeyValue, data, onClose, onPay, onRefresh }: { pairKeyV
           </div>
           <button type="button" onClick={onClose} aria-label="Close breakdown" className="h-12 w-12 shrink-0 rounded-full border bg-white text-xl shadow-sm">×</button>
         </div>
+=======
+    setConfirmingVoid(null);
+  };
+
+  return (
+    <Modal labelledBy="breakdown-title" onClose={onClose} size="lg" dismissible={!confirmingVoid}>
+      <ModalHeader
+        id="breakdown-title"
+        eyebrow="Current balance"
+        title={balance ? `${contributorName(names, balance.debtorContributorId)} owes ${contributorName(names, balance.creditorContributorId)}` : "Settled"}
+        onClose={onClose}
+        closeLabel="Close breakdown"
+      />
+      <div className="px-5 pb-6 sm:px-7 sm:pb-7">
+        <p className="font-display text-4xl font-semibold tabular-nums text-accent">{formatPennies(balance?.amountPennies ?? 0)}</p>
+        {!balance && <p className="mt-1 text-sm text-ink-600">{contributorName(names, ids[0])} and {contributorName(names, ids[1])} have no current balance.</p>}
+>>>>>>> 7534a2d (redesign and realtime)
 
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
           <DirectionTotal label="After purchases" balance={explanation.purchaseBalance} names={names} />
@@ -203,11 +401,19 @@ function Breakdown({ pairKeyValue, data, onClose, onPay, onRefresh }: { pairKeyV
           <DirectionTotal label="Current balance" balance={balance} names={names} primary />
         </div>
 
+<<<<<<< HEAD
         <section className="mt-6 rounded-2xl bg-white p-5">
           <h3 className="font-bold">Why this balance?</h3>
           <p className="mt-1 text-xs leading-5 text-[#75807c]">Each direction is shown first, then the app nets them into one purchase balance.</p>
           {explanation.purchaseDirections.length === 0 ? (
             <p className="mt-4 text-sm text-[#75807c]">No active purchases create a balance for this pair.</p>
+=======
+        <section className="mt-5 rounded-2xl border border-line bg-surface p-5">
+          <h3 className="font-display text-lg font-semibold">Why this balance?</h3>
+          <p className="mt-1 text-xs leading-5 text-ink-600">Each direction is shown first, then the app nets them into one purchase balance.</p>
+          {explanation.purchaseDirections.length === 0 ? (
+            <p className="mt-4 text-sm text-ink-600">No active purchases create a balance for this pair.</p>
+>>>>>>> 7534a2d (redesign and realtime)
           ) : (
             <div className="mt-4 space-y-5">
               {explanation.purchaseDirections.map((direction) => {
@@ -219,48 +425,126 @@ function Breakdown({ pairKeyValue, data, onClose, onPay, onRefresh }: { pairKeyV
                 const creditor = contributorName(names, direction.creditorContributorId);
                 return (
                   <div key={`${direction.debtorContributorId}-${direction.creditorContributorId}`}>
+<<<<<<< HEAD
                     <div className="flex items-center justify-between gap-3 border-b border-[#e5e7e2] pb-2"><h4 className="text-xs font-bold uppercase tracking-wide text-[#596762]">{debtor} owes {creditor}</h4><strong>{formatPennies(direction.amountPennies)}</strong></div>
                     <div className="mt-2 space-y-2">
                       {directionRows.map((row, index) => (
                         <div key={`${row.purchaseId}-${row.debtorContributorId}-${index}`} className="rounded-xl bg-[#f8f8f6] p-4">
                           <div className="flex items-start justify-between gap-4"><div className="min-w-0"><p className="font-bold">{row.recipientName} — {row.description}</p><p className="mt-1 text-sm font-semibold text-[#475651]">{debtor} owes {creditor}</p></div><strong className="shrink-0">{formatPennies(row.amountPennies)}</strong></div>
                           <p className="mt-2 text-xs leading-5 text-[#75807c]">{creditor} paid {debtor}&apos;s share at checkout · {formatDate(row.purchaseDate)}</p>
+=======
+                    <div className="flex items-center justify-between gap-3 border-b border-line pb-2">
+                      <h4 className="text-sm font-semibold text-ink-600">{debtor} owes {creditor}</h4>
+                      <strong className="font-semibold tabular-nums">{formatPennies(direction.amountPennies)}</strong>
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      {directionRows.map((row, index) => (
+                        <div key={`${row.purchaseId}-${row.debtorContributorId}-${index}`} className="rounded-xl bg-surface-2 p-4">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="min-w-0">
+                              <p className="font-semibold">{row.recipientName} — {row.description}</p>
+                              <p className="mt-1 text-sm font-medium text-ink-600">{debtor} owes {creditor}</p>
+                            </div>
+                            <strong className="shrink-0 font-semibold tabular-nums">{formatPennies(row.amountPennies)}</strong>
+                          </div>
+                          <p className="mt-2 text-xs leading-5 text-ink-600">{creditor} paid {debtor}&apos;s share at checkout · {formatDate(row.purchaseDate)}</p>
+>>>>>>> 7534a2d (redesign and realtime)
                         </div>
                       ))}
                     </div>
                   </div>
                 );
               })}
+<<<<<<< HEAD
               <div className="rounded-xl border border-[#cadbd5] bg-[#f0f7f4] p-4"><p className="text-xs font-bold uppercase tracking-wide text-[#55706a]">Net purchase balance</p><DirectionSentence balance={explanation.purchaseBalance} names={names} /></div>
+=======
+              <div className="rounded-xl border border-accent-soft-border bg-accent-soft p-4">
+                <p className="text-xs font-semibold tracking-eyebrow text-accent uppercase">Net purchase balance</p>
+                <DirectionSentence balance={explanation.purchaseBalance} names={names} />
+              </div>
+>>>>>>> 7534a2d (redesign and realtime)
             </div>
           )}
         </section>
 
+<<<<<<< HEAD
         <section className="mt-4 rounded-2xl bg-white p-5">
           <h3 className="font-bold">Payments recorded</h3>
           {voidError && <p role="alert" className="mt-3 rounded-lg bg-[#fff5f1] p-3 text-sm text-[#914d3c]">{voidError}</p>}
           {pairSettlements.length === 0 ? (
             <p className="mt-4 text-sm text-[#75807c]">No payments have been recorded.</p>
+=======
+        <section className="mt-4 rounded-2xl border border-line bg-surface p-5">
+          <h3 className="font-display text-lg font-semibold">Payments recorded</h3>
+          {voidError && <Notice tone="danger" className="mt-3">{voidError}</Notice>}
+          {pairSettlements.length === 0 ? (
+            <p className="mt-4 text-sm text-ink-600">No payments have been recorded.</p>
+>>>>>>> 7534a2d (redesign and realtime)
           ) : (
             <div className="mt-4 space-y-3">
               {pairSettlements.map((row) => {
                 const payer = contributorName(names, row.payerContributorId);
                 const payee = contributorName(names, row.payeeContributorId);
                 return (
+<<<<<<< HEAD
                   <div key={row.id} className={`rounded-xl border p-4 ${row.voidedAt ? "border-[#e4e5e4] bg-[#f5f5f4] text-[#78817e]" : "border-[#dfe7e3]"}`}>
                     <div className="flex items-start justify-between gap-4"><div><p className="font-bold">{payer} paid {payee}</p><p className="mt-1 text-xs">{formatDate(row.paymentDate)}{row.voidedAt ? ` · Voided ${formatDate(row.voidedAt)}` : ""}</p></div><strong className={row.voidedAt ? "line-through" : "text-[#28685c]"}>{formatPennies(row.amountPennies)}</strong></div>
                     <p className="mt-2 text-xs leading-5 text-[#75807c]">{row.voidedAt ? "Voided — this no longer affects the current balance." : `This shifts the balance ${formatPennies(row.amountPennies)} toward ${payee} owing ${payer}.`}</p>
                     {row.notes && <p className="mt-2 break-words text-sm">{row.notes}</p>}
                     {data.isAdmin && !row.voidedAt && <button type="button" disabled={voidingId === row.id} onClick={() => void voidPayment(row.id, `${formatPennies(row.amountPennies)} payment from ${payer} to ${payee}`)} className="mt-3 min-h-10 rounded-lg border border-[#e5cfc7] px-3 text-xs font-bold text-[#914d3c] disabled:opacity-50">{voidingId === row.id ? "Voiding..." : "Void payment"}</button>}
+=======
+                  <div key={row.id} className={cx("rounded-xl border p-4", row.voidedAt ? "border-line bg-surface-3 text-ink-600" : "border-line bg-surface-2")}>
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="font-semibold">{payer} paid {payee}</p>
+                        <p className="mt-1 text-xs">{formatDate(row.paymentDate)}{row.voidedAt ? ` · Voided ${formatDate(row.voidedAt)}` : ""}</p>
+                      </div>
+                      <strong className={cx("font-semibold tabular-nums", row.voidedAt ? "line-through" : "text-accent")}>{formatPennies(row.amountPennies)}</strong>
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-ink-600">{row.voidedAt ? "Voided — this no longer affects the current balance." : `This shifts the balance ${formatPennies(row.amountPennies)} toward ${payee} owing ${payer}.`}</p>
+                    {row.notes && <p className="mt-2 break-words text-sm">{row.notes}</p>}
+                    {data.isAdmin && !row.voidedAt && (
+                      <Button
+                        variant="dangerGhost"
+                        size="sm"
+                        disabled={voidingId === row.id}
+                        onClick={() => { setVoidError(null); setConfirmingVoid({ id: row.id, label: `${formatPennies(row.amountPennies)} payment from ${payer} to ${payee}` }); }}
+                        className="mt-3 border border-berry/30 bg-surface"
+                      >
+                        {voidingId === row.id ? "Voiding..." : "Void payment"}
+                      </Button>
+                    )}
+>>>>>>> 7534a2d (redesign and realtime)
                   </div>
                 );
               })}
             </div>
           )}
         </section>
+<<<<<<< HEAD
         <div className="mt-5 flex gap-3"><button type="button" onClick={onClose} className="min-h-12 flex-1 rounded-xl border bg-white px-4 font-bold">Close</button>{canConfirm && balance && <button type="button" onClick={() => onPay(balance)} className="min-h-12 flex-1 rounded-xl bg-[#1f5b50] px-4 font-bold text-white">Record payment</button>}</div>
       </section>
     </div>
+=======
+        <div className="mt-5 flex gap-3">
+          <Button variant="secondary" size="lg" onClick={onClose} className="flex-1">Close</Button>
+          {canConfirm && balance && <Button size="lg" onClick={() => onPay(balance)} className="flex-1">Record payment</Button>}
+        </div>
+      </div>
+
+      {confirmingVoid && (
+        <ConfirmDialog
+          title={`Void ${confirmingVoid.label}?`}
+          body="This removes its effect from the current balance. The history record will be kept."
+          confirmLabel="Void payment"
+          busyLabel="Voiding..."
+          busy={voidingId === confirmingVoid.id}
+          onCancel={() => setConfirmingVoid(null)}
+          onConfirm={() => void voidPayment(confirmingVoid.id)}
+        />
+      )}
+    </Modal>
+>>>>>>> 7534a2d (redesign and realtime)
   );
 }
 
@@ -304,6 +588,7 @@ function PaymentSheet({ balance, data, onClose, onSaved }: { balance: NetOwedBal
   };
 
   return (
+<<<<<<< HEAD
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#13211d]/60 sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-labelledby="payment-title">
       <form onSubmit={(event) => void save(event)} className="w-full rounded-t-3xl bg-white p-5 shadow-2xl sm:max-w-lg sm:rounded-3xl sm:p-7">
         <div className="flex items-start justify-between gap-4"><div><p className="text-sm font-semibold text-[#28685c]">Current balance</p><h2 id="payment-title" className="mt-1 text-2xl font-bold">Record payment</h2></div><button type="button" onClick={onClose} aria-label="Close payment form" className="h-11 w-11 shrink-0 rounded-full border text-xl">×</button></div>
@@ -313,15 +598,65 @@ function PaymentSheet({ balance, data, onClose, onSaved }: { balance: NetOwedBal
         <div className="mt-6 grid grid-cols-2 gap-3"><button type="button" onClick={onClose} className="min-h-12 rounded-xl border font-bold">Cancel</button><button disabled={saving} className="min-h-12 rounded-xl bg-[#1f5b50] px-3 font-bold text-white disabled:opacity-50">{saving ? "Recording..." : "Record payment"}</button></div>
       </form>
     </div>
+=======
+    <Modal labelledBy="payment-title" onClose={onClose} size="md" surface="white" dismissible={!saving}>
+      <form onSubmit={(event) => void save(event)}>
+        <ModalHeader
+          id="payment-title"
+          eyebrow="Current balance"
+          title="Record payment"
+          onClose={onClose}
+          closeLabel="Close payment form"
+        />
+        <div className="px-5 pb-6 sm:px-7 sm:pb-7">
+          <div className="grid grid-cols-2 gap-3 rounded-xl border border-accent-soft-border bg-accent-soft p-4 text-sm">
+            <div><p className="text-xs font-medium text-ink-600">Paid by</p><strong className="mt-1 block font-semibold">{debtor}</strong></div>
+            <div><p className="text-xs font-medium text-ink-600">Paid to</p><strong className="mt-1 block font-semibold">{creditor}</strong></div>
+            <div className="col-span-2 border-t border-accent-soft-border pt-3">
+              <p className="text-xs font-medium text-ink-600">Current balance</p>
+              <strong className="mt-1 block font-display text-lg font-semibold tabular-nums">{formatPennies(balance.amountPennies)}</strong>
+            </div>
+          </div>
+          {error && <Notice tone="danger" className="mt-4">{error}</Notice>}
+          <div className="mt-5 space-y-4">
+            <Field label="Amount" required>
+              <MoneyInput required maxLength={INPUT_LIMITS.money} value={amount} onValueChange={setAmount} />
+            </Field>
+            <Field label="Date" required>
+              <Input required type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+            </Field>
+            <Field label={<>Notes <span className="font-normal text-ink-400">(optional)</span></>}>
+              <Textarea rows={3} maxLength={INPUT_LIMITS.settlementNotes} value={notes} onChange={(event) => setNotes(event.target.value)} />
+            </Field>
+          </div>
+          <div className="mt-6 grid grid-cols-2 gap-3">
+            <Button variant="secondary" size="lg" onClick={onClose}>Cancel</Button>
+            <Button type="submit" size="lg" disabled={saving}>{saving ? "Recording..." : "Record payment"}</Button>
+          </div>
+        </div>
+      </form>
+    </Modal>
+>>>>>>> 7534a2d (redesign and realtime)
   );
 }
 
 function DirectionTotal({ label, balance, names, primary = false, adjustment = false }: { label: string; balance: NetOwedBalance | null; names: Map<string, string>; primary?: boolean; adjustment?: boolean }) {
+<<<<<<< HEAD
   return <div className={`rounded-xl p-4 ${primary ? "bg-[#1f5b50] text-white" : "bg-white"}`}><p className={`text-xs font-semibold ${primary ? "text-[#c6ded8]" : "text-[#75807c]"}`}>{label}</p><p className="mt-1 text-xl font-bold">{balance ? `${adjustment ? "+" : ""}${formatPennies(balance.amountPennies)}` : formatPennies(0)}</p><p className={`mt-1 text-[11px] leading-4 ${primary ? "text-[#d7e8e3]" : "text-[#75807c]"}`}>{balance ? `${adjustment ? "Toward " : ""}${contributorName(names, balance.debtorContributorId)} owing ${contributorName(names, balance.creditorContributorId)}` : adjustment ? "No net payment effect" : "Settled"}</p></div>;
+=======
+  return (
+    <div className={cx("rounded-xl border p-4", primary ? "dark border-pine-700 bg-pine-800 text-white" : "border-line bg-surface")}>
+      <p className={cx("text-xs font-medium", primary ? "text-pine-100" : "text-ink-600")}>{label}</p>
+      <p className="mt-1 font-display text-xl font-semibold tabular-nums">{balance ? `${adjustment ? "+" : ""}${formatPennies(balance.amountPennies)}` : formatPennies(0)}</p>
+      <p className={cx("mt-1 text-[11px] leading-4", primary ? "text-pine-100/90" : "text-ink-600")}>{balance ? `${adjustment ? "Toward " : ""}${contributorName(names, balance.debtorContributorId)} owing ${contributorName(names, balance.creditorContributorId)}` : adjustment ? "No net payment effect" : "Settled"}</p>
+    </div>
+  );
+>>>>>>> 7534a2d (redesign and realtime)
 }
 
 function DirectionSentence({ balance, names }: { balance: NetOwedBalance | null; names: Map<string, string> }) {
   return balance
+<<<<<<< HEAD
     ? <p className="mt-1 text-lg font-bold">{contributorName(names, balance.debtorContributorId)} owes {contributorName(names, balance.creditorContributorId)} <span className="text-[#1f5b50]">{formatPennies(balance.amountPennies)}</span></p>
     : <p className="mt-1 text-lg font-bold text-[#1f5b50]">Settled · {formatPennies(0)}</p>;
 }
@@ -332,6 +667,31 @@ function AllSettled({ compact = false }: { compact?: boolean }) {
 
 function LoadingState() {
   return <div className="mt-7 grid animate-pulse gap-4 sm:grid-cols-2"><div className="h-36 rounded-2xl bg-[#e8ecea]" /><div className="h-36 rounded-2xl bg-[#e8ecea]" /><div className="h-60 rounded-2xl bg-[#ecefed] sm:col-span-2" /></div>;
+=======
+    ? <p className="mt-1 text-lg font-semibold">{contributorName(names, balance.debtorContributorId)} owes {contributorName(names, balance.creditorContributorId)} <span className="tabular-nums text-accent">{formatPennies(balance.amountPennies)}</span></p>
+    : <p className="mt-1 text-lg font-semibold text-accent">Settled · {formatPennies(0)}</p>;
+}
+
+function AllSettled({ compact = false }: { compact?: boolean }) {
+  return (
+    <EmptyState
+      className={compact ? "mt-5" : "mt-8"}
+      illustration="tree"
+      title="All settled"
+      body="You don't currently owe anyone and nobody owes you."
+    />
+  );
+}
+
+function LoadingState() {
+  return (
+    <div className="mt-6 grid gap-4 sm:grid-cols-2">
+      <Skeleton className="h-36 rounded-2xl" />
+      <Skeleton className="h-36 rounded-2xl" />
+      <Skeleton className="h-60 rounded-2xl sm:col-span-2" />
+    </div>
+  );
+>>>>>>> 7534a2d (redesign and realtime)
 }
 
 function contributorName(names: Map<string, string>, id: string) {

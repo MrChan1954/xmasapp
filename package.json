@@ -13,14 +13,25 @@
     "test:owed": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/owed.test.ts",
     "test:payment-log": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/payment-log.test.ts",
     "test:validation": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/input-validation.test.ts",
+<<<<<<< HEAD
     "test:security": "node --test scripts/rls-security.test.mjs",
     "setup:taylor": "node --env-file=.env.local scripts/setup-taylor.mjs",
     "setup:taylor-password": "node --env-file=.env.local scripts/set-taylor-password.mjs"
+=======
+    "test:request-origin": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/request-origin.test.ts",
+    "test:security": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/rls-security.test.mjs"
+>>>>>>> 7534a2d (redesign and realtime)
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.2",
+<<<<<<< HEAD
     "next": "16.3.0",
+=======
+    "lucide-react": "^1.31.0",
+    "next": "16.3.0",
+    "next-themes": "^0.4.6",
+>>>>>>> 7534a2d (redesign and realtime)
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

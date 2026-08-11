@@ -8,6 +8,11 @@ import {
   type RecipientAllocation,
 } from "@/lib/recipient-allocations";
 import { createClient } from "../../utils/supabase/client";
+<<<<<<< HEAD
+=======
+import { isAuthRoute } from "./components/nav-items";
+import { useRealtimeRefresh } from "./components/use-realtime-refresh";
+>>>>>>> 7534a2d (redesign and realtime)
 
 export type Person = { id: string; name: string; budgetPennies: number; active: boolean; spentPennies: number | null; giftCount: number | null; ideaCount: number | null };
 export type SaveRecipientInput = {
@@ -16,7 +21,11 @@ export type SaveRecipientInput = {
   budgetPennies: number;
   allocations: RecipientAllocation[];
 };
+<<<<<<< HEAD
 type Family = { people: Person[]; loading: boolean; error: string | null; role: "admin" | "member" | null; isAdmin: boolean; saveRecipient: (input: SaveRecipientInput) => Promise<void>; archive: (id: string) => Promise<void>; restore: (id: string) => Promise<void>; setIdeaCount: (id: string, count: number) => void; setPurchaseMetrics: (id: string, spentPennies: number, count: number) => void; refresh: () => Promise<void> };
+=======
+type Family = { people: Person[]; loading: boolean; error: string | null; role: "admin" | "member" | null; isAdmin: boolean; saveRecipient: (input: SaveRecipientInput) => Promise<void>; archive: (id: string) => Promise<void>; restore: (id: string) => Promise<void>; setIdeaCount: (id: string, count: number) => void; setPurchaseMetrics: (id: string, spentPennies: number, count: number) => void; refresh: (quiet?: boolean) => Promise<void> };
+>>>>>>> 7534a2d (redesign and realtime)
 const Context = createContext<Family | null>(null);
 const YEAR = 2026;
 
@@ -26,11 +35,22 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [role, setRole] = useState<"admin" | "member" | null>(null);
+<<<<<<< HEAD
   const authRoute = pathname === "/login" || pathname === "/forgot-password" || pathname === "/reset-password" || pathname === "/account-setup" || pathname === "/auth/callback";
 
   const load = useCallback(async () => {
     if (authRoute) { setLoading(false); return; }
     const db = createClient(); setLoading(true);
+=======
+  const authRoute = isAuthRoute(pathname);
+
+  // `quiet` skips the loading flag so a background refresh (another device
+  // changed something) updates the data in place instead of blanking the page
+  // behind a skeleton. Matches the same option on Family Access.
+  const load = useCallback(async (quiet = false) => {
+    if (authRoute) { setLoading(false); return; }
+    const db = createClient(); if (!quiet) setLoading(true);
+>>>>>>> 7534a2d (redesign and realtime)
     const auth = await db.auth.getUser();
     if (!auth.data.user) { setRole(null); setLoading(false); return; }
     const membership = await db.from("app_members").select("role").eq("user_id", auth.data.user.id).eq("active", true).maybeSingle();
@@ -84,6 +104,18 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => { const handle = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(handle); }, [load]);
 
+<<<<<<< HEAD
+=======
+  // The people list, their budgets, and their idea/purchase counts all come from
+  // these tables. Refreshing quietly keeps the grid on screen while it updates.
+  // Skipped on auth routes, where there is no session to authorize a stream.
+  useRealtimeRefresh(
+    ["people", "christmas_recipients", "gift_ideas", "purchases"],
+    () => load(true),
+    { enabled: !authRoute },
+  );
+
+>>>>>>> 7534a2d (redesign and realtime)
   const mutate = async (operation: PromiseLike<{ error: unknown | null }>, message: string) => { const result = await operation; if (result.error) { setError(message); throw new Error(message); } await load(); };
   const validatePersonValues = (id: string | null, name: string, budgetPennies: number) => {
     const validName = validateRequiredText(name, { field: "a name", maxLength: INPUT_LIMITS.name });

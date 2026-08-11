@@ -1,7 +1,10 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+<<<<<<< HEAD
 import Link from "next/link";
+=======
+>>>>>>> 7534a2d (redesign and realtime)
 import { formatPennies } from "@/lib/currency";
 import {
   INPUT_LIMITS,
@@ -12,6 +15,23 @@ import {
   validateRequiredText,
 } from "@/lib/input-validation";
 import { createClient } from "../../../utils/supabase/client";
+<<<<<<< HEAD
+=======
+import { IconPlus } from "../components/icons";
+import {
+  Badge,
+  Button,
+  ButtonLink,
+  EmptyState,
+  Field,
+  Input,
+  MoneyInput,
+  Notice,
+  Skeleton,
+  Textarea,
+  buttonClasses,
+} from "../components/ui";
+>>>>>>> 7534a2d (redesign and realtime)
 
 type GiftIdea = {
   id: string;
@@ -143,6 +163,7 @@ export function GiftIdeas({
     setNotice(`“${idea.title}” was removed. Budgets and purchases were not changed.`);
   };
 
+<<<<<<< HEAD
   return (
     <section className="rounded-2xl border border-[#e3e1d8] bg-white p-5 shadow-sm sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -163,6 +184,33 @@ export function GiftIdeas({
 
       {notice && <p role="status" className="mt-4 rounded-xl bg-[#edf7f3] p-3 text-sm font-semibold text-[#28685c]">{notice}</p>}
       {error && <p role="alert" className="mt-4 rounded-xl bg-[#fff2ed] p-3 text-sm font-semibold text-[#9a503c]">{error}</p>}
+=======
+  const showEmptyState = !editor && !loading && ideas?.length === 0;
+
+  return (
+    <section className="rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="font-display text-lg font-semibold">Gift ideas</h3>
+          <p className="mt-1 text-xs leading-5 text-ink-600">Planning only — ideas do not count as purchases.</p>
+        </div>
+        {/* The empty state carries its own call to action, so the header one
+            would be the same button twice. */}
+        {!editor && !showEmptyState && (
+          <Button
+            variant="tonal"
+            onClick={() => { setEditor({ kind: "add" }); setConfirming(null); setError(null); setNotice(null); }}
+            className="w-full sm:w-auto"
+          >
+            <IconPlus size={16} />
+            Add gift idea
+          </Button>
+        )}
+      </div>
+
+      {notice && <Notice tone="success" className="mt-4">{notice}</Notice>}
+      {error && <Notice tone="danger" className="mt-4">{error}</Notice>}
+>>>>>>> 7534a2d (redesign and realtime)
 
       {editor && (
         <GiftIdeaEditor
@@ -182,6 +230,7 @@ export function GiftIdeas({
       )}
 
       {!editor && !loading && ideas === null && (
+<<<<<<< HEAD
         <div className="mt-5 rounded-xl border border-dashed border-[#d8dfdb] p-5 text-center">
           <p className="text-sm text-[#7b8581]">Gift ideas are unavailable right now.</p>
           <button type="button" onClick={() => void loadIdeas()} className="mt-3 min-h-11 rounded-xl border px-4 text-sm font-bold text-[#28685c]">Try again</button>
@@ -199,12 +248,34 @@ export function GiftIdeas({
             + Add gift idea
           </button>
         </div>
+=======
+        <div className="mt-5 rounded-xl border border-dashed border-line-strong p-5 text-center">
+          <p className="text-sm text-ink-600">Gift ideas are unavailable right now.</p>
+          <Button variant="tonal" onClick={() => void loadIdeas()} className="mt-3">Try again</Button>
+        </div>
+      )}
+
+      {showEmptyState && (
+        <EmptyState
+          className="mt-5"
+          illustration="star"
+          title="No gift ideas yet"
+          body={`Save inspiration for ${recipientName} here before anything is bought.`}
+          action={
+            <Button onClick={() => { setEditor({ kind: "add" }); setError(null); setNotice(null); }}>
+              <IconPlus size={16} />
+              Add gift idea
+            </Button>
+          }
+        />
+>>>>>>> 7534a2d (redesign and realtime)
       )}
 
       {!editor && !loading && ideas && ideas.length > 0 && (
         <div className="mt-5 grid gap-3 md:grid-cols-2">
           {ideas.map((idea) => {
             const itemUrl = safeHttpUrl(idea.url);
+<<<<<<< HEAD
             return <article key={idea.id} className="flex min-w-0 flex-col rounded-xl border border-[#e3e8e5] bg-[#fbfcfb] p-4">
               <div className="flex items-start justify-between gap-3">
                 <h4 className="min-w-0 break-words font-bold">{idea.title}</h4>
@@ -217,11 +288,24 @@ export function GiftIdeas({
               {idea.retailer && <p className="mt-2 text-sm font-semibold text-[#56635e]">{idea.retailer}</p>}
               {idea.notes && <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-[#69746f]">{idea.notes}</p>}
               <p className="mt-4 text-xs font-semibold text-[#89938f]">
+=======
+            return <article key={idea.id} className="flex min-w-0 flex-col rounded-xl border border-line bg-surface-2 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <h4 className="min-w-0 break-words font-semibold">{idea.title}</h4>
+                {idea.estimated_price_pennies !== null && (
+                  <Badge tone="success" dot={false}>Est. {formatPennies(idea.estimated_price_pennies)}</Badge>
+                )}
+              </div>
+              {idea.retailer && <p className="mt-1.5 text-sm font-medium text-ink-600">{idea.retailer}</p>}
+              {idea.notes && <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-ink-600">{idea.notes}</p>}
+              <p className="mt-4 text-xs font-medium text-ink-400">
+>>>>>>> 7534a2d (redesign and realtime)
                 Suggested by {idea.suggested_by_name || "Unknown member (account link missing)"}
               </p>
 
               <div className="mt-auto flex flex-wrap gap-2 pt-4">
                 {purchasedIdeaIds.has(idea.id) ? (
+<<<<<<< HEAD
                   <span className="inline-flex min-h-11 items-center rounded-xl bg-[#edf7f3] px-3 text-xs font-bold text-[#28685c]">Purchased</span>
                 ) : (
                   <Link href={`/add-purchase?recipient=${encodeURIComponent(recipientId)}&idea=${encodeURIComponent(idea.id)}`} className="inline-flex min-h-11 items-center rounded-xl bg-[#1f5b50] px-3 text-xs font-bold text-white">Buy this idea</Link>
@@ -242,6 +326,28 @@ export function GiftIdeas({
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button type="button" disabled={saving} onClick={() => setConfirming(null)} className="min-h-11 rounded-xl border bg-white text-xs font-bold disabled:opacity-50">Cancel</button>
                     <button type="button" disabled={saving} onClick={() => void removeIdea(idea)} className="min-h-11 rounded-xl bg-[#9a503c] text-xs font-bold text-white disabled:opacity-50">{saving ? "Removing..." : "Remove"}</button>
+=======
+                  <Badge tone="success" className="min-h-11 rounded-xl px-3">Purchased</Badge>
+                ) : (
+                  <ButtonLink href={`/add-purchase?recipient=${encodeURIComponent(recipientId)}&idea=${encodeURIComponent(idea.id)}`} size="md">Buy this idea</ButtonLink>
+                )}
+                {itemUrl && (
+                  <a href={itemUrl} target="_blank" rel="noopener noreferrer" className={buttonClasses("tonal")}>
+                    View item
+                  </a>
+                )}
+                <Button variant="secondary" onClick={() => { setEditor({ kind: "edit", idea }); setConfirming(null); setError(null); setNotice(null); }}>Edit</Button>
+                <Button variant="dangerGhost" onClick={() => { setConfirming(idea); setError(null); setNotice(null); }}>Remove</Button>
+              </div>
+
+              {confirming?.id === idea.id && (
+                <div className="mt-3 rounded-xl border border-berry-soft-border bg-berry-soft p-3.5">
+                  <p className="text-sm font-semibold">Remove “{idea.title}”?</p>
+                  <p className="mt-1 text-xs leading-5 text-ink-600">This removes the idea only. Purchases and budgets will not change.</p>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <Button variant="secondary" disabled={saving} onClick={() => setConfirming(null)}>Cancel</Button>
+                    <Button variant="danger" disabled={saving} onClick={() => void removeIdea(idea)}>{saving ? "Removing..." : "Remove"}</Button>
+>>>>>>> 7534a2d (redesign and realtime)
                   </div>
                 </div>
               )}
@@ -289,6 +395,7 @@ function GiftIdeaEditor({
   };
 
   return (
+<<<<<<< HEAD
     <form onSubmit={(event) => void submit(event)} className="mt-5 rounded-2xl border border-[#dfe6e2] bg-[#f8faf9] p-4 sm:p-5">
       <h4 className="text-lg font-bold">{idea ? "Edit gift idea" : "Add gift idea"}</h4>
       <p className="mt-1 text-xs text-[#7b8581]">For {recipientName}</p>
@@ -328,6 +435,39 @@ function GiftIdeaEditor({
       <div className="mt-6 grid grid-cols-2 gap-3">
         <button type="button" disabled={saving} onClick={onCancel} className="min-h-12 rounded-xl border bg-white font-bold disabled:opacity-50">Cancel</button>
         <button disabled={saving} className="min-h-12 rounded-xl bg-[#1f5b50] font-bold text-white disabled:opacity-50">{saving ? "Saving..." : idea ? "Save changes" : "Add idea"}</button>
+=======
+    <form onSubmit={(event) => void submit(event)} className="mt-5 rounded-2xl border border-line bg-surface-2 p-4 sm:p-5">
+      <h4 className="font-display text-lg font-semibold">{idea ? "Edit gift idea" : "Add gift idea"}</h4>
+      <p className="mt-1 text-xs text-ink-600">For {recipientName}</p>
+
+      <div className="mt-5 grid gap-4 md:grid-cols-2">
+        <Field label="Gift" required className="md:col-span-2">
+          <Input autoFocus required maxLength={INPUT_LIMITS.title} value={values.title} onChange={(event) => update("title", event.target.value)} />
+        </Field>
+
+        <Field label="Estimated price">
+          <MoneyInput maxLength={INPUT_LIMITS.money} value={values.estimatedPrice} onValueChange={(value) => update("estimatedPrice", value)} />
+        </Field>
+
+        <Field label="Shop / retailer">
+          <Input maxLength={INPUT_LIMITS.retailer} value={values.retailer} onChange={(event) => update("retailer", event.target.value)} placeholder="Amazon, Boots, Next..." />
+        </Field>
+
+        <Field label="Link" className="md:col-span-2">
+          <Input type="url" inputMode="url" maxLength={INPUT_LIMITS.url} value={values.url} onChange={(event) => update("url", event.target.value)} placeholder="https://..." />
+        </Field>
+
+        <Field label="Notes" className="md:col-span-2">
+          <Textarea maxLength={INPUT_LIMITS.notes} rows={4} value={values.notes} onChange={(event) => update("notes", event.target.value)} placeholder="Size, colour, or anything useful..." />
+        </Field>
+      </div>
+
+      {validation && <p role="alert" className="mt-4 text-sm font-semibold text-berry">{validation}</p>}
+
+      <div className="mt-6 grid grid-cols-2 gap-3">
+        <Button variant="secondary" size="lg" disabled={saving} onClick={onCancel}>Cancel</Button>
+        <Button type="submit" size="lg" disabled={saving}>{saving ? "Saving..." : idea ? "Save changes" : "Add idea"}</Button>
+>>>>>>> 7534a2d (redesign and realtime)
       </div>
     </form>
   );
@@ -378,10 +518,17 @@ function giftIdeaError(action: "load" | "add" | "edit" | "remove", code?: string
 
 function IdeaSkeleton() {
   return (
+<<<<<<< HEAD
     <div className="h-40 animate-pulse rounded-xl border border-[#e8ecea] bg-[#fbfcfb] p-4">
       <div className="h-4 w-2/3 rounded bg-[#e9eeeb]" />
       <div className="mt-4 h-3 w-1/3 rounded bg-[#eef2f0]" />
       <div className="mt-7 h-3 w-1/2 rounded bg-[#eef2f0]" />
+=======
+    <div className="h-40 rounded-xl border border-line bg-surface-2 p-4">
+      <Skeleton className="h-4 w-2/3" />
+      <Skeleton className="mt-4 h-3 w-1/3" />
+      <Skeleton className="mt-7 h-3 w-1/2" />
+>>>>>>> 7534a2d (redesign and realtime)
     </div>
   );
 }
