@@ -11,9 +11,8 @@ import { resolveRequestOrigin } from "@/lib/request-origin";
  * the request is actually served by.
  *
  * Each environment read is written as a literal `process.env.X` member
- * expression on purpose: this module is pulled into the proxy bundle through
- * `src/utils/supabase/proxy.ts`, and that is the form the compiler can inline.
- * A dynamic read would arrive as `undefined`.
+ * expression on purpose: that is the form the compiler can inline into a server
+ * bundle. A dynamic read (`process.env[name]`) would arrive as `undefined`.
  */
 export function getRequestOrigin(request: Request) {
   return resolveRequestOrigin({

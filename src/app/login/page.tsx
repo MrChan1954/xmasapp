@@ -32,6 +32,28 @@ export default function LoginPage() {
     window.location.replace(`/account-setup${hash}`);
   }, []);
 
+  // Someone already signed in has no business on the sign-in form. `proxy.ts`
+  // used to send them home; it cannot run on Cloudflare Workers, so the check
+  // happens here. Only an active member is bounced — a revoked account must be
+  // able to see the access_denied message rather than be looped back to it.
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      const db = createClient();
+      const auth = await db.auth.getUser();
+      if (cancelled || !auth.data.user) return;
+      const member = await db
+        .from("app_members")
+        .select("id")
+        .eq("user_id", auth.data.user.id)
+        .eq("active", true)
+        .maybeSingle();
+      if (!cancelled && member.data) router.replace("/");
+    };
+    void check();
+    return () => { cancelled = true; };
+  }, [router]);
+
   const submit = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setMessage("");
     const normalizedEmail = validateEmail(email);

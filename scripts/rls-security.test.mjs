@@ -421,7 +421,7 @@ test("the request origin only relaxes to plain HTTP under next dev", async () =>
   assert.doesNotMatch(resolver, /globalThis\.process/);
 
   // The one caller that supplies that flag must derive it from NODE_ENV, as a
-  // literal member expression the proxy bundle can inline.
+  // literal member expression the server bundle can inline.
   const wrapper = readFileSync(join(root, "src", "utils", "request-origin.ts"), "utf8");
   assert.match(wrapper, /^import "server-only";/);
   assert.match(wrapper, /isDevelopment: process\.env\.NODE_ENV === "development"/);

@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { INPUT_LIMITS, MAX_PENNIES, validateRequiredText, validateUuid } from "@/lib/input-validation";
 import {
   validateRecipientAllocationSnapshot,
@@ -24,6 +24,7 @@ const YEAR = 2026;
 
 export function FamilyProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [people, setPeople] = useState<Person[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,9 +38,21 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     if (authRoute) { setLoading(false); return; }
     const db = createClient(); if (!quiet) setLoading(true);
     const auth = await db.auth.getUser();
-    if (!auth.data.user) { setRole(null); setLoading(false); return; }
+    // The signed-out and revoked-member redirects used to live in `proxy.ts`.
+    // They are here now because Cloudflare Workers cannot run Next 16's
+    // Node-runtime proxy. This is a navigation convenience only — it was never
+    // the security boundary. Every row stays behind RLS and every admin route
+    // re-authorizes independently (see the comment in the family-access route).
+    if (!auth.data.user) { setRole(null); setLoading(false); router.replace("/login"); return; }
     const membership = await db.from("app_members").select("role").eq("user_id", auth.data.user.id).eq("active", true).maybeSingle();
-    setRole(membership.data?.role === "admin" ? "admin" : membership.data ? "member" : null);
+    if (!membership.data) {
+      await db.auth.signOut();
+      setRole(null);
+      setLoading(false);
+      router.replace("/login?error=access_denied");
+      return;
+    }
+    setRole(membership.data.role === "admin" ? "admin" : "member");
     const event = await db.from("christmas_events").select("id").eq("year", YEAR).maybeSingle();
     if (event.error || !event.data) { setError("Christmas 2026 could not be loaded."); setLoading(false); return; }
     const recipients = await db.from("christmas_recipients").select("id,person_id,active,budget_pennies").eq("christmas_event_id", event.data.id).order("created_at");
@@ -85,7 +98,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
       purchaseRows.error ? "Purchase totals are unavailable until the Purchases migration is applied." : null,
     ].filter(Boolean);
     setError(metricErrors.length ? metricErrors.join(" ") : null); setLoading(false);
-  }, [authRoute]);
+  }, [authRoute, router]);
 
   useEffect(() => { const handle = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(handle); }, [load]);
 
