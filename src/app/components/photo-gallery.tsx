@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Camera, ImagePlus, Trash2 } from "lucide-react";
 import { createClient } from "../../../utils/supabase/client";
+import { photoIntake } from "@/lib/photo-limits";
 import { cx } from "./cx";
 import {
   MAX_PHOTOS,
@@ -79,15 +80,15 @@ export function PhotoGallery({ parent, label }: { parent: Parent; label: string 
     if (!files?.length) return;
     setError(null);
 
-    const room = MAX_PHOTOS - photos.length;
-    if (room <= 0) {
+    const intake = photoIntake(photos.length, files.length);
+    if (intake.atLimit) {
       setError(`Up to ${MAX_PHOTOS} photos can be added to one item.`);
       return;
     }
 
     setBusy(true);
     const db = createClient();
-    const chosen = [...files].slice(0, room);
+    const chosen = [...files].slice(0, intake.accepted);
 
     for (const file of chosen) {
       try {
@@ -98,8 +99,8 @@ export function PhotoGallery({ parent, label }: { parent: Parent; label: string 
       }
     }
 
-    if (files.length > room) {
-      setError(`Only ${room} more ${room === 1 ? "photo" : "photos"} could be added — the limit is ${MAX_PHOTOS}.`);
+    if (intake.rejected > 0) {
+      setError(`Only ${intake.accepted} more could be added — the limit is ${MAX_PHOTOS} per item.`);
     }
     await load();
     setBusy(false);

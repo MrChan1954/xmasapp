@@ -19,6 +19,7 @@
     "test:payment-log": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/payment-log.test.ts",
     "test:validation": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/input-validation.test.ts",
     "test:request-origin": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/request-origin.test.ts",
+    "test:photo-limits": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/photo-limits.test.ts",
     "test:images": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/image-resize.test.ts",
     "test:pwa": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/pwa-assets.test.mjs",
     "test:security": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/rls-security.test.mjs"

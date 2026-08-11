@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Camera, ImagePlus, X } from "lucide-react";
 import { createClient } from "../../../utils/supabase/client";
 import { resizeImage } from "@/lib/image-resize";
+import { photoIntake } from "@/lib/photo-limits";
 import { MAX_PHOTOS, uploadPhoto, type PhotoParent } from "./photo-storage";
 import { Notice } from "./ui";
 
@@ -29,50 +30,65 @@ export function usePendingPhotos() {
   const [error, setError] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
 
-  // Object URLs are a manual allocation; without this they leak for the life of
-  // the document.
+  // Object URLs are a manual allocation. Revoking has to happen on unmount only:
+  // an effect that depended on `photos` would run its cleanup on every change
+  // and revoke URLs for photos still on screen, blanking their previews. The ref
+  // is written in an effect rather than during render.
+  const photosRef = useRef<PendingPhoto[]>([]);
+  useEffect(() => {
+    photosRef.current = photos;
+  }, [photos]);
   useEffect(
     () => () => {
-      for (const photo of photos) URL.revokeObjectURL(photo.previewUrl);
+      for (const photo of photosRef.current) URL.revokeObjectURL(photo.previewUrl);
     },
-    [photos],
+    [],
   );
 
-  const add = useCallback(async (files: FileList | null) => {
-    if (!files?.length) return;
-    setError(null);
-    setPreparing(true);
+  const add = useCallback(
+    async (files: FileList | null) => {
+      if (!files?.length) return;
+      setError(null);
 
-    const prepared: PendingPhoto[] = [];
-    let room = 0;
-    setPhotos((current) => {
-      room = MAX_PHOTOS - current.length;
-      return current;
-    });
-
-    for (const file of [...files].slice(0, Math.max(room, 0))) {
-      try {
-        const { blob, width, height } = await resizeImage(file);
-        prepared.push({
-          id: crypto.randomUUID(),
-          blob,
-          width,
-          height,
-          previewUrl: URL.createObjectURL(blob),
-        });
-      } catch {
-        setError("That photo could not be read.");
+      // Read the current count from state directly. Passing an updater to
+      // `setPhotos` just to read it does NOT work: React defers updaters to
+      // render, so the value would still be its initial one here.
+      const intake = photoIntake(photos.length, files.length);
+      if (intake.atLimit) {
+        setError(`Up to ${MAX_PHOTOS} photos can be added to one item.`);
+        return;
       }
-    }
 
-    if (prepared.length) {
-      setPhotos((current) => [...current, ...prepared].slice(0, MAX_PHOTOS));
-    }
-    if (files.length > Math.max(room, 0)) {
-      setError(`Up to ${MAX_PHOTOS} photos can be added to one item.`);
-    }
-    setPreparing(false);
-  }, []);
+      setPreparing(true);
+      const prepared: PendingPhoto[] = [];
+
+      for (const file of [...files].slice(0, intake.accepted)) {
+        try {
+          const { blob, width, height } = await resizeImage(file);
+          prepared.push({
+            id: crypto.randomUUID(),
+            blob,
+            width,
+            height,
+            previewUrl: URL.createObjectURL(blob),
+          });
+        } catch {
+          setError("That photo could not be read.");
+        }
+      }
+
+      if (prepared.length) {
+        // The cap is re-applied inside the updater, which is where the authoritative
+        // current value lives if two selections land close together.
+        setPhotos((current) => [...current, ...prepared].slice(0, MAX_PHOTOS));
+      }
+      if (intake.rejected > 0) {
+        setError(`Only ${intake.accepted} more could be added — the limit is ${MAX_PHOTOS} per item.`);
+      }
+      setPreparing(false);
+    },
+    [photos.length],
+  );
 
   const remove = useCallback((id: string) => {
     setPhotos((current) => {

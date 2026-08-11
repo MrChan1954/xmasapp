@@ -6,7 +6,7 @@ import { resizeImage } from "@/lib/image-resize";
 export const PHOTO_BUCKET = "item-photos";
 /** Signed URLs are re-minted on every load, so this only has to outlive a visit. */
 export const SIGNED_URL_TTL_SECONDS = 60 * 60;
-export const MAX_PHOTOS = 12;
+export { MAX_PHOTOS } from "@/lib/photo-limits";
 
 export type PhotoParent = { kind: "purchase" | "giftIdea"; id: string };
 
