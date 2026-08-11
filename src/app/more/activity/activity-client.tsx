@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "../../../../utils/supabase/client";
 import { formatPennies } from "@/lib/currency";
 import { PageHeader } from "../../components/app-shell";
-import { Badge, EmptyState, Notice, Skeleton } from "../../components/ui";
+import { Badge, ChipRow, EmptyState, FilterChip, Input, Notice, Segmented, Skeleton, Toolbar } from "../../components/ui";
 import { useRealtimeRefresh } from "../../components/use-realtime-refresh";
 
 type AuditEntry = {
@@ -13,51 +13,62 @@ type AuditEntry = {
   table_name: string;
   action: "added" | "removed" | "restored";
   actor_name: string | null;
-  details: Record<string, string | null> | null;
+  subject: string | null;
+  context: string | null;
+  amount_pennies: number | null;
 };
 
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 300;
 
 /** Table names are an implementation detail; these are what the family calls them. */
-const SUBJECTS: Record<string, { singular: string; group: string }> = {
-  people: { singular: "Person", group: "People" },
-  contributors: { singular: "Contributor", group: "Contributors" },
-  christmas_recipients: { singular: "Recipient", group: "People" },
-  recipient_contributions: { singular: "Planned contribution", group: "Contributors" },
-  purchases: { singular: "Purchase", group: "Purchases" },
-  purchase_allocations: { singular: "Purchase split", group: "Purchases" },
-  gift_ideas: { singular: "Gift idea", group: "Gift ideas" },
-  settlements: { singular: "Payment", group: "Payments" },
-  app_members: { singular: "Account", group: "Accounts" },
-};
+const KINDS = {
+  purchases: "Purchases",
+  purchase_allocations: "Purchase splits",
+  gift_ideas: "Gift ideas",
+  settlements: "Payments",
+  contributors: "Contributors",
+  recipient_contributions: "Planned amounts",
+  christmas_recipients: "People on the list",
+  people: "People",
+  app_members: "Accounts",
+} as const;
 
 const ACTION_TONE = { added: "success", removed: "danger", restored: "warning" } as const;
 
+type ActionFilter = "all" | "added" | "removed" | "restored";
+type SortKey = "newest" | "oldest" | "largest";
+
 /**
- * Describes one entry in the family's own language rather than echoing column
- * names. `details` is intentionally sparse — the trigger records only
- * identifiers and amounts — so anything missing degrades to the plain subject.
+ * Turns the structured columns into one readable line. The trigger resolves
+ * names at write time, so this is only composition — no lookups, and entries
+ * stay accurate even after the underlying record is deleted.
  */
 function describe(entry: AuditEntry) {
-  const subject = SUBJECTS[entry.table_name]?.singular ?? entry.table_name;
-  const details = entry.details ?? {};
-  const amount = details.amount_pennies;
+  const { table_name: kind, subject, context, amount_pennies: amount } = entry;
+  const money = amount !== null ? formatPennies(amount) : null;
 
-  if (entry.table_name === "purchases" && details.description) {
-    return amount
-      ? `${subject}: ${details.description} (${formatPennies(Number(amount))})`
-      : `${subject}: ${details.description}`;
+  if (kind === "settlements") {
+    return subject && context ? `${subject} paid ${context}${money ? ` ${money}` : ""}` : `Payment${money ? ` ${money}` : ""}`;
   }
-  if (entry.table_name === "settlements" && amount) {
-    return `${subject} of ${formatPennies(Number(amount))}`;
+  if (kind === "purchases") {
+    return `${subject ?? "Purchase"}${money ? ` (${money})` : ""}${context ? ` for ${context}` : ""}`;
   }
-  if (entry.table_name === "gift_ideas" && details.title) {
-    return `${subject}: ${details.title}`;
+  if (kind === "purchase_allocations") {
+    return `${subject ?? "Someone"}'s share${money ? ` of ${money}` : ""}${context ? ` on ${context}` : ""}`;
   }
-  if (entry.table_name === "people" && details.name) {
-    return `${subject}: ${details.name}`;
+  if (kind === "recipient_contributions") {
+    return `${subject ?? "Someone"}'s planned${money ? ` ${money}` : ""}${context ? ` for ${context}` : ""}`;
   }
-  return subject;
+  if (kind === "gift_ideas") {
+    return `${subject ?? "Gift idea"}${context ? ` for ${context}` : ""}`;
+  }
+  if (kind === "app_members") {
+    return `Account for ${subject ?? "someone"}${context ? ` (${context})` : ""}`;
+  }
+  if (kind === "christmas_recipients") {
+    return `${subject ?? "Someone"} on the Christmas list${money ? ` (${money} budget)` : ""}`;
+  }
+  return subject ?? KINDS[kind as keyof typeof KINDS] ?? kind;
 }
 
 function formatWhen(value: string) {
@@ -74,13 +85,19 @@ export function ActivityClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [action, setAction] = useState<ActionFilter>("all");
+  const [kind, setKind] = useState<string>("all");
+  const [actor, setActor] = useState<string>("all");
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<SortKey>("newest");
+
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
-    // No admin check here: RLS on `audit_log` returns nothing to anyone who is
-    // not the Global Admin, so the browser client is the whole enforcement.
+    // No role check here: RLS on `audit_log` returns rows to active members and
+    // nobody else, so the database is the whole enforcement.
     const result = await createClient()
       .from("audit_log")
-      .select("id, occurred_at, table_name, action, actor_name, details")
+      .select("id, occurred_at, table_name, action, actor_name, subject, context, amount_pennies")
       .order("occurred_at", { ascending: false })
       .limit(PAGE_SIZE);
 
@@ -98,18 +115,55 @@ export function ActivityClient() {
     return () => window.clearTimeout(timer);
   }, [load]);
 
-  // The log is written by triggers on tables that already stream, so a change
-  // made on another device appears here without a reload.
+  // The log is written by triggers on tables that already stream, so activity
+  // from another device appears without a reload.
   useRealtimeRefresh(
-    ["purchases", "purchase_allocations", "settlements", "contributors", "gift_ideas", "people", "christmas_recipients"],
+    ["purchases", "purchase_allocations", "settlements", "contributors", "gift_ideas", "people", "christmas_recipients", "recipient_contributions"],
     () => load(true),
+  );
+
+  // Only offer filters that this log actually contains, so nothing dead-ends.
+  const kinds = useMemo(
+    () => [...new Set(entries.map((entry) => entry.table_name))].sort(),
+    [entries],
+  );
+  const actors = useMemo(
+    () => [...new Set(entries.map((entry) => entry.actor_name).filter((name): name is string => Boolean(name)))].sort(),
+    [entries],
+  );
+
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const filtered = entries.filter((entry) => {
+      if (action !== "all" && entry.action !== action) return false;
+      if (kind !== "all" && entry.table_name !== kind) return false;
+      if (actor !== "all" && (entry.actor_name ?? "") !== actor) return false;
+      if (!needle) return true;
+      return `${describe(entry)} ${entry.actor_name ?? ""}`.toLowerCase().includes(needle);
+    });
+
+    if (sort === "largest") {
+      // Entries with no money sort last rather than being treated as zero.
+      return [...filtered].sort((a, b) => (b.amount_pennies ?? -1) - (a.amount_pennies ?? -1));
+    }
+    return sort === "oldest" ? [...filtered].reverse() : filtered;
+  }, [entries, action, kind, actor, query, sort]);
+
+  const counts = useMemo(
+    () => ({
+      all: entries.length,
+      added: entries.filter((entry) => entry.action === "added").length,
+      removed: entries.filter((entry) => entry.action === "removed").length,
+      restored: entries.filter((entry) => entry.action === "restored").length,
+    }),
+    [entries],
   );
 
   return (
     <>
       <PageHeader
         title="Activity"
-        description="Everything added or removed across the app. Only the Global Admin can see this."
+        description="Everything added or removed across the app, and who did it."
       />
 
       {error && <Notice tone="danger" className="mt-6">{error}</Notice>}
@@ -132,28 +186,105 @@ export function ActivityClient() {
       )}
 
       {!loading && entries.length > 0 && (
-        <ul className="mt-6 grid gap-2">
-          {entries.map((entry) => (
-            <li
-              key={entry.id}
-              className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-2xl border border-line bg-surface px-5 py-4 shadow-card"
-            >
-              <div className="min-w-0">
-                <p className="font-medium text-ink-900">{describe(entry)}</p>
-                <p className="mt-0.5 text-sm text-ink-600">
-                  {/* A NULL actor can only come from the service-role client,
-                      which nothing but the Family Access admin route uses. */}
-                  {entry.actor_name ?? "Global Admin (Family Access)"} · {formatWhen(entry.occurred_at)}
-                </p>
-              </div>
-              <Badge tone={ACTION_TONE[entry.action]}>{entry.action}</Badge>
-            </li>
-          ))}
-        </ul>
-      )}
+        <>
+          <Toolbar
+            className="mt-6"
+            start={
+              <Input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search activity"
+                aria-label="Search activity"
+                className="sm:w-64"
+              />
+            }
+            end={
+              <Segmented
+                ariaLabel="Sort activity"
+                value={sort}
+                onChange={setSort}
+                options={[
+                  { value: "newest", label: "Newest" },
+                  { value: "oldest", label: "Oldest" },
+                  { value: "largest", label: "Largest" },
+                ]}
+              />
+            }
+          />
 
-      {entries.length === PAGE_SIZE && (
-        <p className="mt-4 text-sm text-ink-600">Showing the most recent {PAGE_SIZE} entries.</p>
+          <ChipRow label="Action" className="mt-4">
+            {(["all", "added", "removed", "restored"] as const).map((value) => (
+              <FilterChip
+                key={value}
+                active={action === value}
+                count={counts[value]}
+                onClick={() => setAction(value)}
+              >
+                {value === "all" ? "All" : value[0].toUpperCase() + value.slice(1)}
+              </FilterChip>
+            ))}
+          </ChipRow>
+
+          <ChipRow label="Type" className="mt-3">
+            <FilterChip active={kind === "all"} onClick={() => setKind("all")}>All</FilterChip>
+            {kinds.map((value) => (
+              <FilterChip key={value} active={kind === value} onClick={() => setKind(value)}>
+                {KINDS[value as keyof typeof KINDS] ?? value}
+              </FilterChip>
+            ))}
+          </ChipRow>
+
+          {actors.length > 1 && (
+            <ChipRow label="Who" className="mt-3">
+              <FilterChip active={actor === "all"} onClick={() => setActor("all")}>Everyone</FilterChip>
+              {actors.map((name) => (
+                <FilterChip key={name} active={actor === name} onClick={() => setActor(name)}>
+                  {name}
+                </FilterChip>
+              ))}
+            </ChipRow>
+          )}
+
+          <p className="mt-5 text-sm text-ink-600">
+            {visible.length === entries.length
+              ? `${entries.length} ${entries.length === 1 ? "entry" : "entries"}`
+              : `${visible.length} of ${entries.length} entries`}
+          </p>
+
+          {visible.length === 0 ? (
+            <EmptyState
+              className="mt-4"
+              illustration="star"
+              title="Nothing matches"
+              body="Try a different filter or search."
+            />
+          ) : (
+            <ul className="mt-3 grid gap-2">
+              {visible.map((entry) => (
+                <li
+                  key={entry.id}
+                  className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-2xl border border-line bg-surface px-5 py-4 shadow-card"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium text-ink-900">{describe(entry)}</p>
+                    <p className="mt-0.5 text-sm text-ink-600">
+                      {/* A missing actor can only come from the service-role
+                          client, which nothing but the Family Access route uses. */}
+                      {entry.actor_name ?? "Global Admin (Family Access)"} · {formatWhen(entry.occurred_at)} ·{" "}
+                      {KINDS[entry.table_name as keyof typeof KINDS] ?? entry.table_name}
+                    </p>
+                  </div>
+                  <Badge tone={ACTION_TONE[entry.action]}>{entry.action}</Badge>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {entries.length === PAGE_SIZE && (
+            <p className="mt-4 text-sm text-ink-600">Showing the most recent {PAGE_SIZE} entries.</p>
+          )}
+        </>
       )}
     </>
   );

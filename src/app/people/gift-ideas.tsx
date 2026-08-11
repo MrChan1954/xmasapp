@@ -12,6 +12,7 @@ import {
 } from "@/lib/input-validation";
 import { createClient } from "../../../utils/supabase/client";
 import { IconPlus } from "../components/icons";
+import { PhotoGallery } from "../components/photo-gallery";
 import {
   Badge,
   Button,
@@ -237,6 +238,8 @@ export function GiftIdeas({
               <p className="mt-4 text-xs font-medium text-ink-400">
                 Suggested by {idea.suggested_by_name || "Unknown member (account link missing)"}
               </p>
+
+              <PhotoGallery parent={{ kind: "giftIdea", id: idea.id }} label={idea.title} />
 
               <div className="mt-auto flex flex-wrap gap-2 pt-4">
                 {purchasedIdeaIds.has(idea.id) ? (

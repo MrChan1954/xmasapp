@@ -9,6 +9,7 @@ import {
 } from "@/lib/purchases";
 import { createClient } from "../../../utils/supabase/client";
 import { IconPlus } from "../components/icons";
+import { PhotoGallery } from "../components/photo-gallery";
 import {
   Badge,
   Button,
@@ -217,6 +218,9 @@ export function Purchases({
                   <span>{formatPurchaseDate(purchase.purchase_date)}</span>
                 </div>
                 {purchase.notes && <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-ink-600">{purchase.notes}</p>}
+
+                <PhotoGallery parent={{ kind: "purchase", id: purchase.id }} label={purchase.description} />
+
                 <div className="mt-3 flex items-center justify-between gap-3">
                   <Badge tone="success">{purchaseLifecycleLabel(status)}</Badge>
                   <span className="text-xs font-medium text-ink-400">{purchase.split_type === "automatic" ? "Automatic split" : "Custom split"}</span>

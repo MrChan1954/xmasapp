@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Gift,
+  History,
   House,
   Mail,
   MoreHorizontal,
@@ -59,6 +60,7 @@ export const IconLock = icon(Lock);
 export const IconUser = icon(User);
 export const IconReceipt = icon(Receipt);
 export const IconCalendar = icon(CalendarDays);
+export const IconHistory = icon(History);
 export const IconArrowRight = icon(ArrowRight);
 export const IconFilter = icon(SlidersHorizontal);
 export const IconRefresh = icon(RefreshCw);

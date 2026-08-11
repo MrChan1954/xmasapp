@@ -1,21 +1,28 @@
 import type { NextConfig } from "next";
 
 const isDevelopment = process.env.NODE_ENV === "development";
-const supabaseConnections = (() => {
+const supabaseOrigin = (() => {
   try {
-    const url = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "");
-    const websocket = new URL(url);
-    websocket.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    return `${url.origin} ${websocket.origin}`;
+    return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").origin;
   } catch {
     return "";
   }
+})();
+const supabaseConnections = (() => {
+  if (!supabaseOrigin) return "";
+  const websocket = new URL(supabaseOrigin);
+  websocket.protocol = websocket.protocol === "https:" ? "wss:" : "ws:";
+  return `${supabaseOrigin} ${websocket.origin}`;
 })();
 const contentSecurityPolicy = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${isDevelopment ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
+  // Photos live in a private Supabase Storage bucket and are shown through
+  // signed URLs on the Supabase origin, so that origin has to be allowed here
+  // or every image is blocked. Same host already trusted by `connect-src`; no
+  // wildcard and no third party is introduced.
+  `img-src 'self' data: blob: ${supabaseOrigin}`.trim(),
   "font-src 'self' data:",
   `connect-src 'self' ${supabaseConnections}${isDevelopment ? " ws:" : ""}`.trim(),
   "object-src 'none'",

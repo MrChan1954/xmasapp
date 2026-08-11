@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppShell, PageHeader } from "../components/app-shell";
 import { useFestive } from "../components/festive/festive-context";
-import { IconChevronRight, IconPeople, IconReceipt, IconUser } from "../components/icons";
+import { IconChevronRight, IconHistory, IconPeople, IconReceipt, IconUser } from "../components/icons";
 import { InstallCard } from "../components/install-card";
 import { Notice, Skeleton, cx } from "../components/ui";
 
@@ -104,6 +104,15 @@ export default function MorePage() {
           description="Search and review recorded payments."
           icon={<IconReceipt size={20} />}
         />
+        {/* Not under Admin: every member can read the log, enforced by RLS. */}
+        <div className="mt-3">
+          <SettingsLink
+            href="/more/activity"
+            title="Activity"
+            description="Everything added or removed, and who did it."
+            icon={<IconHistory size={20} />}
+          />
+        </div>
       </Group>
 
       {access === "checking" && (
@@ -120,14 +129,6 @@ export default function MorePage() {
             description="Invite family and manage their app access."
             icon={<IconPeople size={20} />}
           />
-          <div className="mt-3">
-            <SettingsLink
-              href="/more/activity"
-              title="Activity log"
-              description="Everything added or removed, and who did it."
-              icon={<IconReceipt size={20} />}
-            />
-          </div>
         </Group>
       )}
     </AppShell>

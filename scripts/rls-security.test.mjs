@@ -14,6 +14,8 @@ const atomicRecipientMigrationName = "202608100012_atomic_recipient_budget_alloc
 const purchaseTrackingMigrationName = "202608100013_simplify_purchase_status_and_add_gift_location.sql";
 const realtimeMigrationName = "202608100014_enable_realtime_for_shared_data.sql";
 const auditMigrationName = "202608100015_add_admin_audit_log.sql";
+const auditOpenMigrationName = "202608100016_open_audit_log_and_enrich_detail.sql";
+const photosMigrationName = "202608100017_add_item_photos.sql";
 const authorizationMigration = readFileSync(
   join(migrationsDirectory, authorizationMigrationName),
   "utf8",
@@ -29,6 +31,8 @@ const purchaseTrackingMigration = readFileSync(
 );
 const realtimeMigration = readFileSync(join(migrationsDirectory, realtimeMigrationName), "utf8");
 const auditMigration = readFileSync(join(migrationsDirectory, auditMigrationName), "utf8");
+const auditOpenMigration = readFileSync(join(migrationsDirectory, auditOpenMigrationName), "utf8");
+const photosMigration = readFileSync(join(migrationsDirectory, photosMigrationName), "utf8");
 
 const applicationTables = [
   "christmas_events",
@@ -44,7 +48,7 @@ const applicationTables = [
 ];
 
 test("the authorization migration explicitly enables RLS on every application table", () => {
-  assert.equal(migrationFiles.at(-1), auditMigrationName);
+  assert.equal(migrationFiles.at(-1), photosMigrationName);
 
   for (const table of applicationTables) {
     assert.match(
@@ -513,23 +517,41 @@ test("realtime subscriptions never trust the streamed payload as data", () => {
   }
 });
 
-test("the audit log is readable only by the Global Admin and writable by nobody", () => {
-  const statements = auditMigration.replace(/--[^\n]*/g, "");
+test("the audit log is readable by active members and writable by nobody", () => {
+  const created = auditMigration.replace(/--[^\n]*/g, "");
+  const opened = auditOpenMigration.replace(/--[^\n]*/g, "");
 
-  assert.match(statements, /alter table public\.audit_log enable row level security;/i);
+  assert.match(created, /alter table public\.audit_log enable row level security;/i);
   assert.match(
-    statements,
+    created,
     /revoke all privileges on table public\.audit_log from public, anon, authenticated;/i,
   );
 
-  // Read is admin-only, reusing the existing SECURITY DEFINER helper.
-  assert.match(statements, /for select to authenticated\s+using \(public\.is_app_admin\(\)\)/i);
+  // Migration 016 widened read access from admins to any active member, and the
+  // admin-only policy must actually be dropped rather than left alongside.
+  assert.match(opened, /drop policy if exists "admins read the audit log" on public\.audit_log;/i);
+  assert.match(opened, /for select to authenticated\s+using \(public\.is_active_app_member\(\)\)/i);
 
-  // The only grant is SELECT. Rows must arrive solely through the trigger, so an
-  // admin cannot rewrite or clear their own audit trail from the app.
-  assert.match(statements, /grant select on table public\.audit_log to authenticated;/i);
-  assert.doesNotMatch(statements, /grant [^;]*\b(insert|update|delete)\b[^;]*on table public\.audit_log/i);
-  assert.doesNotMatch(statements, /for (insert|update|delete)[^;]*on public\.audit_log/i);
+  // Widening the audience makes the write lockdown matter more, not less: SELECT
+  // is still the only grant and there is still no insert/update/delete policy,
+  // so nobody — admin included — can edit or clear their own trail.
+  assert.match(created, /grant select on table public\.audit_log to authenticated;/i);
+  for (const migration of [created, opened]) {
+    assert.doesNotMatch(migration, /grant [^;]*\b(insert|update|delete)\b[^;]*on table public\.audit_log/i);
+    assert.doesNotMatch(migration, /for (insert|update|delete)[^;]*on public\.audit_log/i);
+  }
+});
+
+test("the audit log never records a login email", () => {
+  // The log is now visible to the whole family, so what the trigger copies into
+  // it matters. `app_members.email` must never be one of them.
+  for (const migration of [auditMigration, auditOpenMigration]) {
+    const statements = migration.replace(/--[^\n]*/g, "");
+    assert.doesNotMatch(statements, /->>\s*'email'/i);
+    assert.doesNotMatch(statements, /\bm\.email\b|\bapp_members\.email\b/i);
+    // Whole-row capture would sweep the email in by accident.
+    assert.doesNotMatch(statements, /'details',\s*to_jsonb\((NEW|OLD)\)/i);
+  }
 });
 
 test("every table that can add or remove records is audited", () => {
@@ -564,6 +586,50 @@ test("every table that can add or remove records is audited", () => {
   // every other SECURITY DEFINER function in this schema.
   assert.match(statements, /create or replace function public\.record_audit_event\(\)[\s\S]*?security definer[\s\S]*?set search_path = ''/i);
   assert.match(statements, /create or replace function public\.audit_actor_name\(\)[\s\S]*?security definer[\s\S]*?set search_path = ''/i);
+});
+
+test("item photos are visible to exactly the people who can see the item", () => {
+  const statements = photosMigration.replace(/--[^\n]*/g, "");
+
+  assert.match(statements, /alter table public\.item_photos enable row level security;/i);
+  assert.match(
+    statements,
+    /revoke all privileges on table public\.item_photos from public, anon, authenticated;/i,
+  );
+
+  // `purchases` and `gift_ideas` are both readable by any active member, so a
+  // photo of one must use the same predicate — never a wider one.
+  assert.match(statements, /for select to authenticated\s+using \(public\.is_active_app_member\(\)\)/i);
+
+  // A photo must belong to exactly one item. Without this a row could point at
+  // both, or at neither, and inherit the wrong visibility.
+  assert.match(statements, /constraint item_photos_one_parent check/i);
+
+  // No UPDATE: re-pointing a row at a different file would swap the image behind
+  // an existing audit entry.
+  assert.match(statements, /grant select, insert, delete on table public\.item_photos to authenticated;/i);
+  assert.doesNotMatch(statements, /for update[^;]*on public\.item_photos/i);
+
+  // Deleting the parent must take its photos with it.
+  assert.match(statements, /purchase_id uuid references public\.purchases\(id\) on delete cascade/i);
+  assert.match(statements, /gift_idea_id uuid references public\.gift_ideas\(id\) on delete cascade/i);
+});
+
+test("photo storage policies are scoped to the photo bucket alone", () => {
+  const statements = photosMigration.replace(/--[^\n]*/g, "");
+
+  // Every storage policy must name the bucket AND check membership. A policy
+  // missing the bucket clause would apply to every bucket in the project.
+  const storagePolicies = statements.match(/on storage\.objects[\s\S]*?;/g) ?? [];
+  assert.ok(storagePolicies.length >= 3, "expected select, insert and delete storage policies");
+  for (const policy of storagePolicies) {
+    assert.match(policy, /bucket_id = 'item-photos'/, "storage policy must be scoped to the bucket");
+    assert.match(policy, /public\.is_active_app_member\(\)/, "storage policy must require membership");
+  }
+
+  // The storage path is what a signed URL is minted against, and the activity
+  // log is readable by the whole family.
+  assert.doesNotMatch(statements, /resolved_subject := payload ->> 'storage_path'/i);
 });
 
 test("the application CSP blocks object and frame embedding and production eval", () => {
