@@ -120,6 +120,14 @@ export default function MorePage() {
             description="Invite family and manage their app access."
             icon={<IconPeople size={20} />}
           />
+          <div className="mt-3">
+            <SettingsLink
+              href="/more/activity"
+              title="Activity log"
+              description="Everything added or removed, and who did it."
+              icon={<IconReceipt size={20} />}
+            />
+          </div>
         </Group>
       )}
     </AppShell>

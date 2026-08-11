@@ -13,6 +13,7 @@ const validationMigrationName = "202608100011_validate_user_input.sql";
 const atomicRecipientMigrationName = "202608100012_atomic_recipient_budget_allocations.sql";
 const purchaseTrackingMigrationName = "202608100013_simplify_purchase_status_and_add_gift_location.sql";
 const realtimeMigrationName = "202608100014_enable_realtime_for_shared_data.sql";
+const auditMigrationName = "202608100015_add_admin_audit_log.sql";
 const authorizationMigration = readFileSync(
   join(migrationsDirectory, authorizationMigrationName),
   "utf8",
@@ -27,6 +28,7 @@ const purchaseTrackingMigration = readFileSync(
   "utf8",
 );
 const realtimeMigration = readFileSync(join(migrationsDirectory, realtimeMigrationName), "utf8");
+const auditMigration = readFileSync(join(migrationsDirectory, auditMigrationName), "utf8");
 
 const applicationTables = [
   "christmas_events",
@@ -42,7 +44,7 @@ const applicationTables = [
 ];
 
 test("the authorization migration explicitly enables RLS on every application table", () => {
-  assert.equal(migrationFiles.at(-1), realtimeMigrationName);
+  assert.equal(migrationFiles.at(-1), auditMigrationName);
 
   for (const table of applicationTables) {
     assert.match(
@@ -509,6 +511,59 @@ test("realtime subscriptions never trust the streamed payload as data", () => {
     // would bypass the authorized fetch path that applies RLS and admin checks.
     assert.doesNotMatch(source, /payload\s*\.\s*(?:new|old)\b/, `${path} must refetch, not read the payload`);
   }
+});
+
+test("the audit log is readable only by the Global Admin and writable by nobody", () => {
+  const statements = auditMigration.replace(/--[^\n]*/g, "");
+
+  assert.match(statements, /alter table public\.audit_log enable row level security;/i);
+  assert.match(
+    statements,
+    /revoke all privileges on table public\.audit_log from public, anon, authenticated;/i,
+  );
+
+  // Read is admin-only, reusing the existing SECURITY DEFINER helper.
+  assert.match(statements, /for select to authenticated\s+using \(public\.is_app_admin\(\)\)/i);
+
+  // The only grant is SELECT. Rows must arrive solely through the trigger, so an
+  // admin cannot rewrite or clear their own audit trail from the app.
+  assert.match(statements, /grant select on table public\.audit_log to authenticated;/i);
+  assert.doesNotMatch(statements, /grant [^;]*\b(insert|update|delete)\b[^;]*on table public\.audit_log/i);
+  assert.doesNotMatch(statements, /for (insert|update|delete)[^;]*on public\.audit_log/i);
+});
+
+test("every table that can add or remove records is audited", () => {
+  const statements = auditMigration.replace(/--[^\n]*/g, "");
+
+  // Soft deletes are the norm here, so these have to catch UPDATE as well or a
+  // removal would go unrecorded.
+  const softDeleted = {
+    contributors: "active",
+    christmas_recipients: "active",
+    app_members: "active",
+    purchases: "deleted_at",
+    settlements: "voided_at",
+  };
+  for (const [table, column] of Object.entries(softDeleted)) {
+    assert.match(
+      statements,
+      new RegExp(`after insert or update or delete on public\\.${table}[\\s\\S]{0,120}record_audit_event\\('${column}'\\)`, "i"),
+      `${table} must audit its ${column} soft delete`,
+    );
+  }
+
+  for (const table of ["people", "recipient_contributions", "purchase_allocations", "gift_ideas"]) {
+    assert.match(
+      statements,
+      new RegExp(`after insert or delete on public\\.${table}`, "i"),
+      `${table} must be audited`,
+    );
+  }
+
+  // The trigger runs with definer rights, so it must pin its search path like
+  // every other SECURITY DEFINER function in this schema.
+  assert.match(statements, /create or replace function public\.record_audit_event\(\)[\s\S]*?security definer[\s\S]*?set search_path = ''/i);
+  assert.match(statements, /create or replace function public\.audit_actor_name\(\)[\s\S]*?security definer[\s\S]*?set search_path = ''/i);
 });
 
 test("the application CSP blocks object and frame embedding and production eval", () => {

@@ -44,6 +44,7 @@ const TITLES: Array<{ test: RegExp; title: string; parent?: { href: string; labe
   { test: /^\/owed/u, title: "Owed" },
   { test: /^\/payment-log/u, title: "Payment log", parent: { href: "/more", label: "More" } },
   { test: /^\/more\/family-access/u, title: "Family access", parent: { href: "/more", label: "More" } },
+  { test: /^\/more\/activity/u, title: "Activity", parent: { href: "/more", label: "More" } },
   { test: /^\/more$/u, title: "More" },
   { test: /^\/account$/u, title: "Account", parent: { href: "/more", label: "More" } },
 ];
