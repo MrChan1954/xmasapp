@@ -7,6 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "test:money": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/purchases.test.ts",
     "test:currency": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/currency.test.ts",
     "test:recipient-allocations": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/recipient-allocations.test.ts",
@@ -17,6 +21,7 @@
     "test:security": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/rls-security.test.mjs"
   },
   "dependencies": {
+    "@opennextjs/cloudflare": "^1.20.2",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.2",
     "lucide-react": "^1.31.0",
@@ -33,6 +38,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.3.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wrangler": "4.120.1"
   }
 }

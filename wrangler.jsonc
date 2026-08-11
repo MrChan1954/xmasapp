@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "main": ".open-next/worker.js",
+  "name": "xmasapp",
+  // nodejs_compat is required by the adapter, and this app needs it regardless:
+  // the family-access and payment-log routes both pin `runtime = "nodejs"`.
+  "compatibility_date": "2024-12-30",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  }
+  // Secrets are deliberately NOT declared here — this file is committed.
+  // Set them with `wrangler secret put <NAME>`:
+  //   SUPABASE_SECRET_KEY   (service role; must never reach the browser)
+  // And the public values, which are safe as plain vars, with `wrangler secret
+  // put` too or via the dashboard:
+  //   NEXT_PUBLIC_SUPABASE_URL
+  //   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+  //   APP_ORIGIN  e.g. https://xmasapp.<subdomain>.workers.dev
+}
