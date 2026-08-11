@@ -3,6 +3,7 @@ import { Fraunces, Inter } from "next/font/google";
 import "./globals.css";
 import { FamilyProvider } from "./family-context";
 import { AppFrame } from "./components/app-frame";
+import { PwaRuntime } from "./components/pwa-runtime";
 import { FestiveProvider } from "./components/festive/festive-context";
 import { ThemeProvider } from "./components/theme-provider";
 
@@ -29,6 +30,28 @@ const fraunces = Fraunces({
 export const metadata: Metadata = {
   title: "Christmas Budget",
   description: "A simple Christmas gift budget planner.",
+  manifest: "/manifest.webmanifest",
+  /**
+   * `statusBarStyle` is "default", not "black-translucent", on purpose. The
+   * viewport below already sets `viewport-fit: cover`; adding
+   * "black-translucent" would extend the web view under the status bar AND
+   * force light status-bar text, which is unreadable against this app's cream
+   * `#fbf8f3` light theme. "default" lets iOS tint the bar from the
+   * media-scoped `theme-color` pair, which is already correct in both themes.
+   *
+   * No `startupImage`: that needs ~20 device-specific splash PNGs, and modern
+   * iOS composes a launch screen from the manifest's `background_color` and
+   * icon instead.
+   *
+   * The icon <link> tags are not declared here — `icon.png`, `apple-icon.png`
+   * and `favicon.ico` in this directory generate them automatically, with the
+   * sizes read from the files.
+   */
+  appleWebApp: {
+    capable: true,
+    title: "Christmas Budget",
+    statusBarStyle: "default",
+  },
 };
 
 export const viewport: Viewport = {
@@ -54,6 +77,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} ${fraunces.variable} flex min-h-full flex-col antialiased`}>
         <ThemeProvider>
+          <PwaRuntime />
           <FestiveProvider>
             <FamilyProvider>
               <AppFrame>{children}</AppFrame>

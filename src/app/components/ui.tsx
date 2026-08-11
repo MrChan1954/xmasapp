@@ -652,8 +652,15 @@ export function Modal({
         // corner radius, squaring off the rounded corner and running past the
         // panel edge. Clipping here and scrolling on the child makes the bar
         // follow the curve.
+        // The bottom inset lives on the panel, not on `ModalFooter`, because
+        // most modals have no footer (command search, family access, owed,
+        // payment log) and would otherwise put their last row under the home
+        // indicator. A sticky `bottom-0` footer honours this padding, so
+        // footered modals do not end up double-padded.
+        // Mobile only: the panel is flush to the bottom edge there
+        // (`items-end`), while on `sm:` the backdrop's own padding floats it.
         className={cx(
-          "relative flex w-full max-h-[94dvh] flex-col overflow-hidden rounded-t-3xl shadow-modal outline-none sm:rounded-3xl",
+          "relative flex w-full max-h-[94dvh] flex-col overflow-hidden rounded-t-3xl pb-[env(safe-area-inset-bottom)] shadow-modal outline-none sm:rounded-3xl sm:pb-0",
           surface === "cream" || surface === "ground" ? "bg-ground" : "bg-surface",
           sizes[size],
           className,
@@ -715,7 +722,9 @@ export function ModalHeader({
 export function ModalFooter({ className = "", children }: { className?: string; children: ReactNode }) {
   return (
     <div className={cx(
-      "sticky bottom-0 z-20 mt-2 grid grid-cols-2 gap-3 border-t border-line bg-ground/95 px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 backdrop-blur sm:px-7",
+      // Plain padding: the safe-area inset is reserved by the `Modal` panel now,
+      // so repeating it here would double it.
+      "sticky bottom-0 z-20 mt-2 grid grid-cols-2 gap-3 border-t border-line bg-ground/95 px-5 pt-4 pb-4 backdrop-blur sm:px-7",
       className,
     )}>
       {children}
@@ -803,11 +812,14 @@ export function Sheet({
         tabIndex={-1}
         // Same split as `Modal`: this element owns the radius and clips, the
         // child scrolls, so the scrollbar cannot square off a rounded corner.
+        // Bottom inset for the same reason as `Modal`. A bottom sheet is flush
+        // to the screen edge until `sm:` lifts it with `mb-6`; a right-side
+        // sheet is full height, so it always needs the inset.
         className={cx(
           "relative flex w-full flex-col overflow-hidden bg-ground shadow-modal outline-none",
           side === "bottom"
-            ? cx("max-h-[88dvh] rounded-t-3xl sm:mb-6 sm:rounded-3xl", sheetSizes[size])
-            : cx("h-full max-w-[92vw]", sheetSizes[size]),
+            ? cx("max-h-[88dvh] rounded-t-3xl pb-[env(safe-area-inset-bottom)] sm:mb-6 sm:rounded-3xl sm:pb-0", sheetSizes[size])
+            : cx("h-full max-w-[92vw] pb-[env(safe-area-inset-bottom)]", sheetSizes[size]),
           className,
         )}
       >
@@ -861,7 +873,8 @@ export function SheetFooter({ className = "", children }: { className?: string; 
   return (
     <div
       className={cx(
-        "sticky bottom-0 z-10 mt-auto grid grid-cols-2 gap-3 border-t border-line bg-ground/95 px-5 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur sm:px-6",
+        // Plain padding: the `Sheet` panel reserves the safe-area inset.
+        "sticky bottom-0 z-10 mt-auto grid grid-cols-2 gap-3 border-t border-line bg-ground/95 px-5 pt-4 pb-4 backdrop-blur sm:px-6",
         className,
       )}
     >

@@ -26,7 +26,10 @@ export function AppFrame({ children }: { children: ReactNode }) {
   if (isAuthRoute(pathname)) return <>{children}</>;
 
   return (
-    <div className="flex min-h-screen bg-ground text-ink-900">
+    // `dvh` rather than `vh`: in an installed app and in mobile Safari the
+    // dynamic viewport is the honest full height, where `100vh` can overshoot
+    // and leave the page scrollable by the height of browser chrome.
+    <div className="flex min-h-[100dvh] bg-ground text-ink-900">
       <IconRail />
       {children}
       <BottomTabs />

@@ -47,7 +47,19 @@ export function AppShell({
     <div className="relative flex min-w-0 flex-1 flex-col">
       {snow && <Snowfall />}
       <TopBar title={title ?? fallback.title} parent={parent ?? fallback.parent} actions={topBarActions} />
-      <main className={cx("relative mx-auto w-full px-4 pt-6 pb-28 sm:px-6 sm:pt-8 lg:px-8 lg:pb-16", widths[width])}>
+      {/* `pb` clears the fixed tab bar, which itself grows by the bottom inset
+          on a device with a home indicator — so the clearance has to grow with
+          it or the last row hides behind the bar. The side insets only bite in
+          landscape on a notched phone. All resolve to 0 on desktop, where `lg:`
+          drops the tab-bar clearance anyway. */}
+      <main
+        className={cx(
+          "relative mx-auto w-full pt-6 pb-[calc(7rem+env(safe-area-inset-bottom))] sm:pt-8 lg:pb-16",
+          "pl-[calc(1rem+env(safe-area-inset-left))] sm:pl-[calc(1.5rem+env(safe-area-inset-left))] lg:pl-[calc(2rem+env(safe-area-inset-left))]",
+          "pr-[calc(1rem+env(safe-area-inset-right))] sm:pr-[calc(1.5rem+env(safe-area-inset-right))] lg:pr-[calc(2rem+env(safe-area-inset-right))]",
+          widths[width],
+        )}
+      >
         {children}
       </main>
     </div>

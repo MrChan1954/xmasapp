@@ -25,7 +25,12 @@ export function TopBar({
 
   return (
     <>
-      <header className="sticky top-0 z-30 border-b border-line bg-ground/85 backdrop-blur-md">
+      {/* The top inset matters only in an installed app: with `viewport-fit:
+          cover`, the web view extends under the status bar and Dynamic Island,
+          and without this the title row sits beneath them. Padding rather than
+          an offset, so the bar's own background fills that strip. Resolves to
+          0 in a browser and on desktop. */}
+      <header className="sticky top-0 z-30 border-b border-line bg-ground/85 pt-[env(safe-area-inset-top)] backdrop-blur-md">
         <div className="flex h-16 items-center gap-3 px-4 sm:px-6 lg:h-[72px] lg:px-8">
           <Link href="/" className="flex shrink-0 items-center gap-2.5 lg:hidden" aria-label="Christmas Budget home">
             {/* Matches the desktop rail mark in `icon-rail.tsx`: glyph only, no

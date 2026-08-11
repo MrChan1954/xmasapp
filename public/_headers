@@ -1,2 +1,30 @@
 /_next/static/*
   Cache-Control: public,max-age=31536000,immutable
+
+# Cloudflare Workers Assets serves everything in this directory directly, so the
+# `headers()` block in next.config.ts never runs for these paths — verified: a
+# public/ file comes back with no CSP while an app route carries the full one.
+# That makes this file the ONLY place these headers can be set in production.
+#
+# The worker script must never be served stale or a deploy could take a long
+# time to reach an installed app. Its own CSP is tighter than the site's: this
+# script only ever fetches same-origin, so anything else is a bug and should
+# fail closed.
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+  Content-Type: application/javascript; charset=utf-8
+  Content-Security-Policy: default-src 'self'; script-src 'self'
+  X-Content-Type-Options: nosniff
+
+# `no-cache` rather than a max-age: the worker precaches this with `cache.add`,
+# which honours the HTTP cache, so a stale copy here would be frozen into Cache
+# Storage until CACHE_VERSION changed.
+/offline.html
+  Cache-Control: no-cache
+  X-Content-Type-Options: nosniff
+
+# A day, not a year: unlike /_next/static these are not content-hashed, so a
+# regenerated icon has to be able to replace itself.
+/icons/*
+  Cache-Control: public,max-age=86400
+  X-Content-Type-Options: nosniff

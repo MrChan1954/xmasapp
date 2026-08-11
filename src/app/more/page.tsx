@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { AppShell, PageHeader } from "../components/app-shell";
 import { useFestive } from "../components/festive/festive-context";
 import { IconChevronRight, IconPeople, IconReceipt, IconUser } from "../components/icons";
+import { InstallCard } from "../components/install-card";
 import { Notice, Skeleton, cx } from "../components/ui";
 
 type AccessState = "checking" | "admin" | "member" | "error";
@@ -46,6 +47,11 @@ export default function MorePage() {
           We could not check admin access right now. Your account settings are still available.
         </Notice>
       )}
+
+      {/* Renders nothing — heading included — when the app is already installed
+          or the browser offers no install path, so it never becomes permanent
+          noise. It owns its own section for exactly that reason. */}
+      <InstallCard />
 
       <Group label="Appearance">
         <div className="rounded-2xl border border-line bg-surface p-5 shadow-card">
