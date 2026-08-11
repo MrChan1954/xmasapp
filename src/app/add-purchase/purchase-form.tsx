@@ -19,9 +19,6 @@ import {
   type PurchaseStatus,
 } from "@/lib/purchases";
 import { createClient } from "../../../utils/supabase/client";
-<<<<<<< HEAD
-import { FinancialProgressBar } from "../components/financial-progress";
-=======
 import { PageHeader } from "../components/app-shell";
 import { GarlandRule } from "../components/festive/garland";
 import { FinancialProgressBar } from "../components/financial-progress";
@@ -38,7 +35,6 @@ import {
   Textarea,
   cx,
 } from "../components/ui";
->>>>>>> 7534a2d (redesign and realtime)
 import { useFamily } from "../family-context";
 
 type RecipientOption = {
@@ -396,112 +392,6 @@ export function PurchaseForm() {
   };
 
   if (loading) {
-<<<<<<< HEAD
-    return <div className="mx-auto max-w-6xl px-5 py-10 sm:px-8"><p className="text-sm font-semibold text-[#7b8581]">Loading purchase form...</p></div>;
-  }
-
-  return (
-    <form onSubmit={(event) => void save(event)} className="mx-auto max-w-6xl px-5 py-8 sm:px-8 lg:px-12 lg:py-12">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="text-sm font-semibold text-[#a64235]">Christmas 2026</p>
-          <h1 className="mt-1 text-4xl font-bold">{editId ? "Edit purchase" : "Add purchase"}</h1>
-          <p className="mt-2 text-sm leading-6 text-[#7b8581]">Record what was bought, who paid at checkout, and who is responsible for the cost.</p>
-        </div>
-        <button type="button" onClick={() => router.push("/people")} className="min-h-12 w-full rounded-xl border border-[#d8dbd3] bg-white px-4 text-sm font-bold shadow-sm sm:w-auto">Cancel</button>
-      </header>
-
-      {prefillNotice && <p className="mt-5 rounded-xl border border-[#ead9aa] bg-[#fff8e4] p-4 text-sm font-semibold text-[#715b1c]">{prefillNotice}</p>}
-      {error && <p role="alert" className="mt-5 rounded-xl border border-[#ecd4ca] bg-[#fff5f1] p-4 text-sm font-semibold text-[#9a503c]">{error}</p>}
-
-      <div className="mt-7 grid items-start gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(340px,0.85fr)]">
-        <section className="rounded-2xl border border-[#e2e1d8] bg-white p-5 shadow-sm sm:p-7">
-          <div className="grid gap-5 sm:grid-cols-2">
-            <label className="block text-sm font-bold sm:col-span-2">Recipient *
-              <select required disabled={Boolean(editId || ideaId)} value={recipientId} onChange={(event) => { setRecipientId(event.target.value); setAllocations({}); setAutomaticSnapshotLocked(false); }} className="mt-2 h-12 w-full rounded-xl border bg-white px-3 disabled:bg-[#f2f4f3]">
-                <option value="">Choose a person</option>
-                {recipients.filter((row) => row.active || row.id === recipientId).map((row) => <option key={row.id} value={row.id}>{row.name} — Budget {formatPennies(row.budgetPennies)}</option>)}
-              </select>
-            </label>
-
-            {selectedRecipient && (
-              <RecipientBudgetSummary
-                recipient={selectedRecipient}
-                projectedSpentPennies={projectedBudget?.projectedSpentPennies ?? null}
-                editing={Boolean(editId)}
-              />
-            )}
-
-            <label className="block text-sm font-bold sm:col-span-2">Gift / item *
-              <input required maxLength={INPUT_LIMITS.title} value={description} onChange={(event) => setDescription(event.target.value)} className="mt-2 h-12 w-full rounded-xl border px-3" />
-            </label>
-
-            <label className="block text-sm font-bold">Price paid *
-              <span className="mt-2 flex h-12 items-center rounded-xl border bg-white focus-within:ring-4 focus-within:ring-[#dcece7]"><span className="pl-3 text-[#69746f]">£</span><input required inputMode="decimal" maxLength={INPUT_LIMITS.money} value={price} onChange={(event) => { setPrice(event.target.value); if (splitType === "automatic") setAutomaticSnapshotLocked(false); }} className="h-full min-w-0 flex-1 rounded-xl px-2 outline-none" /></span>
-            </label>
-
-            <label className="block text-sm font-bold">Who paid? *
-              <select required value={payerId} onChange={(event) => setPayerId(event.target.value)} className="mt-2 h-12 w-full rounded-xl border bg-white px-3">
-                <option value="">Choose contributor</option>
-                {contributors.filter((row) => row.active).map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
-              </select>
-              <span className="mt-1 block text-xs font-normal leading-5 text-[#89938f]">The person who physically paid the shop or website.</span>
-            </label>
-
-            <label className="block text-sm font-bold">Gift is at
-              <select value={giftLocationPersonId} onChange={(event) => setGiftLocationPersonId(event.target.value)} className="mt-2 h-12 w-full rounded-xl border bg-white px-3">
-                <option value="">Not recorded</option>
-                {giftLocations.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
-              </select>
-              <span className="mt-1 block text-xs font-normal leading-5 text-[#89938f]">Where the physical gift is currently stored.</span>
-            </label>
-
-            <label className="block text-sm font-bold">Purchase date *
-              <input required type="date" value={purchaseDate} onChange={(event) => setPurchaseDate(event.target.value)} className="mt-2 h-12 w-full rounded-xl border px-3" />
-            </label>
-
-            <label className="block text-sm font-bold sm:col-span-2">Retailer
-              <input maxLength={INPUT_LIMITS.retailer} value={retailer} onChange={(event) => setRetailer(event.target.value)} placeholder="Amazon, Boots, Next..." className="mt-2 h-12 w-full rounded-xl border px-3" />
-            </label>
-
-            <label className="block text-sm font-bold sm:col-span-2">Notes
-              <textarea rows={4} maxLength={INPUT_LIMITS.notes} value={notes} onChange={(event) => setNotes(event.target.value)} className="mt-2 w-full resize-y rounded-xl border p-3" />
-            </label>
-
-            <fieldset className="sm:col-span-2">
-              <legend className="text-sm font-bold">Status</legend>
-              <div className="mt-2 grid grid-cols-2 rounded-xl border border-[#d5d9d3] bg-[#f6f6f2] p-1" role="group" aria-label="Purchase status">
-                {(["purchased", "wrapped"] as const).map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    aria-pressed={status === option}
-                    onClick={() => setStatus(option)}
-                    className={`min-h-11 rounded-lg px-3 text-sm font-bold transition ${status === option ? "bg-[#174f45] text-white shadow-sm" : "text-[#5f6d68]"}`}
-                  >
-                    {option === "purchased" ? "Purchased" : "Wrapped"}
-                  </button>
-                ))}
-              </div>
-            </fieldset>
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-[#e2e1d8] bg-white p-5 shadow-sm sm:p-7 lg:sticky lg:top-6">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div><h2 className="text-lg font-bold">Contribution split</h2><p className="mt-1 text-xs text-[#7b8581]">Financial responsibility, not who paid at checkout.</p></div>
-            <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${splitType === "automatic" ? "bg-[#e4f1ed] text-[#28685c]" : "bg-[#fff3d2] text-[#765d16]"}`}>{splitType === "automatic" ? "Automatic split" : "Custom split"}</span>
-          </div>
-
-          {weightsLoading ? <p className="mt-5 text-sm text-[#89938f]">Calculating split...</p> : allocationRows.length === 0 ? <p className="mt-5 rounded-xl bg-[#fff5f1] p-3 text-sm text-[#9a503c]">This recipient has no active contributor allocation to split against.</p> : (
-            <div className="mt-5 space-y-2">
-              {allocationRows.map((row) => (
-                <div key={row.id} className="flex items-center justify-between gap-3 rounded-xl bg-[#f8f8f6] p-3">
-                  <span className="min-w-0 truncate font-semibold">{row.name}</span>
-                  {splitType === "custom" ? (
-                    <MoneyAllocationInput name={row.name} pennies={row.responsibilityPennies} onChange={(pennies) => setAllocations((current) => ({ ...current, [row.id]: pennies }))} />
-                  ) : <strong>{formatPennies(row.responsibilityPennies)}</strong>}
-=======
     return <p className="py-6 text-sm font-medium text-ink-600">Loading purchase form...</p>;
   }
 
@@ -618,21 +508,11 @@ export function PurchaseForm() {
                   {splitType === "custom" ? (
                     <MoneyAllocationInput name={row.name} pennies={row.responsibilityPennies} onChange={(pennies) => setAllocations((current) => ({ ...current, [row.id]: pennies }))} />
                   ) : <strong className="font-semibold tabular-nums">{formatPennies(row.responsibilityPennies)}</strong>}
->>>>>>> 7534a2d (redesign and realtime)
                 </div>
               ))}
             </div>
           )}
 
-<<<<<<< HEAD
-          <div className="mt-4 flex items-center justify-between border-t pt-4 text-sm"><span className="font-semibold">Allocated</span><strong className={balanced ? "text-[#28685c]" : "text-[#9a503c]"}>{formatPennies(allocationTotal)}{expectedPrice !== null && ` of ${formatPennies(expectedPrice)}`}</strong></div>
-
-          <button type="button" onClick={() => { if (splitType === "automatic") { setAllocations(effectiveAllocations); setSplitType("custom"); } else { setSplitType("automatic"); setAutomaticSnapshotLocked(false); } }} className="mt-4 min-h-11 w-full rounded-xl border text-sm font-bold text-[#28685c]">{splitType === "automatic" ? "Adjust split" : "Use automatic split"}</button>
-
-          <button disabled={saving || !balanced} className="mt-5 min-h-14 w-full rounded-xl bg-[#174f45] px-5 text-base font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-45">{saving ? "Saving purchase..." : editId ? "Save purchase changes" : "Save purchase"}</button>
-        </section>
-      </div>
-=======
           <GarlandRule className="mt-4" />
 
           <div className="mt-4 flex items-center justify-between text-sm">
@@ -675,7 +555,6 @@ export function PurchaseForm() {
           </Button>
         </div>
       </div>
->>>>>>> 7534a2d (redesign and realtime)
     </form>
   );
 }
@@ -696,10 +575,6 @@ function RecipientBudgetSummary({
   const currentDifference = recipient.budgetPennies - recipient.spentPennies;
   const projectedDifference = projectedSpentPennies === null ? null : recipient.budgetPennies - projectedSpentPennies;
   return (
-<<<<<<< HEAD
-    <section className="min-w-0 rounded-2xl border border-[#cddbd6] bg-[#f2f8f6] p-4 sm:col-span-2 sm:p-5" aria-label={`${recipient.name} budget position`}>
-      <div className="flex flex-wrap items-baseline justify-between gap-2"><div><p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#28685c]">Budget position</p><h2 className="mt-1 break-words text-lg font-bold">{recipient.name}</h2></div>{editing && <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold uppercase text-[#60706a]">Editing purchase</span>}</div>
-=======
     <section className="dark min-w-0 rounded-2xl border border-pine-700 bg-linear-to-br from-pine-900 to-pine-800 p-4 text-white shadow-card sm:col-span-2 sm:p-5" aria-label={`${recipient.name} budget position`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="min-w-0">
@@ -708,7 +583,6 @@ function RecipientBudgetSummary({
         </div>
         {editing && <Badge tone="neutral" dot={false}>Editing purchase</Badge>}
       </div>
->>>>>>> 7534a2d (redesign and realtime)
       <dl className="mt-4 grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-3">
         <BudgetMetric label="Budget" value={formatPennies(recipient.budgetPennies)} />
         <BudgetMetric label="Already spent" value={formatPennies(recipient.spentPennies)} />
@@ -716,11 +590,6 @@ function RecipientBudgetSummary({
       </dl>
       <FinancialProgressBar actualPennies={recipient.spentPennies} plannedPennies={recipient.budgetPennies} mode="budget" showDifference={false} />
       {projectedSpentPennies !== null && projectedDifference !== null && (
-<<<<<<< HEAD
-        <div className={`mt-4 border-t pt-4 ${projectedDifference < 0 ? "border-[#e3b3aa]" : "border-[#cddbd6]"}`}>
-          <p className={`text-xs font-bold uppercase tracking-wide ${projectedDifference < 0 ? "text-[#a63f33]" : "text-[#28685c]"}`}>After this purchase</p>
-          <div className="mt-2 flex min-w-0 flex-wrap items-baseline justify-between gap-x-4 gap-y-1"><strong className="break-words text-xl tabular-nums">{formatPennies(projectedSpentPennies)} spent</strong><strong className={`break-words text-sm tabular-nums ${projectedDifference < 0 ? "text-[#a63f33]" : "text-[#174f45]"}`}>{projectedDifference < 0 ? `${formatPennies(Math.abs(projectedDifference))} over budget` : projectedDifference === 0 ? "Budget reached" : `${formatPennies(projectedDifference)} remaining`}</strong></div>
-=======
         <div className="mt-4 border-t border-line pt-4">
           <p className={cx("text-xs font-semibold tracking-eyebrow uppercase", projectedDifference < 0 ? "text-berry" : "text-accent")}>After this purchase</p>
           <div className="mt-2 flex min-w-0 flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -729,7 +598,6 @@ function RecipientBudgetSummary({
               {projectedDifference < 0 ? `${formatPennies(Math.abs(projectedDifference))} over budget` : projectedDifference === 0 ? "Budget reached" : `${formatPennies(projectedDifference)} remaining`}
             </strong>
           </div>
->>>>>>> 7534a2d (redesign and realtime)
           <FinancialProgressBar actualPennies={projectedSpentPennies} plannedPennies={recipient.budgetPennies} mode="budget" showDifference={false} />
         </div>
       )}
@@ -738,43 +606,17 @@ function RecipientBudgetSummary({
 }
 
 function BudgetMetric({ label, value, warning = false, className = "" }: { label: string; value: string; warning?: boolean; className?: string }) {
-<<<<<<< HEAD
-  return <div className={`min-w-0 rounded-xl bg-white p-3 ${className}`}><dt className="text-[10px] font-bold uppercase tracking-wide text-[#7b8581]">{label}</dt><dd className={`mt-1 break-words font-bold tabular-nums ${warning ? "text-[#a63f33]" : ""}`}>{value}</dd></div>;
-=======
   return (
     <div className={cx("min-w-0 rounded-xl border border-line bg-surface p-3", className)}>
       <dt className="text-xs font-medium text-ink-600">{label}</dt>
       <dd className={cx("mt-1 break-words font-semibold tabular-nums", warning && "text-berry")}>{value}</dd>
     </div>
   );
->>>>>>> 7534a2d (redesign and realtime)
 }
 
 function MoneyAllocationInput({ name, pennies, onChange }: { name: string; pennies: number; onChange: (pennies: number) => void }) {
   const [value, setValue] = useState(priceInput(pennies));
   return (
-<<<<<<< HEAD
-    <span className="flex h-10 w-32 items-center rounded-lg border bg-white">
-      <span className="pl-2 text-sm text-[#69746f]">£</span>
-      <input
-        aria-label={`${name} responsibility`}
-        inputMode="decimal"
-        maxLength={INPUT_LIMITS.money}
-        value={value}
-        onChange={(event) => {
-          const next = event.target.value;
-          setValue(next);
-          const parsed = parsePoundsToPennies(next);
-          if (parsed.ok) onChange(parsed.pennies);
-        }}
-        onBlur={() => {
-          const parsed = parsePoundsToPennies(value);
-          if (!parsed.ok) setValue(priceInput(pennies));
-        }}
-        className="h-full min-w-0 flex-1 rounded-lg px-1 text-right outline-none"
-      />
-    </span>
-=======
     <MoneyInput
       compact
       aria-label={`${name} responsibility`}
@@ -791,7 +633,6 @@ function MoneyAllocationInput({ name, pennies, onChange }: { name: string; penni
       }}
       className="w-32 shrink-0"
     />
->>>>>>> 7534a2d (redesign and realtime)
   );
 }
 

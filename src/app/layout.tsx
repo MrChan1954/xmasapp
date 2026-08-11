@@ -1,8 +1,3 @@
-<<<<<<< HEAD
-import type { Metadata } from "next";
-import "./globals.css";
-import { FamilyProvider } from "./family-context";
-=======
 import type { Metadata, Viewport } from "next";
 import { Fraunces, Inter } from "next/font/google";
 import "./globals.css";
@@ -30,19 +25,12 @@ const fraunces = Fraunces({
   display: "swap",
   axes: ["SOFT", "WONK", "opsz"],
 });
->>>>>>> 7534a2d (redesign and realtime)
 
 export const metadata: Metadata = {
   title: "Christmas Budget",
   description: "A simple Christmas gift budget planner.",
 };
 
-<<<<<<< HEAD
-export default function RootLayout({ children }: LayoutProps<"/">) {
-  return (
-    <html lang="en" className="h-full antialiased">
-      <body className="min-h-full flex flex-col"><FamilyProvider>{children}</FamilyProvider></body>
-=======
 export const viewport: Viewport = {
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: THEME_COLORS.light },
@@ -73,7 +61,6 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           </FestiveProvider>
         </ThemeProvider>
       </body>
->>>>>>> 7534a2d (redesign and realtime)
     </html>
   );
 }

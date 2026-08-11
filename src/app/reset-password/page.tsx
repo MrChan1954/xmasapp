@@ -2,9 +2,6 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "../../../utils/supabase/client";
-<<<<<<< HEAD
-export default function ResetPasswordPage() { const router = useRouter(); const [password, setPassword] = useState(""); const [confirm, setConfirm] = useState(""); const [message, setMessage] = useState(""); const submit = async (event: FormEvent) => { event.preventDefault(); if (password.length < 8) { setMessage("Use at least 8 characters."); return; } if (password !== confirm) { setMessage("Passwords do not match."); return; } const result = await createClient().auth.updateUser({ password }); if (result.error) { setMessage("Your password could not be saved. Request a new reset link and try again."); return; } router.push("/"); router.refresh(); }; return <main className="flex min-h-screen items-center justify-center bg-[#f8f8f6] px-5"><form onSubmit={submit} className="w-full max-w-md rounded-3xl bg-white p-7"><h1 className="text-3xl font-bold">Choose your password</h1><label className="mt-6 block text-sm font-semibold">New password<input required minLength={8} type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} className="mt-2 h-12 w-full rounded-xl border px-3" /></label><label className="mt-4 block text-sm font-semibold">Confirm password<input required minLength={8} type="password" autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} className="mt-2 h-12 w-full rounded-xl border px-3" /></label><button className="mt-5 h-12 w-full rounded-xl bg-[#1f5b50] font-bold text-white">Save password</button>{message && <p className="mt-4 text-sm text-[#a5543f]">{message}</p>}</form></main>; }
-=======
 import { AuthHeading, AuthScreen } from "../components/auth-card";
 import { Button, Field, Input, Notice } from "../components/ui";
 
@@ -40,4 +37,3 @@ export default function ResetPasswordPage() {
     </AuthScreen>
   );
 }
->>>>>>> 7534a2d (redesign and realtime)

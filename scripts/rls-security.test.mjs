@@ -12,10 +12,7 @@ const authorizationMigrationName = "202608100010_harden_row_level_security.sql";
 const validationMigrationName = "202608100011_validate_user_input.sql";
 const atomicRecipientMigrationName = "202608100012_atomic_recipient_budget_allocations.sql";
 const purchaseTrackingMigrationName = "202608100013_simplify_purchase_status_and_add_gift_location.sql";
-<<<<<<< HEAD
-=======
 const realtimeMigrationName = "202608100014_enable_realtime_for_shared_data.sql";
->>>>>>> 7534a2d (redesign and realtime)
 const authorizationMigration = readFileSync(
   join(migrationsDirectory, authorizationMigrationName),
   "utf8",
@@ -29,10 +26,7 @@ const purchaseTrackingMigration = readFileSync(
   join(migrationsDirectory, purchaseTrackingMigrationName),
   "utf8",
 );
-<<<<<<< HEAD
-=======
 const realtimeMigration = readFileSync(join(migrationsDirectory, realtimeMigrationName), "utf8");
->>>>>>> 7534a2d (redesign and realtime)
 
 const applicationTables = [
   "christmas_events",
@@ -48,11 +42,7 @@ const applicationTables = [
 ];
 
 test("the authorization migration explicitly enables RLS on every application table", () => {
-<<<<<<< HEAD
-  assert.equal(migrationFiles.at(-1), purchaseTrackingMigrationName);
-=======
   assert.equal(migrationFiles.at(-1), realtimeMigrationName);
->>>>>>> 7534a2d (redesign and realtime)
 
   for (const table of applicationTables) {
     assert.match(
@@ -289,16 +279,6 @@ test("changing gift location cannot rewrite purchase responsibility or Owed inpu
 });
 
 test("secondary Payment Log navigation remains under More", () => {
-<<<<<<< HEAD
-  const appNav = readFileSync(join(root, "src", "app", "components", "app-nav.tsx"), "utf8");
-  const desktopSidebar = appNav.match(/<aside[\s\S]*?<\/aside>/)?.[0];
-  assert.ok(desktopSidebar);
-  assert.doesNotMatch(desktopSidebar, /href="\/payment-log"/);
-  assert.match(desktopSidebar, />More<\/Link>/);
-
-  const morePage = readFileSync(join(root, "src", "app", "more", "page.tsx"), "utf8");
-  assert.match(morePage, /href="\/payment-log"[\s\S]*?Payment Log/);
-=======
   // The primary nav is now one shared list consumed by both the desktop icon
   // rail and the mobile tab bar, so this asserts against that list directly.
   const navItems = readFileSync(join(root, "src", "app", "components", "nav-items.ts"), "utf8");
@@ -311,7 +291,6 @@ test("secondary Payment Log navigation remains under More", () => {
 
   const morePage = readFileSync(join(root, "src", "app", "more", "page.tsx"), "utf8");
   assert.match(morePage, /href="\/payment-log"[\s\S]*?Payment log/i);
->>>>>>> 7534a2d (redesign and realtime)
 });
 
 test("contributor cards present responsibility spending without checkout totals", () => {
@@ -407,8 +386,6 @@ test("source does not build PostgREST filter expressions from user input", () =>
   }
 });
 
-<<<<<<< HEAD
-=======
 test("the request origin only relaxes to plain HTTP under next dev", async () => {
   // Executing the resolver is stronger than pattern-matching it: any refactor
   // that leaks the development relaxation into a built server fails here.
@@ -534,7 +511,6 @@ test("realtime subscriptions never trust the streamed payload as data", () => {
   }
 });
 
->>>>>>> 7534a2d (redesign and realtime)
 test("the application CSP blocks object and frame embedding and production eval", () => {
   const source = readFileSync(join(root, "next.config.ts"), "utf8");
   assert.match(source, /object-src 'none'/);

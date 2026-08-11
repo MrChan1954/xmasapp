@@ -1,9 +1,5 @@
 "use client";
 
-<<<<<<< HEAD
-import Link from "next/link";
-=======
->>>>>>> 7534a2d (redesign and realtime)
 import { useCallback, useEffect, useState } from "react";
 import { formatPennies } from "@/lib/currency";
 import {
@@ -12,8 +8,6 @@ import {
   type PurchaseStatus,
 } from "@/lib/purchases";
 import { createClient } from "../../../utils/supabase/client";
-<<<<<<< HEAD
-=======
 import { IconPlus } from "../components/icons";
 import {
   Badge,
@@ -24,7 +18,6 @@ import {
   Segmented,
   Skeleton,
 } from "../components/ui";
->>>>>>> 7534a2d (redesign and realtime)
 
 type Purchase = {
   id: string;
@@ -178,16 +171,6 @@ export function Purchases({
   };
 
   return (
-<<<<<<< HEAD
-    <section className="rounded-2xl border border-[#e3e1d8] bg-white p-5 shadow-sm sm:p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div><h3 className="text-lg font-bold">Purchases</h3><p className="mt-1 text-xs text-[#7b8581]">Actual gifts bought for this person.</p></div>
-        <Link href={`/add-purchase?recipient=${encodeURIComponent(recipientId)}`} className="inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-[#174f45] px-4 text-sm font-bold text-white shadow-sm sm:w-auto">+ Add purchase</Link>
-      </div>
-
-      {notice && <p role="status" className="mt-4 rounded-xl bg-[#edf7f3] p-3 text-sm font-semibold text-[#28685c]">{notice}</p>}
-      {error && <p role="alert" className="mt-4 rounded-xl bg-[#fff2ed] p-3 text-sm font-semibold text-[#9a503c]">{error}</p>}
-=======
     <section className="rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
@@ -202,16 +185,10 @@ export function Purchases({
 
       {notice && <Notice tone="success" className="mt-4">{notice}</Notice>}
       {error && <Notice tone="danger" className="mt-4">{error}</Notice>}
->>>>>>> 7534a2d (redesign and realtime)
 
       {loading ? (
         <div className="mt-5 grid gap-3 md:grid-cols-2"><PurchaseSkeleton /><PurchaseSkeleton /></div>
       ) : purchases === null ? (
-<<<<<<< HEAD
-        <button type="button" onClick={() => void loadPurchases()} className="mt-5 min-h-11 rounded-xl border px-4 text-sm font-bold text-[#28685c]">Try loading purchases again</button>
-      ) : purchases.length === 0 ? (
-        <div className="mt-5 rounded-xl border border-dashed border-[#d7d8d1] bg-[#faf9f5] px-5 py-7 text-center"><span className="text-2xl" aria-hidden>🎁</span><p className="mt-2 text-sm font-semibold text-[#7b8581]">No purchases yet.</p></div>
-=======
         <Button variant="tonal" onClick={() => void loadPurchases()} className="mt-5">Try loading purchases again</Button>
       ) : purchases.length === 0 ? (
         <EmptyState
@@ -220,37 +197,12 @@ export function Purchases({
           title="No purchases yet"
           body="When a gift is bought for this person, record it here so budgets stay accurate."
         />
->>>>>>> 7534a2d (redesign and realtime)
       ) : (
         <div className="mt-5 grid gap-3 md:grid-cols-2">
           {purchases.map((purchase) => {
             const status = normalizePurchaseStatus(purchase.status) ?? "purchased";
             const purchaseAllocations = allocations.filter((row) => row.purchase_id === purchase.id);
             return (
-<<<<<<< HEAD
-              <article key={purchase.id} className="rounded-xl border border-[#e3e8e5] bg-[#fbfcfb] p-4">
-                <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h4 className="break-words font-bold">{purchase.description}</h4>{purchase.retailer && <p className="mt-1 text-sm font-semibold text-[#69746f]">{purchase.retailer}</p>}</div><strong className="shrink-0 text-lg text-[#28685c]">{formatPennies(purchase.actual_price_pennies)}</strong></div>
-                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[#7b8581]"><span>Paid at checkout by <strong className="text-[#4f5b57]">{contributorNames.get(purchase.checkout_payer_contributor_id) ?? "Unknown contributor"}</strong></span>{purchase.gift_location_person_id && <span>Stored with <strong className="text-[#4f5b57]">{locationNames.get(purchase.gift_location_person_id) ?? "Unknown person"}</strong></span>}<span>{formatPurchaseDate(purchase.purchase_date)}</span></div>
-                {purchase.notes && <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-[#69746f]">{purchase.notes}</p>}
-                <div className="mt-3 flex items-center justify-between gap-3"><span className="rounded-full bg-[#edf7f3] px-2.5 py-1 text-[10px] font-bold uppercase text-[#28685c]">{purchaseLifecycleLabel(status)}</span><span className="text-[10px] font-bold uppercase text-[#89938f]">{purchase.split_type === "automatic" ? "Automatic split" : "Custom split"}</span></div>
-
-                {purchaseAllocations.length > 0 && (
-                  <details className="mt-3 rounded-xl bg-white px-3 py-2 text-sm"><summary className="min-h-11 cursor-pointer py-3 text-xs font-bold text-[#60706a]">Responsibility split</summary><div className="mt-2 space-y-1 border-t pt-2">{purchaseAllocations.map((allocation) => <div key={allocation.contributor_id} className="flex justify-between gap-3 text-xs"><span>{contributorNames.get(allocation.contributor_id) ?? "Unknown contributor"}</span><strong>{formatPennies(allocation.responsibility_pennies)}</strong></div>)}</div></details>
-                )}
-
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <div className="grid min-w-52 flex-1 grid-cols-2 rounded-xl border border-[#cad5d0] bg-white p-1" role="group" aria-label={`${purchase.description} status`}>
-                    {(["purchased", "wrapped"] as const).map((option) => (
-                      <button key={option} type="button" aria-pressed={status === option} disabled={busy === purchase.id || status === option} onClick={() => void updateStatus(purchase, option)} className={`min-h-11 rounded-lg px-3 text-xs font-bold transition disabled:cursor-default ${status === option ? "bg-[#174f45] text-white" : "text-[#28685c] disabled:opacity-100"}`}>{purchaseLifecycleLabel(option)}</button>
-                    ))}
-                  </div>
-                  <Link href={`/add-purchase?edit=${encodeURIComponent(purchase.id)}`} className="inline-flex min-h-11 items-center rounded-xl border bg-white px-3 text-xs font-bold">Edit</Link>
-                  <button type="button" disabled={busy === purchase.id} onClick={() => setConfirming(purchase)} className="min-h-11 rounded-xl px-3 text-xs font-bold text-[#9a503c] disabled:opacity-50">Remove</button>
-                </div>
-
-                {confirming?.id === purchase.id && (
-                  <div className="mt-3 rounded-xl border border-[#ead1c7] bg-[#fff5f1] p-3"><p className="text-sm font-bold">Remove “{purchase.description}”?</p><p className="mt-1 text-xs leading-5 text-[#7c655e]">This removes {formatPennies(purchase.actual_price_pennies)} from Christmas spending. Financial history will be preserved.</p><div className="mt-3 grid grid-cols-2 gap-2"><button type="button" disabled={busy === purchase.id} onClick={() => setConfirming(null)} className="min-h-11 rounded-xl border bg-white text-xs font-bold">Cancel</button><button type="button" disabled={busy === purchase.id} onClick={() => void removePurchase(purchase)} className="min-h-11 rounded-xl bg-[#9a503c] text-xs font-bold text-white disabled:opacity-50">{busy === purchase.id ? "Removing..." : "Remove purchase"}</button></div></div>
-=======
               <article key={purchase.id} className="flex min-w-0 flex-col rounded-xl border border-line bg-surface-2 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -308,7 +260,6 @@ export function Purchases({
                       <Button variant="danger" disabled={busy === purchase.id} onClick={() => void removePurchase(purchase)}>{busy === purchase.id ? "Removing..." : "Remove purchase"}</Button>
                     </div>
                   </div>
->>>>>>> 7534a2d (redesign and realtime)
                 )}
               </article>
             );
@@ -329,9 +280,6 @@ function purchaseError(action: "load" | "status" | "remove", code?: string) {
 }
 
 function PurchaseSkeleton() {
-<<<<<<< HEAD
-  return <div className="h-48 animate-pulse rounded-xl border bg-[#fbfcfb] p-4"><div className="h-4 w-2/3 rounded bg-[#e9eeeb]" /><div className="mt-4 h-3 w-1/3 rounded bg-[#eef2f0]" /><div className="mt-8 h-10 rounded bg-[#eef2f0]" /></div>;
-=======
   return (
     <div className="h-48 rounded-xl border border-line bg-surface-2 p-4">
       <Skeleton className="h-4 w-2/3" />
@@ -339,5 +287,4 @@ function PurchaseSkeleton() {
       <Skeleton className="mt-8 h-10" />
     </div>
   );
->>>>>>> 7534a2d (redesign and realtime)
 }

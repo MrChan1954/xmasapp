@@ -554,12 +554,9 @@ async function createOrSetUpAccount(
         redirectTo,
       });
       if (invited.error || !invited.data.user) {
-<<<<<<< HEAD
-=======
         console.error(
           `[family-access] invite email failed | status=${invited.error?.status} code=${invited.error?.code} message=${invited.error?.message} redirectTo=${redirectTo}`,
         );
->>>>>>> 7534a2d (redesign and realtime)
         throw new FamilyAccessError(
           502,
           "Supabase could not send the account invitation.",
@@ -589,8 +586,6 @@ async function createOrSetUpAccount(
     } else {
       const sent = await admin.auth.resetPasswordForEmail(email, { redirectTo });
       if (sent.error) {
-<<<<<<< HEAD
-=======
         // Log the real reason server-side; the client message stays generic so
         // it cannot be used to probe which addresses exist. Without this, an
         // SMTP rate limit and a non-allowlisted redirect URL are
@@ -598,7 +593,6 @@ async function createOrSetUpAccount(
         console.error(
           `[family-access] setup email failed | status=${sent.error.status} code=${sent.error.code} message=${sent.error.message} redirectTo=${redirectTo}`,
         );
->>>>>>> 7534a2d (redesign and realtime)
         throw new FamilyAccessError(
           502,
           "The account is linked, but Supabase could not send the setup email. You can retry or copy a setup link.",

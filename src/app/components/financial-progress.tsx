@@ -25,21 +25,6 @@ export function FinancialProgressBar({
       ? mode === "budget" ? "Budget reached" : "Plan reached"
       : `${formatPennies(progress.remainingPennies)} remaining${mode === "plan" ? " to plan" : ""}`;
   const fillStyle = progress.state === "over_budget"
-<<<<<<< HEAD
-    ? "bg-[#c74f43]"
-    : progress.state === "budget_reached"
-      ? "bg-[#2f8069]"
-      : "bg-[#d5a72c]";
-
-  return (
-    <div className="mt-3">
-      <div className="flex items-center justify-between gap-3 text-xs font-semibold">
-        <span className={progress.state === "over_budget" ? "text-[#a63f33]" : "text-[#5f6d68]"}>{percentageLabel}</span>
-        {showDifference && <span className={progress.state === "over_budget" ? "text-[#a63f33]" : "text-[#5f6d68]"}>{differenceLabel}</span>}
-      </div>
-      <div
-        className="mt-2 h-2.5 overflow-hidden rounded-full bg-[#ecece5]"
-=======
     ? "bg-berry"
     : progress.state === "budget_reached"
       ? "bg-success"
@@ -54,7 +39,6 @@ export function FinancialProgressBar({
       </div>
       <div
         className="mt-1.5 h-2 overflow-hidden rounded-full bg-surface-3"
->>>>>>> 7534a2d (redesign and realtime)
         role="progressbar"
         aria-label={`${percentageLabel}; ${differenceLabel}`}
         aria-valuemin={0}
