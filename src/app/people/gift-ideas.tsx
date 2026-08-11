@@ -13,6 +13,7 @@ import {
 import { createClient } from "../../../utils/supabase/client";
 import { IconPlus } from "../components/icons";
 import { PhotoGallery } from "../components/photo-gallery";
+import { PhotoPicker, usePendingPhotos } from "../components/photo-picker";
 import {
   Badge,
   Button,
@@ -70,6 +71,9 @@ export function GiftIdeas({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [purchasedIdeaIds, setPurchasedIdeaIds] = useState<Set<string>>(new Set());
+  // Held here rather than in the editor because the id needed to attach them
+  // only exists once `saveIdea` has run.
+  const pendingPhotos = usePendingPhotos();
 
   const loadIdeas = useCallback(async () => {
     setLoading(true);
@@ -124,6 +128,17 @@ export function GiftIdeas({
       setError(giftIdeaError(idea ? "edit" : "add", result.error.code));
       setSaving(false);
       return null;
+    }
+
+    // Photos chosen on the form are only uploaded now, because until this point
+    // there was no gift idea for them to belong to. The RPC returns the saved
+    // row, so this covers a brand new idea and an edited one alike.
+    const savedId = (result.data as GiftIdea | null)?.id;
+    if (savedId) {
+      const outcome = await pendingPhotos.uploadTo({ kind: "giftIdea", id: savedId });
+      if (outcome.failed > 0) {
+        setError(`The idea was saved, but ${outcome.failed} ${outcome.failed === 1 ? "photo" : "photos"} could not be uploaded. You can add them again from the idea.`);
+      }
     }
 
     const loaded = await loadIdeas();
@@ -188,6 +203,7 @@ export function GiftIdeas({
           recipientName={recipientName}
           idea={editor.kind === "edit" ? editor.idea : undefined}
           saving={saving}
+          pendingPhotos={pendingPhotos}
           onCancel={() => { setEditor(null); setError(null); }}
           onSave={saveIdea}
         />
@@ -278,12 +294,14 @@ function GiftIdeaEditor({
   recipientName,
   idea,
   saving,
+  pendingPhotos,
   onCancel,
   onSave,
 }: {
   recipientName: string;
   idea?: GiftIdea;
   saving: boolean;
+  pendingPhotos: ReturnType<typeof usePendingPhotos>;
   onCancel: () => void;
   onSave: (values: IdeaValues, idea?: GiftIdea) => Promise<string | null>;
 }) {
@@ -334,6 +352,18 @@ function GiftIdeaEditor({
         <Field label="Notes" className="md:col-span-2">
           <Textarea maxLength={INPUT_LIMITS.notes} rows={4} value={values.notes} onChange={(event) => update("notes", event.target.value)} placeholder="Size, colour, or anything useful..." />
         </Field>
+      </div>
+
+      <div className="mt-5 border-t border-line pt-5">
+        <PhotoPicker
+          photos={pendingPhotos.photos}
+          onAdd={(files) => void pendingPhotos.add(files)}
+          onRemove={pendingPhotos.remove}
+          error={pendingPhotos.error}
+          onDismissError={() => pendingPhotos.setError(null)}
+          preparing={pendingPhotos.preparing}
+          disabled={saving}
+        />
       </div>
 
       {validation && <p role="alert" className="mt-4 text-sm font-semibold text-berry">{validation}</p>}

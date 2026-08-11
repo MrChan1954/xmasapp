@@ -13,16 +13,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Camera, ImagePlus, Trash2 } from "lucide-react";
 import { createClient } from "../../../utils/supabase/client";
-import { resizeImage } from "@/lib/image-resize";
 import { cx } from "./cx";
+import {
+  MAX_PHOTOS,
+  PHOTO_BUCKET,
+  parentColumn,
+  signedUrlsFor,
+  uploadPhotoFile,
+  type PhotoParent as Parent,
+} from "./photo-storage";
 import { Modal, Notice } from "./ui";
-
-const BUCKET = "item-photos";
-/** Signed URLs are re-minted on every load, so this only has to outlive a visit. */
-const SIGNED_URL_TTL_SECONDS = 60 * 60;
-const MAX_PHOTOS = 12;
-
-type Parent = { kind: "purchase" | "giftIdea"; id: string };
 
 type Photo = { id: string; storage_path: string; width: number | null; height: number | null };
 type PhotoWithUrl = Photo & { url: string | null };
@@ -47,7 +47,7 @@ export function PhotoGallery({ parent, label }: { parent: Parent; label: string 
   const libraryInput = useRef<HTMLInputElement>(null);
   const cameraInput = useRef<HTMLInputElement>(null);
 
-  const column = parent.kind === "purchase" ? "purchase_id" : "gift_idea_id";
+  const column = parentColumn(parent.kind);
 
   const load = useCallback(async () => {
     const db = createClient();
@@ -64,14 +64,7 @@ export function PhotoGallery({ parent, label }: { parent: Parent; label: string 
     }
 
     const rows = result.data as Photo[];
-    // One batch call rather than one per photo.
-    const signed = rows.length
-      ? await db.storage.from(BUCKET).createSignedUrls(rows.map((row) => row.storage_path), SIGNED_URL_TTL_SECONDS)
-      : { data: [], error: null };
-
-    const urlByPath = new Map(
-      (signed.data ?? []).map((entry) => [entry.path ?? "", entry.signedUrl ?? null]),
-    );
+    const urlByPath = await signedUrlsFor(db, rows.map((row) => row.storage_path));
     setPhotos(rows.map((row) => ({ ...row, url: urlByPath.get(row.storage_path) ?? null })));
     setError(null);
     setLoading(false);
@@ -98,30 +91,8 @@ export function PhotoGallery({ parent, label }: { parent: Parent; label: string 
 
     for (const file of chosen) {
       try {
-        // Downscaled in the browser: a raw phone photo is several megabytes,
-        // and re-encoding also drops EXIF, including GPS location.
-        const { blob, width, height } = await resizeImage(file);
-        const path = `${parent.kind}/${parent.id}/${crypto.randomUUID()}.jpg`;
-
-        const uploaded = await db.storage.from(BUCKET).upload(path, blob, {
-          contentType: "image/jpeg",
-          upsert: false,
-        });
-        if (uploaded.error) throw new Error(uploaded.error.message);
-
-        const inserted = await db.from("item_photos").insert({
-          [column]: parent.id,
-          storage_path: path,
-          width,
-          height,
-          byte_size: blob.size,
-        });
-        // Roll the file back if the row could not be written, so the bucket
-        // never accumulates files nothing points at.
-        if (inserted.error) {
-          await db.storage.from(BUCKET).remove([path]);
-          throw new Error(inserted.error.message);
-        }
+        // Resize, store and index, with the same rollback the add form uses.
+        await uploadPhotoFile(db, parent, file);
       } catch {
         setError("That photo could not be uploaded.");
       }
@@ -144,7 +115,7 @@ export function PhotoGallery({ parent, label }: { parent: Parent; label: string 
     if (deleted.error) {
       setError("That photo could not be removed.");
     } else {
-      await db.storage.from(BUCKET).remove([photo.storage_path]);
+      await db.storage.from(PHOTO_BUCKET).remove([photo.storage_path]);
       setViewing(null);
     }
     await load();

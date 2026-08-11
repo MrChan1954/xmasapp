@@ -22,6 +22,7 @@ import { createClient } from "../../../utils/supabase/client";
 import { PageHeader } from "../components/app-shell";
 import { GarlandRule } from "../components/festive/garland";
 import { FinancialProgressBar } from "../components/financial-progress";
+import { PhotoPicker, usePendingPhotos } from "../components/photo-picker";
 import {
   Badge,
   Button,
@@ -79,6 +80,8 @@ export function PurchaseForm() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { refresh } = useFamily();
+  // Staged until the purchase exists; see the upload after the save RPC.
+  const pendingPhotos = usePendingPhotos();
   const rawEditId = searchParams.get("edit");
   const rawIdeaId = searchParams.get("idea");
   const rawRecipientId = searchParams.get("recipient");
@@ -387,6 +390,20 @@ export function PurchaseForm() {
       setSaving(false);
       return;
     }
+
+    // Only now does a purchase exist for the photos to belong to. Failures here
+    // are reported but never block the save: the money is already recorded, and
+    // a photo can be added again from the purchase itself.
+    const savedId = (result.data as { id?: string } | null)?.id ?? editId;
+    if (savedId) {
+      const outcome = await pendingPhotos.uploadTo({ kind: "purchase", id: savedId });
+      if (outcome.failed > 0) {
+        setError(`The purchase was saved, but ${outcome.failed} ${outcome.failed === 1 ? "photo" : "photos"} could not be uploaded. You can add them from the purchase.`);
+        setSaving(false);
+        return;
+      }
+    }
+
     await refresh();
     router.push("/people");
   };
@@ -471,6 +488,18 @@ export function PurchaseForm() {
               <Field label="Notes" className="sm:col-span-2">
                 <Textarea rows={4} maxLength={INPUT_LIMITS.notes} value={notes} onChange={(event) => setNotes(event.target.value)} />
               </Field>
+
+              <div className="sm:col-span-2">
+                <PhotoPicker
+                  photos={pendingPhotos.photos}
+                  onAdd={(files) => void pendingPhotos.add(files)}
+                  onRemove={pendingPhotos.remove}
+                  error={pendingPhotos.error}
+                  onDismissError={() => pendingPhotos.setError(null)}
+                  preparing={pendingPhotos.preparing}
+                  disabled={saving}
+                />
+              </div>
 
               <fieldset className="sm:col-span-2">
                 <legend className="text-sm font-semibold">Status</legend>
