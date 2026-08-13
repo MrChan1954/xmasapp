@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { BottomTabs } from "./bottom-tabs";
 import { IconRail } from "./icon-rail";
+import { NotificationInboxProvider } from "./use-notification-inbox";
 import { isAuthRoute } from "./nav-items";
 
 /**
@@ -29,10 +30,16 @@ export function AppFrame({ children }: { children: ReactNode }) {
     // `dvh` rather than `vh`: in an installed app and in mobile Safari the
     // dynamic viewport is the honest full height, where `100vh` can overshoot
     // and leave the page scrollable by the height of browser chrome.
-    <div className="flex min-h-[100dvh] bg-ground text-ink-900">
-      <IconRail />
-      {children}
-      <BottomTabs />
-    </div>
+    // The inbox provider lives here, not in the header: this component survives
+    // client-side navigation while `AppShell` (and so `TopBar`, and so the bell)
+    // is rebuilt on every route change. One provider means one Realtime channel
+    // for the whole session instead of one per page view.
+    <NotificationInboxProvider>
+      <div className="flex min-h-[100dvh] bg-ground text-ink-900">
+        <IconRail />
+        {children}
+        <BottomTabs />
+      </div>
+    </NotificationInboxProvider>
   );
 }

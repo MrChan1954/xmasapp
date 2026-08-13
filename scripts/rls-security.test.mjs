@@ -17,6 +17,7 @@ const auditMigrationName = "202608100015_add_admin_audit_log.sql";
 const auditOpenMigrationName = "202608100016_open_audit_log_and_enrich_detail.sql";
 const photosMigrationName = "202608100017_add_item_photos.sql";
 const notificationsMigrationName = "202608100018_add_push_notifications.sql";
+const notificationCentreMigrationName = "202608100019_add_notification_centre.sql";
 const authorizationMigration = readFileSync(
   join(migrationsDirectory, authorizationMigrationName),
   "utf8",
@@ -35,6 +36,7 @@ const auditMigration = readFileSync(join(migrationsDirectory, auditMigrationName
 const auditOpenMigration = readFileSync(join(migrationsDirectory, auditOpenMigrationName), "utf8");
 const photosMigration = readFileSync(join(migrationsDirectory, photosMigrationName), "utf8");
 const notificationsMigration = readFileSync(join(migrationsDirectory, notificationsMigrationName), "utf8");
+const notificationCentreMigration = readFileSync(join(migrationsDirectory, notificationCentreMigrationName), "utf8");
 
 const applicationTables = [
   "christmas_events",
@@ -53,7 +55,7 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  assert.equal(migrationFiles.at(-1), notificationsMigrationName);
+  assert.equal(migrationFiles.at(-1), notificationCentreMigrationName);
 
   for (const table of applicationTables) {
     assert.match(
@@ -672,6 +674,32 @@ test("the notification tables are locked down and hold no financial data", () =>
   // None of them may join the Realtime publication: that would broadcast push
   // endpoints and per-device encryption keys to every subscribed client.
   assert.doesNotMatch(statements, /alter publication supabase_realtime/i);
+});
+
+test("the Notification Centre is personal and cannot be written from a browser", () => {
+  assert.match(notificationCentreMigration, /alter table public\.notifications enable row level security;/);
+  assert.match(
+    notificationCentreMigration,
+    /revoke all privileges on table public\.notifications from public, anon, authenticated;/,
+  );
+
+  // Read and mark-read only. No INSERT means a member cannot plant a
+  // notification in anyone's inbox; no DELETE means history is not rewritable.
+  assert.match(notificationCentreMigration, /grant select, update on table public\.notifications to authenticated;/);
+  assert.doesNotMatch(
+    notificationCentreMigration,
+    /create policy[^;]*on public\.notifications\s+for (insert|delete)/i,
+  );
+
+  // Every policy is scoped to the caller's own membership, and there is no
+  // Global Admin exception anywhere: an admin reading the family's inboxes
+  // would be a privacy regression, not a feature.
+  const policies = notificationCentreMigration.match(/create policy[\s\S]*?on public\.notifications[\s\S]*?;/g) ?? [];
+  assert.ok(policies.length >= 2);
+  for (const policy of policies) {
+    assert.match(policy, /app_member_id = public\.current_app_member_id\(\)/);
+  }
+  assert.doesNotMatch(notificationCentreMigration, /is_app_admin/);
 });
 
 test("the application CSP blocks object and frame embedding and production eval", () => {

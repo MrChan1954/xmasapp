@@ -137,7 +137,25 @@ export default function NotificationsPage() {
               onDisable={() => void disable()}
             />}
           {status.error && <Notice tone="danger" className="mt-4">{status.error}</Notice>}
+
+          {status.state === "enabled" && (
+            <div className="mt-4 border-t border-line pt-4">
+              <TestNotificationButton />
+            </div>
+          )}
         </div>
+
+        {/* The signal that would have explained an apparently working setup
+            reaching nobody: notifications are never sent to the person who
+            caused them, so if nobody else has switched them on, a lone tester
+            can trigger events all day and see nothing. */}
+        {status.state === "enabled" && status.otherMembersWithPush === 0 && (
+          <Notice tone="warning" className="mt-3">
+            Nobody else has notifications switched on yet, so your own actions will not alert anyone —
+            and you are never notified about things you do yourself. Use <span className="font-semibold">Send test
+            notification</span> to check this device, and ask another family member to turn theirs on.
+          </Notice>
+        )}
       </section>
 
       <section className="mt-8">
@@ -261,6 +279,57 @@ function DeviceState({
       </div>
       <Button onClick={onEnable} disabled={busy}>
         {busy ? "Turning on…" : "Enable notifications"}
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * The diagnostic that separates "push transport is broken" from "no event has
+ * reached you yet".
+ *
+ * It sends a genuine Web Push through the production pipeline — same VAPID
+ * keys, same encryption, same push service — to the signed-in member's own
+ * devices, and reports what the push service actually said. The request has no
+ * body: the recipient comes from the session and the wording is fixed on the
+ * server, so this cannot be turned into a way to message anyone else.
+ */
+function TestNotificationButton() {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const send = async () => {
+    setBusy(true);
+    setResult(null);
+    try {
+      const response = await fetch("/api/notifications/test", { method: "POST", cache: "no-store" });
+      const body = await response.json().catch(() => ({}));
+      setResult({
+        ok: response.ok && body.ok === true,
+        message: body.message ?? body.error ?? "The test notification could not be sent.",
+      });
+    } catch {
+      setResult({ ok: false, message: "The test notification could not be sent. Check your connection." });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+      <div className="min-w-0">
+        <h3 className="font-semibold">Send test notification</h3>
+        <p className="mt-0.5 text-sm leading-5 text-ink-600">
+          Sends a real notification to your own devices to check they arrive.
+        </p>
+        {result && (
+          <p className={cx("mt-2 text-sm leading-5", result.ok ? "text-success" : "text-berry")}>
+            {result.message}
+          </p>
+        )}
+      </div>
+      <Button variant="secondary" onClick={() => void send()} disabled={busy}>
+        {busy ? "Sending…" : "Send test"}
       </Button>
     </div>
   );

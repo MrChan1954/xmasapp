@@ -33,6 +33,17 @@ export type PushStatus = {
   state: PushState;
   /** How many of the member's devices are registered, this one included. */
   deviceCount: number;
+  /**
+   * How many OTHER members have push switched on somewhere. A count only — no
+   * names, no devices.
+   *
+   * Surfaced because of a real failure: every registered device belonged to one
+   * person, so every notification they triggered was correctly suppressed by
+   * actor exclusion and reached nobody, while the page cheerfully said
+   * "Enabled". Knowing nobody else can receive anything is the difference
+   * between a broken system and an empty one.
+   */
+  otherMembersWithPush: number;
   busy: boolean;
   error: string | null;
 };
@@ -43,6 +54,7 @@ export function usePushNotifications(isIosSafari: boolean, isInstalled: boolean)
   const [status, setStatus] = useState<PushStatus>({
     state: "checking",
     deviceCount: 0,
+    otherMembersWithPush: 0,
     busy: false,
     error: null,
   });
@@ -65,17 +77,17 @@ export function usePushNotifications(isIosSafari: boolean, isInstalled: boolean)
     // present and every call fails. Either way the answer is the same and it is
     // never "your browser does not support this": install it first.
     if (isIosSafari && !isInstalled) {
-      setStatus({ state: "needs-install", deviceCount: 0, busy: false, error: null });
+      setStatus({ state: "needs-install", deviceCount: 0, otherMembersWithPush: 0, busy: false, error: null });
       return;
     }
 
     if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
-      setStatus({ state: "unsupported", deviceCount: 0, busy: false, error: null });
+      setStatus({ state: "unsupported", deviceCount: 0, otherMembersWithPush: 0, busy: false, error: null });
       return;
     }
 
     if (Notification.permission === "denied") {
-      setStatus({ state: "blocked", deviceCount: 0, busy: false, error: null });
+      setStatus({ state: "blocked", deviceCount: 0, otherMembersWithPush: 0, busy: false, error: null });
       return;
     }
 
@@ -88,16 +100,19 @@ export function usePushNotifications(isIosSafari: boolean, isInstalled: boolean)
         cache: "no-store",
         body: JSON.stringify({ endpoint: subscription?.endpoint ?? null }),
       });
-      const body = response.ok ? await response.json() : { thisDeviceRegistered: false, deviceCount: 0 };
+      const body = response.ok
+        ? await response.json()
+        : { thisDeviceRegistered: false, deviceCount: 0, otherMembersWithPush: 0 };
 
       setStatus({
         state: subscription && body.thisDeviceRegistered ? "enabled" : "disabled",
         deviceCount: typeof body.deviceCount === "number" ? body.deviceCount : 0,
+        otherMembersWithPush: typeof body.otherMembersWithPush === "number" ? body.otherMembersWithPush : 0,
         busy: false,
         error: null,
       });
     } catch {
-      setStatus({ state: "disabled", deviceCount: 0, busy: false, error: null });
+      setStatus({ state: "disabled", deviceCount: 0, otherMembersWithPush: 0, busy: false, error: null });
     }
   }, [isIosSafari, isInstalled]);
 
@@ -120,6 +135,7 @@ export function usePushNotifications(isIosSafari: boolean, isInstalled: boolean)
         setStatus({
           state: permission === "denied" ? "blocked" : "disabled",
           deviceCount: 0,
+          otherMembersWithPush: 0,
           busy: false,
           error: null,
         });

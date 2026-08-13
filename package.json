@@ -28,7 +28,8 @@
     "test:notification-content": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/notification-content.test.ts",
     "test:notification-audience": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/notification-audience.test.ts",
     "test:notification-security": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/notification-security.test.mjs",
-    "test:service-worker": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/service-worker-push.test.mjs"
+    "test:service-worker": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/service-worker-push.test.mjs",
+    "test:notification-centre": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/notification-centre.test.mjs"
   },
   "dependencies": {
     "@opennextjs/cloudflare": "^1.20.2",

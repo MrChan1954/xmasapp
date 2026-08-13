@@ -17,12 +17,8 @@ import {
   type PlannedNotification,
 } from "@/lib/notification-audience";
 import { validateUuid } from "@/lib/input-validation";
-import {
-  assertValidVapidKeys,
-  sendPushNotification,
-  type PushSubscriptionKeys,
-  type VapidKeys,
-} from "@/lib/web-push";
+import { assertValidVapidKeys, sendPushNotification, type VapidKeys } from "@/lib/web-push";
+import { logNotification, pushServiceHost } from "@/lib/notification-log";
 import { createClient as createSessionClient } from "../../../utils/supabase/server";
 
 const CHRISTMAS_YEAR = 2026;
@@ -203,6 +199,17 @@ export async function readDeviceStatus(endpoint: string | null) {
     .eq("app_member_id", member.id);
   if (devices.error) throw new NotificationError(503, notificationSetupError(devices.error.code));
 
+  // How many OTHER members could receive a push right now. A count only: no
+  // names, no endpoints. This exists because of a real failure — every device
+  // registered belonged to one person, so every notification they triggered was
+  // correctly suppressed by actor exclusion and nothing was ever sent. The page
+  // now says so plainly instead of looking healthy while reaching nobody.
+  const others = await admin
+    .from("push_subscriptions")
+    .select("app_member_id")
+    .neq("app_member_id", member.id);
+  if (others.error) throw new NotificationError(503, notificationSetupError(others.error.code));
+
   const normalized = endpoint ? safeEndpoint(endpoint) : null;
   return {
     // A count, never the endpoints themselves — the page only needs to say
@@ -210,6 +217,7 @@ export async function readDeviceStatus(endpoint: string | null) {
     deviceCount: devices.data.length,
     thisDeviceRegistered: normalized !== null
       && devices.data.some((row) => row.endpoint === normalized),
+    otherMembersWithPush: new Set(others.data.map((row) => row.app_member_id)).size,
   };
 }
 
@@ -233,7 +241,6 @@ export async function dispatchNotificationEvent(kind: NotificationEventKind, sub
   const id = validateUuid(subjectId, "A valid record is required.");
   if (!id.ok) throw new NotificationError(400, id.error);
 
-  const keys = readVapidKeys();
   const admin = createAdminClient();
 
   const event = await session
@@ -245,30 +252,117 @@ export async function dispatchNotificationEvent(kind: NotificationEventKind, sub
 
   const context = await loadFamilyContext(session, admin, event.data.id);
   const built = await buildPlan(kind, id.value, member.id, session, context);
-  if (!built) return { sent: 0, skipped: "not-applicable" as const };
+  if (!built) {
+    logNotification({ stage: "not-applicable", kind });
+    return { sent: 0, inAppCreated: 0, skipped: "not-applicable" as const };
+  }
 
-  // Claim the event before sending. A duplicate request — a retry, a
-  // double-tapped Save, or the several row writes one purchase produces — loses
-  // this insert and sends nothing.
+  /**
+   * Claim the event, then read back whatever row now exists.
+   *
+   * `ignoreDuplicates` turns the unique key into a no-op on a repeat rather
+   * than an error, so the several allocation rows one purchase writes, a retry,
+   * and a double-tapped Save all converge on one row. Whether this call created
+   * it is what decides if the in-app notifications still need writing.
+   */
   const claim = await admin
     .from("notification_events")
-    .insert({
+    .upsert({
       kind,
       subject_id: id.value,
       fingerprint: built.fingerprint,
       actor_app_member_id: member.id,
       recipient_count: built.planned.length,
-    })
-    .select("id")
-    .maybeSingle();
+    }, { onConflict: "kind,subject_id,fingerprint", ignoreDuplicates: true })
+    .select("id");
+  if (claim.error) throw new NotificationError(503, notificationSetupError(claim.error.code));
 
-  if (claim.error) {
-    // 23505 is the unique violation: already notified, nothing to do.
-    if (claim.error.code === "23505") return { sent: 0, skipped: "already-sent" as const };
-    throw new NotificationError(503, notificationSetupError(claim.error.code));
+  const isNewEvent = (claim.data?.length ?? 0) > 0;
+  const existing = await admin
+    .from("notification_events")
+    .select("id,delivered_count,attempt_count")
+    .eq("kind", kind)
+    .eq("subject_id", id.value)
+    .eq("fingerprint", built.fingerprint)
+    .maybeSingle();
+  if (existing.error || !existing.data) throw new NotificationError(503, notificationSetupError(existing.error?.code));
+
+  // The durable half. Written once, for everyone the event concerns, whether or
+  // not they have push switched on anywhere — losing your history because you
+  // turned off OS alerts would make the Notification Centre useless.
+  const inAppCreated = isNewEvent ? await createInAppNotifications(admin, built.planned, kind, id.value) : 0;
+
+  /**
+   * The best-effort half.
+   *
+   * Retried whenever nothing has ever been accepted for this event. This is the
+   * bug that made the old ledger a trap: it claimed the event before sending,
+   * so a delivery that reached nobody — because a key was missing, or a push
+   * service was down, or in the real case because no recipient had subscribed
+   * yet — marked the event handled forever and suppressed every retry.
+   */
+  if (existing.data.delivered_count > 0) {
+    logNotification({ stage: "already-delivered", kind, deduplicated: true, recipients: built.planned.length });
+    return { sent: 0, inAppCreated, skipped: "already-sent" as const };
   }
 
-  return { sent: await deliver(admin, built.planned, keys), skipped: null };
+  const delivery = await deliver(admin, built.planned, kind);
+  await admin
+    .from("notification_events")
+    .update({
+      delivered_count: delivery.delivered,
+      attempt_count: existing.data.attempt_count + 1,
+      last_attempt_at: new Date().toISOString(),
+    })
+    .eq("id", existing.data.id);
+
+  logNotification({
+    stage: "dispatched",
+    kind,
+    recipients: built.planned.length,
+    subscriptions: delivery.subscriptions,
+    inAppCreated,
+    delivered: delivery.delivered,
+    failed: delivery.failed,
+    removedInvalid: delivery.removedInvalid,
+    deduplicated: !isNewEvent,
+  });
+
+  return { sent: delivery.delivered, inAppCreated, skipped: null };
+}
+
+/**
+ * Write one Notification Centre row per planned recipient.
+ *
+ * Uses the same text the push carries. The push copy is the constraint — it is
+ * read off a lock screen — and there is no case for the in-app copy saying more
+ * about someone's money than the notification that already announced it.
+ */
+async function createInAppNotifications(
+  admin: AdminClient,
+  planned: PlannedNotification[],
+  kind: NotificationEventKind,
+  subjectId: string,
+): Promise<number> {
+  if (planned.length === 0) return 0;
+
+  const result = await admin.from("notifications").insert(planned.map((row) => ({
+    app_member_id: row.appMemberId,
+    category: row.payload.category,
+    title: row.payload.title,
+    body: row.payload.body,
+    target_url: row.payload.url,
+    event_kind: kind,
+    event_subject_id: subjectId,
+  })));
+
+  if (result.error) {
+    // The push may still be worth attempting, and the action itself is already
+    // saved, so this is reported rather than thrown.
+    logNotification({ stage: "in-app-write-failed", kind, reason: result.error.code ?? "unknown" });
+    return 0;
+  }
+  return planned.length;
 }
 
 type FamilyContext = {
@@ -562,18 +656,48 @@ async function buildPlan(
  * Failures are counted, not thrown: one dead endpoint must not stop the rest of
  * the family being told.
  */
+type DeliveryReport = {
+  subscriptions: number;
+  delivered: number;
+  failed: number;
+  removedInvalid: number;
+};
+
 async function deliver(
   admin: AdminClient,
   planned: PlannedNotification[],
-  keys: VapidKeys,
-): Promise<number> {
-  if (planned.length === 0) return 0;
+  kind: string,
+): Promise<DeliveryReport> {
+  const empty: DeliveryReport = { subscriptions: 0, delivered: 0, failed: 0, removedInvalid: 0 };
+  if (planned.length === 0) return empty;
+
+  // Read here rather than at the top of dispatch: a missing or malformed key
+  // must not stop the in-app notifications being written, which are the durable
+  // record. Push is the optional layer, so its configuration failing degrades
+  // to "no OS alert" instead of "the event never happened".
+  let keys: VapidKeys;
+  try {
+    keys = readVapidKeys();
+  } catch {
+    logNotification({ stage: "push-not-configured", kind, recipients: planned.length });
+    return empty;
+  }
 
   const devices = await admin
     .from("push_subscriptions")
     .select("id,app_member_id,endpoint,p256dh,auth")
     .in("app_member_id", [...new Set(planned.map((row) => row.appMemberId))]);
-  if (devices.error || devices.data.length === 0) return 0;
+  if (devices.error) {
+    logNotification({ stage: "subscription-read-failed", kind, reason: devices.error.code ?? "unknown" });
+    return empty;
+  }
+  if (devices.data.length === 0) {
+    // Not an error, and the exact condition that made this system look broken:
+    // the audience was correct, the event was real, and not one person in it had
+    // ever enabled notifications on any device.
+    logNotification({ stage: "no-subscribed-recipients", kind, recipients: planned.length, subscriptions: 0 });
+    return empty;
+  }
 
   const byMember = new Map<string, typeof devices.data>();
   for (const device of devices.data) {
@@ -585,16 +709,22 @@ async function deliver(
   );
 
   const results = await Promise.all(jobs.map(async ({ device, notification }) => {
-    const subscription: PushSubscriptionKeys = {
-      endpoint: device.endpoint,
-      p256dh: device.p256dh,
-      auth: device.auth,
-    };
     const outcome = await sendPushNotification(
-      subscription,
+      { endpoint: device.endpoint, p256dh: device.p256dh, auth: device.auth },
       JSON.stringify(notification.payload),
       keys,
     );
+    // Every real push service response is recorded. Silently discarding these
+    // is what hid the original failure. Hostname only — the endpoint path is a
+    // per-device bearer token.
+    logNotification({
+      stage: "push-response",
+      kind,
+      pushHost: pushServiceHost(device.endpoint),
+      status: outcome.status,
+      outcome: outcome.outcome,
+      ...(outcome.outcome === "failed" ? { reason: outcome.reason } : {}),
+    });
     return { id: device.id, outcome };
   }));
 
@@ -602,7 +732,9 @@ async function deliver(
   if (expiredIds.length > 0) {
     // 404/410 means the browser dropped the subscription — uninstalled app,
     // cleared site data, permission revoked. The row can never work again, so
-    // it goes rather than being retried forever.
+    // it goes rather than being retried forever. Anything else, including a 429
+    // or a 5xx, is left alone so a wobbling push service cannot unsubscribe the
+    // whole family.
     await admin.from("push_subscriptions").delete().in("id", expiredIds);
   }
 
@@ -614,7 +746,93 @@ async function deliver(
       .in("id", deliveredIds);
   }
 
-  return deliveredIds.length;
+  return {
+    subscriptions: devices.data.length,
+    delivered: deliveredIds.length,
+    failed: results.filter((row) => row.outcome.outcome === "failed").length,
+    removedInvalid: expiredIds.length,
+  };
+}
+
+/**
+ * "Send test notification": a real push, through the real pipeline, to the
+ * devices of the person who pressed the button and nobody else.
+ *
+ * This is the diagnostic the system was missing. Every other notification is
+ * suppressed for the person who caused it, which is correct but means a lone
+ * tester can never see one — exactly how a fully working transport went
+ * unnoticed while nothing appeared to arrive.
+ *
+ * Security: there is no generic send endpoint. The recipient is the
+ * authenticated member, taken from the session and never from the request. The
+ * text is the fixed constant below and cannot be supplied by the caller. So the
+ * worst this can do is send a member a notification they asked for.
+ */
+export async function sendTestNotification() {
+  const { member } = await requireNotificationMember();
+  const admin = createAdminClient();
+
+  const devices = await admin
+    .from("push_subscriptions")
+    .select("id,endpoint,p256dh,auth")
+    .eq("app_member_id", member.id);
+  if (devices.error) throw new NotificationError(503, notificationSetupError(devices.error.code));
+  if (devices.data.length === 0) {
+    throw new NotificationError(409, "This device is not registered for notifications yet. Turn them on first.");
+  }
+
+  let keys: VapidKeys;
+  try {
+    keys = readVapidKeys();
+  } catch (error) {
+    logNotification({ stage: "test-push-not-configured" });
+    throw error;
+  }
+
+  const payload = JSON.stringify({
+    title: "Christmas Budget",
+    body: "Notifications are working \u{1F384}",
+    url: "/more/notifications",
+    tag: "test-notification",
+    category: "purchases",
+  });
+
+  const results = await Promise.all(devices.data.map(async (device) => {
+    const outcome = await sendPushNotification(
+      { endpoint: device.endpoint, p256dh: device.p256dh, auth: device.auth },
+      payload,
+      keys,
+    );
+    logNotification({
+      stage: "test-push-response",
+      pushHost: pushServiceHost(device.endpoint),
+      status: outcome.status,
+      outcome: outcome.outcome,
+      ...(outcome.outcome === "failed" ? { reason: outcome.reason } : {}),
+    });
+    return { id: device.id, outcome };
+  }));
+
+  const expired = results.filter((row) => row.outcome.outcome === "expired");
+  if (expired.length > 0) {
+    await admin.from("push_subscriptions").delete().in("id", expired.map((row) => row.id));
+  }
+  const delivered = results.filter((row) => row.outcome.outcome === "sent");
+  if (delivered.length > 0) {
+    await admin
+      .from("push_subscriptions")
+      .update({ last_delivery_at: new Date().toISOString(), failure_count: 0 })
+      .in("id", delivered.map((row) => row.id));
+  }
+
+  // The real HTTP status is handed back so the page can say what actually
+  // happened rather than reporting success regardless.
+  return {
+    devices: results.length,
+    delivered: delivered.length,
+    removedInvalid: expired.length,
+    statuses: results.map((row) => row.outcome.status),
+  };
 }
 
 function requireFresh(timestamp: string | null) {
@@ -653,4 +871,103 @@ function notificationSetupError(code?: string) {
     return "Notifications are not ready yet. Apply the push notifications migration, then try again.";
   }
   return "Notification settings could not be saved.";
+}
+
+// ---------------------------------------------------------------------------
+// Notification Centre
+// ---------------------------------------------------------------------------
+
+/**
+ * The bell's contents.
+ *
+ * Deliberately server-side rather than a direct browser query, so the shape the
+ * client sees is fixed here and the member id never has to leave the server.
+ * RLS would restrict a direct query identically; this simply keeps one place
+ * that decides what a notification looks like to the UI.
+ */
+export type InboxNotification = {
+  id: string;
+  category: string;
+  title: string;
+  body: string;
+  targetUrl: string;
+  readAt: string | null;
+  createdAt: string;
+};
+
+/** Newest first, capped: the bell is a recent-activity view, not an archive. */
+const INBOX_LIMIT = 50;
+
+export async function readInbox(): Promise<{ notifications: InboxNotification[]; unreadCount: number }> {
+  const { session } = await requireNotificationMember();
+
+  // The caller's own session, so RLS is what scopes this to their rows — not a
+  // `where` clause that could be forgotten.
+  const [rows, unread] = await Promise.all([
+    session
+      .from("notifications")
+      .select("id,category,title,body,target_url,read_at,created_at")
+      .order("created_at", { ascending: false })
+      .limit(INBOX_LIMIT),
+    session
+      .from("notifications")
+      .select("id", { count: "exact", head: true })
+      .is("read_at", null),
+  ]);
+  if (rows.error) throw new NotificationError(503, notificationSetupError(rows.error.code));
+
+  return {
+    notifications: (rows.data ?? []).map((row) => ({
+      id: row.id,
+      category: row.category,
+      title: row.title,
+      body: row.body,
+      // Re-checked on the way out as well as on the way in. The column has a
+      // CHECK constraint, but a link the UI is about to follow is worth being
+      // certain about in more than one place.
+      targetUrl: safeInternalPath(row.target_url),
+      readAt: row.read_at,
+      createdAt: row.created_at,
+    })),
+    unreadCount: unread.error ? 0 : unread.count ?? 0,
+  };
+}
+
+/**
+ * Mark one notification, or all of them, as read.
+ *
+ * Scoped by RLS to the caller's own rows, and the table's trigger allows only
+ * `read_at` to change — so this cannot touch another member's inbox, and cannot
+ * rewrite the text or the link of even their own.
+ */
+export async function markNotificationsRead(notificationId: string | null) {
+  const { session } = await requireNotificationMember();
+  const readAt = new Date().toISOString();
+
+  let query = session.from("notifications").update({ read_at: readAt }).is("read_at", null);
+  if (notificationId !== null) {
+    const id = validateUuid(notificationId, "A valid notification is required.");
+    if (!id.ok) throw new NotificationError(400, id.error);
+    query = query.eq("id", id.value);
+  }
+
+  const result = await query;
+  if (result.error) throw new NotificationError(503, notificationSetupError(result.error.code));
+  return { ok: true as const };
+}
+
+/**
+ * Reduce a stored target to a safe in-app path.
+ *
+ * A single leading slash and not `//host`: browsers resolve a protocol-relative
+ * URL to another origin, so the naive "starts with /" test is not enough.
+ */
+function safeInternalPath(value: unknown): string {
+  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) return "/";
+  try {
+    const resolved = new URL(value, "https://internal.invalid");
+    return resolved.origin === "https://internal.invalid" ? resolved.pathname + resolved.search : "/";
+  } catch {
+    return "/";
+  }
 }

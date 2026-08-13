@@ -32,5 +32,26 @@ export function notifyFamily(kind: NotifiableEvent, id: string): void {
     // save — the purchase form returns to the person's page immediately.
     keepalive: true,
     body: JSON.stringify({ kind, id }),
-  }).catch(() => {});
+  })
+    .then(async (response) => {
+      // Still never surfaced to the user — the save already succeeded and a
+      // notification failure is not theirs to act on. But it is no longer
+      // thrown away: swallowing this completely is precisely why a pipeline
+      // that reached nobody looked identical to one that was working, for as
+      // long as it did. A developer with the console open can now see it.
+      if (!response.ok) {
+        console.warn("[notifications] dispatch rejected", { kind, status: response.status });
+        return;
+      }
+      const result = await response.json().catch(() => ({}));
+      if (result.sent === 0 && result.inAppCreated === 0 && result.skipped !== "already-sent") {
+        console.info("[notifications] dispatch reached nobody", { kind, skipped: result.skipped ?? null });
+      }
+    })
+    .catch((error: unknown) => {
+      console.warn("[notifications] dispatch failed", {
+        kind,
+        type: error instanceof Error ? error.name : "UnknownError",
+      });
+    });
 }

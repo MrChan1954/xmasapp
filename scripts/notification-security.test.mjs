@@ -117,12 +117,23 @@ test("a member cannot send notifications to anyone else at will", () => {
 test("one action sends one notification however many rows it wrote", () => {
   // The ledger's unique key is what makes dispatch idempotent.
   assert.match(migration, /unique \(kind, subject_id, fingerprint\)/);
-  // The insert is attempted BEFORE delivery, and a duplicate key returns
-  // without sending.
+
+  // The event is claimed before anything is created or sent, so the several
+  // allocation rows one purchase writes, a retry, and a double-tapped Save all
+  // converge on one ledger row.
   const claimIndex = server.indexOf('.from("notification_events")');
-  const deliverIndex = server.indexOf("return { sent: await deliver(");
-  assert.ok(claimIndex > 0 && claimIndex < deliverIndex, "the event must be claimed before anything is sent");
-  assert.match(server, /if \(claim\.error\.code === "23505"\) return \{ sent: 0, skipped: "already-sent" as const \};/);
+  const createIndex = server.indexOf("await createInAppNotifications");
+  const deliverIndex = server.indexOf("const delivery = await deliver(");
+  assert.ok(claimIndex > 0 && claimIndex < createIndex, "the event must be claimed before notifications are created");
+  assert.ok(createIndex < deliverIndex, "the durable record is written before the optional push");
+
+  // Claiming no longer suppresses a RETRY, only a repeat of what already
+  // worked. The original code treated the claim as proof of delivery, so a send
+  // that reached nobody blocked every later attempt for good; the two are now
+  // tracked separately and only a delivery that actually landed stops a resend.
+  assert.match(server, /ignoreDuplicates: true/);
+  assert.match(server, /if \(existing\.data\.delivered_count > 0\) \{/);
+  assert.doesNotMatch(server, /claim\.error\.code === "23505"/, "a duplicate claim must not be read as delivered");
 
   // No grants at all: only the server's secret-key client writes this ledger.
   assert.match(migration, /revoke all privileges on table public\.notification_events from public, anon, authenticated;/);

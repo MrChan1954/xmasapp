@@ -5,6 +5,7 @@ import { ChevronLeft } from "lucide-react";
 import type { ReactNode } from "react";
 import { AccountMenu } from "./account-menu";
 import { CommandPalette, SearchTrigger, useCommandPalette } from "./command-search";
+import { NotificationBell } from "./notification-bell";
 import { Ornament } from "./festive/ornaments";
 
 /**
@@ -58,6 +59,10 @@ export function TopBar({
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
             {actions}
             <SearchTrigger onOpen={() => palette.setOpen(true)} className="lg:w-56 lg:justify-start" />
+            {/* Between search and the account menu on every width. This bar only
+                renders inside `AppShell`, and `AppFrame` gives auth routes their
+                children bare, so the bell never appears on a sign-in screen. */}
+            <NotificationBell />
             <AccountMenu />
           </div>
         </div>
