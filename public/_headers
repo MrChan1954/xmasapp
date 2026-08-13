@@ -16,10 +16,18 @@
   Content-Security-Policy: default-src 'self'; script-src 'self'
   X-Content-Type-Options: nosniff
 
-# `no-cache` rather than a max-age: the worker precaches this with `cache.add`,
-# which honours the HTTP cache, so a stale copy here would be frozen into Cache
-# Storage until CACHE_VERSION changed.
+# `no-cache` rather than a max-age: the worker precaches this, so a stale copy
+# here could be frozen into Cache Storage until CACHE_VERSION changed.
+#
+# Both paths are listed because Cloudflare's asset handler strips the extension:
+# a request for `/offline.html` is answered with a 307 to `/offline`, and it is
+# that second response the browser actually stores. A rule on the `.html` path
+# alone therefore never reaches the file's real response.
 /offline.html
+  Cache-Control: no-cache
+  X-Content-Type-Options: nosniff
+
+/offline
   Cache-Control: no-cache
   X-Content-Type-Options: nosniff
 

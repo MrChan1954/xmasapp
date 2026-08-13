@@ -43,11 +43,21 @@ test("every declared icon exists, is square at its declared size, and is opaque"
 test("the service worker cannot cache anything but hashed build output", () => {
   const source = readFileSync(join(root, "public", "sw.js"), "utf8");
 
-  // The only two places anything is ever written to Cache Storage. A third
-  // would have to be added deliberately, and would fail here.
-  assert.match(source, /const PRECACHE = \[OFFLINE_URL\];/);
+  // The only two things ever written to Cache Storage — the offline page and a
+  // hashed asset. A third write would have to be added deliberately, and would
+  // fail here.
+  const written = [...source.matchAll(/cache\.put\(\s*([A-Za-z_$][\w$]*)/g)].map((match) => match[1]);
+  assert.deepEqual(written.sort(), ["OFFLINE_URL", "request"]);
   assert.match(source, /url\.pathname\.startsWith\("\/_next\/static\/"\)/);
-  assert.doesNotMatch(source, /cache\.put\((?!request, copy)/);
+
+  // `cache.add` follows redirects and keeps the redirected flag on what it
+  // stores, and a redirected response cannot legally be returned from
+  // `respondWith` for a navigation — which is the only thing the offline page
+  // is ever used for. Cloudflare's asset handler really does redirect
+  // `/offline.html` to `/offline`, so this is not hypothetical: the fallback
+  // has to be re-wrapped in a fresh Response, and `cache.add` must stay unused.
+  assert.doesNotMatch(source, /cache\.add\(/);
+  assert.match(source, /new Response\(await response\.blob\(\)/);
 
   // Everything that must never reach respondWith. Financial values only ever
   // arrive cross-origin from Supabase or from /api/, so these two guards are
@@ -61,6 +71,45 @@ test("the service worker cannot cache anything but hashed build output", () => {
   assert.match(source, /request\.mode === "navigate"/);
   assert.match(source, /self\.skipWaiting\(\)/);
   assert.match(source, /self\.clients\.claim\(\)/);
+});
+
+/**
+ * The regression this file exists to prevent from returning.
+ *
+ * Before the PWA work the root layout exported no `viewport` at all, so no
+ * `<meta name="viewport">` was emitted. Android then lays the page out at its
+ * 980px fallback width and scales the result down to the screen: every `sm:`
+ * and `lg:` utility matches, the contributor grid goes multi-column, and the
+ * whole thing reads as a shrunken desktop site on a 360px phone. It is silent —
+ * nothing errors, the page just renders at the wrong width — and it is
+ * invisible on a desktop browser, so only an assertion catches it.
+ */
+test("the root layout emits exactly one device-width viewport", () => {
+  const layout = readFileSync(join(root, "src", "app", "layout.tsx"), "utf8");
+
+  assert.match(layout, /export const viewport: Viewport = \{/);
+  assert.match(layout, /width: "device-width"/);
+  assert.match(layout, /initialScale: 1\b/);
+
+  // A hand-written tag anywhere in the tree would be a second, conflicting
+  // declaration — Next already emits one from the export above.
+  assert.doesNotMatch(layout, /<meta\s+name="viewport"/);
+
+  // Neither may be set: both stop a user pinch-zooming, which fails WCAG 1.4.4
+  // and is the usual accidental cause of "the text is too small to read".
+  assert.doesNotMatch(layout, /maximumScale/);
+  assert.doesNotMatch(layout, /userScalable/);
+});
+
+test("the offline page carries its own viewport", () => {
+  // It is a standalone document served straight from `public/`, so it gets
+  // nothing from the root layout and needs the tag written out.
+  const offline = readFileSync(join(root, "public", "offline.html"), "utf8");
+  const tags = offline.match(/<meta\s+name="viewport"[^>]*>/g) ?? [];
+
+  assert.equal(tags.length, 1);
+  assert.match(tags[0], /width=device-width/);
+  assert.match(tags[0], /initial-scale=1/);
 });
 
 test("the install prompt is captured at app start, not when the card mounts", () => {

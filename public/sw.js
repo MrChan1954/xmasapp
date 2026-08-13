@@ -34,22 +34,57 @@
  *   references the current hashed asset URLs. A deploy therefore takes effect
  *   on the next load. CACHE_VERSION additionally purges old caches on activate,
  *   and skipWaiting + clients.claim stop a new worker waiting behind an old tab.
+ *
+ *   That covers this worker's cache. The HTTP cache is handled alongside it:
+ *   documents are served `Cache-Control: no-cache` (see `next.config.ts`), and
+ *   `pwa-runtime.tsx` re-checks this script whenever the app returns to the
+ *   foreground. Both exist because an installed app has no reload button — a
+ *   browser tab can always be pulled to refresh, a home-screen app cannot.
  */
 
-const CACHE_VERSION = "v1";
+// Bumped from v1: the v1 cache holds an offline entry stored by `cache.add`,
+// which followed the host's `/offline.html` -> `/offline` redirect and so
+// carries the redirected flag. Returning such a response from `respondWith`
+// for a navigation is a TypeError, which made the offline fallback throw
+// instead of render. Renaming the cache drops those entries on activate.
+const CACHE_VERSION = "v2";
 const CACHE_NAME = `xmas-static-${CACHE_VERSION}`;
 const OFFLINE_URL = "/offline.html";
 
-// The offline fallback has to be in place before it is needed. It is the only
-// precached file, and the only cached thing that is not content-hashed.
-const PRECACHE = [OFFLINE_URL];
+/**
+ * Put the offline fallback in place before anything needs it. It is the only
+ * precached file, and the only cached thing that is not content-hashed.
+ *
+ * `cache.add` is deliberately NOT used. Cloudflare's asset handler answers
+ * `/offline.html` with a 307 to the extensionless `/offline`; `cache.add`
+ * follows that and stores a response whose `redirected` flag is set, and the
+ * one place this file is ever used — `respondWith` for a navigation — rejects
+ * a redirected response outright. Re-wrapping the body in a fresh Response
+ * clears the flag, so the fallback works whatever the host does with `.html`.
+ */
+async function precacheOfflinePage() {
+  // `cache: "reload"` so a stale HTTP-cached copy cannot be frozen into Cache
+  // Storage until CACHE_VERSION changes again.
+  const response = await fetch(OFFLINE_URL, { cache: "reload", redirect: "follow" });
+  if (!response.ok) return;
+
+  const cache = await caches.open(CACHE_NAME);
+  await cache.put(
+    OFFLINE_URL,
+    new Response(await response.blob(), {
+      status: 200,
+      statusText: "OK",
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    }),
+  );
+}
 
 self.addEventListener("install", (event) => {
+  // A failed precache must not fail the install: the worker's main job is the
+  // static-asset cache, and the site works fully without an offline page.
   event.waitUntil(
-    caches
-      .open(CACHE_NAME)
-      // Individually, so one missing file cannot fail the whole install.
-      .then((cache) => Promise.allSettled(PRECACHE.map((url) => cache.add(url))))
+    precacheOfflinePage()
+      .catch(() => {})
       .then(() => self.skipWaiting()),
   );
 });

@@ -53,6 +53,30 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        /**
+         * Documents must always be revalidated before they are reused.
+         *
+         * Without this the platform's own `s-maxage=31536000` is the only
+         * freshness signal on an HTML response, and a private cache that
+         * chooses to apply a heuristic lifetime can pin a document for a long
+         * time. In a browser tab that is survivable — the user can pull to
+         * refresh. An installed PWA has no address bar, no reload button and
+         * no pull-to-refresh, so a pinned document leaves that user on an old
+         * build with no way out. `no-cache` still allows the copy to be
+         * stored; it just forces the conditional request, which the ETag
+         * answers with a 304, so the cost is one small round trip.
+         *
+         * `_next/static` and `_next/image` are excluded: those URLs are
+         * content-hashed (verified — changing a stylesheet changes its chunk
+         * filename) and must keep the immutable lifetime from
+         * `public/_headers`, or every navigation would refetch the bundle.
+         * `/api/` is excluded so nothing here can weaken a route that sets its
+         * own caching for authenticated data.
+         */
+        source: "/((?!_next/static|_next/image|api/).*)",
+        headers: [{ key: "Cache-Control", value: "no-cache" }],
+      },
+      {
         // Parity only. In production Cloudflare serves `public/` directly and
         // this block never runs — `public/_headers` is authoritative there and
         // carries the same rules. Keeping them here means `next start` and a
