@@ -16,6 +16,7 @@ const realtimeMigrationName = "202608100014_enable_realtime_for_shared_data.sql"
 const auditMigrationName = "202608100015_add_admin_audit_log.sql";
 const auditOpenMigrationName = "202608100016_open_audit_log_and_enrich_detail.sql";
 const photosMigrationName = "202608100017_add_item_photos.sql";
+const notificationsMigrationName = "202608100018_add_push_notifications.sql";
 const authorizationMigration = readFileSync(
   join(migrationsDirectory, authorizationMigrationName),
   "utf8",
@@ -33,6 +34,7 @@ const realtimeMigration = readFileSync(join(migrationsDirectory, realtimeMigrati
 const auditMigration = readFileSync(join(migrationsDirectory, auditMigrationName), "utf8");
 const auditOpenMigration = readFileSync(join(migrationsDirectory, auditOpenMigrationName), "utf8");
 const photosMigration = readFileSync(join(migrationsDirectory, photosMigrationName), "utf8");
+const notificationsMigration = readFileSync(join(migrationsDirectory, notificationsMigrationName), "utf8");
 
 const applicationTables = [
   "christmas_events",
@@ -48,7 +50,10 @@ const applicationTables = [
 ];
 
 test("the authorization migration explicitly enables RLS on every application table", () => {
-  assert.equal(migrationFiles.at(-1), photosMigrationName);
+  // Deliberately pinned to the newest migration. Adding one fails this test on
+  // purpose, so a schema change cannot land without this file being reviewed
+  // and its checks extended to whatever the migration introduced.
+  assert.equal(migrationFiles.at(-1), notificationsMigrationName);
 
   for (const table of applicationTables) {
     assert.match(
@@ -630,6 +635,43 @@ test("photo storage policies are scoped to the photo bucket alone", () => {
   // The storage path is what a signed URL is minted against, and the activity
   // log is readable by the whole family.
   assert.doesNotMatch(statements, /resolved_subject := payload ->> 'storage_path'/i);
+});
+
+test("the notification tables are locked down and hold no financial data", () => {
+  // These arrived after the hardening migration, so they carry their own
+  // enable/revoke rather than being covered by the sweep above.
+  for (const table of ["push_subscriptions", "notification_preferences", "notification_events"]) {
+    assert.match(
+      notificationsMigration,
+      new RegExp(`alter table public\.${table} enable row level security;`, "i"),
+      `${table} must have an explicit RLS enable statement`,
+    );
+    assert.match(
+      notificationsMigration,
+      new RegExp(`revoke all privileges on table public\.${table} from public, anon, authenticated;`, "i"),
+      `${table} must have normalized direct grants`,
+    );
+  }
+
+  // The send ledger is server-only: no browser token may read or write it.
+  assert.doesNotMatch(notificationsMigration, /grant [a-z, ]+ on table public\.notification_events/i);
+
+  // Push endpoints and device encryption keys are readable only by their owner,
+  // and can only ever be written by the server's secret-key client.
+  assert.doesNotMatch(
+    notificationsMigration,
+    /create policy[^;]*on public\.push_subscriptions\s+for (insert|update)/i,
+  );
+
+  // No money column lives in these tables. Asserted against the statements with
+  // comments stripped, since the prose above them necessarily discusses
+  // balances and amounts while explaining why none are stored.
+  const statements = notificationsMigration.replace(/--[^\n]*/g, "");
+  assert.doesNotMatch(statements, /\b\w*(pennies|amount|balance|budget)\w*\s+(integer|numeric|bigint)/i);
+
+  // None of them may join the Realtime publication: that would broadcast push
+  // endpoints and per-device encryption keys to every subscribed client.
+  assert.doesNotMatch(statements, /alter publication supabase_realtime/i);
 });
 
 test("the application CSP blocks object and frame embedding and production eval", () => {

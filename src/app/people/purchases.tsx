@@ -9,6 +9,7 @@ import {
 } from "@/lib/purchases";
 import { createClient } from "../../../utils/supabase/client";
 import { IconPlus } from "../components/icons";
+import { notifyFamily } from "../components/notify-family";
 import { PhotoGallery } from "../components/photo-gallery";
 import {
   Badge,
@@ -148,6 +149,12 @@ export function Purchases({
       setBusy(null);
       return;
     }
+
+    // Goes only to the contributors carrying part of this gift's cost, and once
+    // per status: marking wrapped after purchased sends both, marking wrapped
+    // twice sends one.
+    notifyFamily("gift_status", purchase.id);
+
     await loadPurchases();
     setNotice(`“${purchase.description}” is now ${purchaseLifecycleLabel(status).toLowerCase()}.`);
     setBusy(null);

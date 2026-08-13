@@ -22,7 +22,13 @@
     "test:photo-limits": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/photo-limits.test.ts",
     "test:images": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/image-resize.test.ts",
     "test:pwa": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/pwa-assets.test.mjs",
-    "test:security": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/rls-security.test.mjs"
+    "test:security": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/rls-security.test.mjs",
+    "vapid": "node scripts/generate-vapid-keys.mjs",
+    "test:web-push": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/web-push.test.ts",
+    "test:notification-content": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/notification-content.test.ts",
+    "test:notification-audience": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/notification-audience.test.ts",
+    "test:notification-security": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/notification-security.test.mjs",
+    "test:service-worker": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/service-worker-push.test.mjs"
   },
   "dependencies": {
     "@opennextjs/cloudflare": "^1.20.2",

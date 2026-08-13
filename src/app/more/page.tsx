@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppShell, PageHeader } from "../components/app-shell";
 import { useFestive } from "../components/festive/festive-context";
-import { IconChevronRight, IconHistory, IconPeople, IconReceipt, IconUser } from "../components/icons";
+import { IconBell, IconChevronRight, IconHistory, IconPeople, IconReceipt, IconUser } from "../components/icons";
 import { InstallCard } from "../components/install-card";
 import { Notice, Skeleton, cx } from "../components/ui";
 
@@ -95,6 +95,16 @@ export default function MorePage() {
           description="Change your password or sign out."
           icon={<IconUser size={20} />}
         />
+        {/* Always listed, even where the browser cannot show notifications: the
+            page itself explains why rather than the entry silently vanishing. */}
+        <div className="mt-3">
+          <SettingsLink
+            href="/more/notifications"
+            title="Notifications"
+            description="Choose what you are told about, and on which devices."
+            icon={<IconBell size={20} />}
+          />
+        </div>
       </Group>
 
       <Group label="Records">

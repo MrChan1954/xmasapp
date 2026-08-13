@@ -12,6 +12,7 @@ import {
 } from "@/lib/input-validation";
 import { createClient } from "../../../utils/supabase/client";
 import { IconPlus } from "../components/icons";
+import { notifyFamily } from "../components/notify-family";
 import { PhotoGallery } from "../components/photo-gallery";
 import { PhotoPicker, usePendingPhotos } from "../components/photo-picker";
 import {
@@ -134,6 +135,11 @@ export function GiftIdeas({
     // there was no gift idea for them to belong to. The RPC returns the saved
     // row, so this covers a brand new idea and an edited one alike.
     const savedId = (result.data as GiftIdea | null)?.id;
+
+    // New ideas only. Editing one is not news, and the server would refuse it:
+    // the ledger entry for this idea has already been claimed.
+    if (savedId && !idea) notifyFamily("gift_idea", savedId);
+
     if (savedId) {
       const outcome = await pendingPhotos.uploadTo({ kind: "giftIdea", id: savedId });
       if (outcome.failed > 0) {

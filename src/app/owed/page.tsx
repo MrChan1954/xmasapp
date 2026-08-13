@@ -13,6 +13,7 @@ import { parsePoundsToPennies } from "../../lib/purchases";
 import { INPUT_LIMITS, validateDateInput, validateOptionalText, validateUuid } from "../../lib/input-validation";
 import { AppShell, PageHeader } from "../components/app-shell";
 import { GarlandRule } from "../components/festive/garland";
+import { notifyFamily } from "../components/notify-family";
 import {
   Button,
   ConfirmDialog,
@@ -409,6 +410,13 @@ function PaymentSheet({ balance, data, onClose, onSaved }: { balance: NetOwedBal
       setSaving(false);
       return;
     }
+
+    // The person who paid learns their repayment was acknowledged. Only the
+    // receiver or a Global Admin can record one, so the payer is normally the
+    // one side that has not yet heard.
+    const settlementId = (result.data as { id?: string } | null)?.id;
+    if (settlementId) notifyFamily("payment", settlementId);
+
     await onSaved();
   };
 

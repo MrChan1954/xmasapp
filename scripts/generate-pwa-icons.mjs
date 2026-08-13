@@ -93,6 +93,33 @@ const png = (size, scale) =>
     .png({ compressionLevel: 9 })
     .toBuffer();
 
+/**
+ * The Android notification badge: the small glyph drawn into the status bar
+ * alongside the app name.
+ *
+ * Android ignores every colour in this image and keeps only its alpha channel,
+ * so the tile background and the green/gold/berry palette above are all wrong
+ * here — a fully opaque square would come out as a solid blob. This draws the
+ * tree as flat white on transparency instead, which is what the platform then
+ * tints for the user's status bar. It is the one asset in this file that is
+ * deliberately NOT opaque.
+ */
+function badgeSvg(size) {
+  const artwork = size * 0.86;
+  const offset = (size - artwork) / 2;
+  const silhouette = `
+  <g fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M24 11 15 24h18L24 11Z" />
+    <path d="M24 19 11 34h26L24 19Z" />
+    <path d="M21 34h6v7h-6z" />
+    <path d="M17 41h14" />
+  </g>
+  <path fill="#ffffff" d="m24 2 1.5 3.4 3.7.4-2.7 2.5.7 3.7L24 10.2l-3.2 1.8.7-3.7-2.7-2.5 3.7-.4L24 2Z" />`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+  <svg x="${offset}" y="${offset}" width="${artwork}" height="${artwork}" viewBox="0 0 48 48"><g transform="translate(0 2.1)">${silhouette}</g></svg>
+</svg>`;
+}
+
 const targets = [
   // Android / manifest.
   { file: "public/icons/icon-192.png", size: 192, scale: 0.78 },
@@ -111,6 +138,15 @@ for (const { file, size, scale } of targets) {
   await writeFile(path.join(root, file), await png(size, scale));
   console.log(`wrote ${file} (${size}x${size})`);
 }
+
+await writeFile(
+  path.join(root, "public/icons/badge-96.png"),
+  await sharp(Buffer.from(badgeSvg(96)), { density: 384 })
+    .resize(96, 96)
+    .png({ compressionLevel: 9 })
+    .toBuffer(),
+);
+console.log("wrote public/icons/badge-96.png (96x96, transparent)");
 
 /**
  * favicon.ico, replacing the create-next-app default. Hand-assembled because

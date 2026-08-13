@@ -20,6 +20,7 @@ import {
 } from "@/lib/purchases";
 import { createClient } from "../../../utils/supabase/client";
 import { PageHeader } from "../components/app-shell";
+import { notifyFamily } from "../components/notify-family";
 import { GarlandRule } from "../components/festive/garland";
 import { FinancialProgressBar } from "../components/financial-progress";
 import { PhotoPicker, usePendingPhotos } from "../components/photo-picker";
@@ -395,6 +396,12 @@ export function PurchaseForm() {
     // are reported but never block the save: the money is already recorded, and
     // a photo can be added again from the purchase itself.
     const savedId = (result.data as { id?: string } | null)?.id ?? editId;
+
+    // A brand new purchase only. Editing one already-notified purchase is not a
+    // new event for the family, and the server would refuse it anyway: the
+    // freshness check reads `created_at`, and the event ledger has already been
+    // claimed for this purchase.
+    if (savedId && !editId) notifyFamily("purchase", savedId);
     if (savedId) {
       const outcome = await pendingPhotos.uploadTo({ kind: "purchase", id: savedId });
       if (outcome.failed > 0) {
