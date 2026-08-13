@@ -18,6 +18,7 @@ const auditOpenMigrationName = "202608100016_open_audit_log_and_enrich_detail.sq
 const photosMigrationName = "202608100017_add_item_photos.sql";
 const notificationsMigrationName = "202608100018_add_push_notifications.sql";
 const notificationCentreMigrationName = "202608100019_add_notification_centre.sql";
+const notificationOutboxMigrationName = "202608100020_add_notification_outbox.sql";
 const authorizationMigration = readFileSync(
   join(migrationsDirectory, authorizationMigrationName),
   "utf8",
@@ -37,6 +38,7 @@ const auditOpenMigration = readFileSync(join(migrationsDirectory, auditOpenMigra
 const photosMigration = readFileSync(join(migrationsDirectory, photosMigrationName), "utf8");
 const notificationsMigration = readFileSync(join(migrationsDirectory, notificationsMigrationName), "utf8");
 const notificationCentreMigration = readFileSync(join(migrationsDirectory, notificationCentreMigrationName), "utf8");
+const notificationOutboxMigration = readFileSync(join(migrationsDirectory, notificationOutboxMigrationName), "utf8");
 
 const applicationTables = [
   "christmas_events",
@@ -55,7 +57,7 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  assert.equal(migrationFiles.at(-1), notificationCentreMigrationName);
+  assert.equal(migrationFiles.at(-1), notificationOutboxMigrationName);
 
   for (const table of applicationTables) {
     assert.match(
@@ -64,6 +66,27 @@ test("the authorization migration explicitly enables RLS on every application ta
       `${table} must have an explicit RLS enable statement`,
     );
   }
+
+  // What 020 introduces: one server-only table, and four AFTER triggers on
+  // financial tables that may only ever insert into it.
+  assert.match(notificationOutboxMigration, /alter table public\.notification_outbox enable row level security;/);
+  assert.match(notificationOutboxMigration, /revoke all privileges on table public\.notification_outbox from public, anon, authenticated;/);
+  assert.doesNotMatch(notificationOutboxMigration, /grant [a-z, ]+ on table public\./);
+
+  for (const table of applicationTables) {
+    // The triggers attach to purchases, gift_ideas and settlements, which is
+    // allowed; rewriting any of those rows is not.
+    assert.doesNotMatch(
+      notificationOutboxMigration.replace(/--[^\n]*/g, ""),
+      new RegExp(`(update|delete from|insert into)\\s+public\\.${table}\\b`, "i"),
+      `${table} must not be written by the outbox migration`,
+    );
+  }
+  // Every trigger is AFTER, returns null, and swallows its own errors, so a
+  // notification problem cannot roll back a purchase or a payment.
+  assert.equal((notificationOutboxMigration.match(/^create trigger /gm) ?? []).length, 4);
+  assert.doesNotMatch(notificationOutboxMigration, /^\s*before (insert|update|delete) on/im);
+  assert.match(notificationOutboxMigration, /exception\s*\n\s*when others then/);
 });
 
 test("the hardening migration removes anonymous policies and table grants", () => {

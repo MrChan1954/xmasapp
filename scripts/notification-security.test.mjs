@@ -19,7 +19,14 @@ const root = process.cwd();
 const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
 
 const migration = read("supabase", "migrations", "202608100018_add_push_notifications.sql");
-const server = read("src", "utils", "supabase", "notifications-server.ts");
+const outboxMigration = read("supabase", "migrations", "202608100020_add_notification_outbox.sql");
+
+// The pipeline lives in `notification-dispatch.ts` and the session, secrets and
+// clients live in `notifications-server.ts`. Assertions about the system as a
+// whole read both; assertions about one half name it directly.
+const dispatcher = read("src", "lib", "notification-dispatch.ts");
+const serverModule = read("src", "utils", "supabase", "notifications-server.ts");
+const server = `${serverModule}\n${dispatcher}`;
 const dispatchRoute = read("src", "app", "api", "notifications", "dispatch", "route.ts");
 const subscribeRoute = read("src", "app", "api", "notifications", "subscribe", "route.ts");
 const serviceWorker = read("public", "sw.js");
@@ -94,24 +101,80 @@ test("a member cannot send notifications to anyone else at will", () => {
   assert.match(dispatchRoute, /const id = \(body as \{ id\?: unknown \}\)\.id;/);
   assert.doesNotMatch(dispatchRoute, /body\.(title|message|recipients|appMemberId|members|amount)/);
 
-  // Every branch of the dispatcher proves the caller is the recorded actor.
+  // Every branch of the dispatcher hands the row's own actor column to the
+  // authorization callback before anything is planned.
   for (const column of ["created_by_app_member_id", "updated_by_app_member_id", "recorded_by_app_member_id", "suggested_by_app_member_id"]) {
     assert.match(
-      server,
-      new RegExp(`row\\.${column} !== actorAppMemberId`),
+      dispatcher,
+      new RegExp(`authorize\\(row\\.${column},`),
       `${column} must be checked before notifying`,
     );
   }
+  // On the live path that callback refuses anyone but the recorded actor. The
+  // audience is then built by excluding the person the DATABASE says acted,
+  // never one a caller could name.
+  assert.match(dispatcher, /if \(rowActorAppMemberId !== callerAppMemberId\) \{/);
   assert.match(server, /Only the person who made this change can notify the family about it\./);
+  assert.doesNotMatch(dispatcher, /actorAppMemberId = caller/);
 
   // And that it happened just now, so a known id cannot be replayed later.
-  assert.match(server, /requireFresh\(row\.(created_at|updated_at)\)/);
+  assert.match(server, /requireFresh\(timestamp\)/);
   assert.match(server, /Date\.now\(\) - at > EVENT_FRESHNESS_MS/);
+  assert.match(serverModule, /authorize: callerMustBeActor\(member\.id\),/);
 
-  // The subject row is re-read through the caller's own RLS-scoped session, not
-  // the admin client, so an id they cannot see cannot be notified about.
-  assert.match(server, /session\s*\n?\s*\.from\("purchases"\)/);
-  assert.match(server, /session\s*\n?\s*\.from\("settlements"\)/);
+  // The subject row is re-read through the caller's own RLS-scoped session on
+  // that path, not the admin client, so an id they cannot see cannot be
+  // notified about.
+  assert.match(dispatcher, /reader\s*\n?\s*\.from\("purchases"\)/);
+  assert.match(dispatcher, /reader\s*\n?\s*\.from\("settlements"\)/);
+  assert.match(serverModule, /const reader = session as unknown as DataClient;/);
+});
+
+test("the outbox cannot be used to choose a recipient or a message", () => {
+  // The retry path has no session, so it reads with the admin client. What
+  // makes that safe is that a row can only exist because a database trigger
+  // wrote it inside the transaction that made the change: the client never
+  // touches this table, and the actor comes from the changed row's own column.
+  assert.match(outboxMigration, /revoke all privileges on table public\.notification_outbox from public, anon, authenticated;/);
+  assert.doesNotMatch(outboxMigration, /grant [a-z, ]+ on table public\.notification_outbox/);
+  assert.doesNotMatch(outboxMigration, /create policy[^;]*on public\.notification_outbox/i);
+  assert.match(outboxMigration, /alter table public\.notification_outbox enable row level security;/);
+
+  // It carries no text, no recipients and no money: every word and every figure
+  // is still derived at delivery time from authoritative data.
+  const columns = outboxMigration.slice(
+    outboxMigration.indexOf("create table if not exists public.notification_outbox"),
+    outboxMigration.indexOf("notification_outbox_pending_idx"),
+  );
+  assert.doesNotMatch(columns, /title|body|message|recipient_|pennies|amount/i);
+
+  // Each trigger takes the actor from the row it fired for, never from a
+  // session variable a caller could influence.
+  for (const [trigger, column] of [
+    ["enqueue_purchase_notification", "new.created_by_app_member_id"],
+    ["enqueue_gift_status_notification", "new.updated_by_app_member_id"],
+    ["enqueue_gift_idea_notification", "new.suggested_by_app_member_id"],
+    ["enqueue_payment_notification", "new.recorded_by_app_member_id"],
+  ]) {
+    const body = outboxMigration.match(new RegExp(`create or replace function public\\.${trigger}[\\s\\S]*?\\$\\$;`))[0];
+    assert.ok(body.includes(column), `${trigger} must take its actor from the row`);
+  }
+});
+
+test("queueing a notification can never fail a financial write", () => {
+  // These triggers fire on purchases, gift ideas and settlements. If one of
+  // them could raise, a notification problem would roll back the money.
+  assert.match(outboxMigration, /exception\s*\n\s*when others then/);
+  assert.match(outboxMigration, /on conflict \(kind, subject_id, fingerprint\) do nothing/);
+
+  // And they only ever insert into the new table. No financial row is read,
+  // written or recalculated.
+  const statements = outboxMigration.replace(/--[^\n]*/g, "");
+  assert.doesNotMatch(statements, /\b(update|delete from)\s+public\.(purchases|purchase_allocations|settlements|gift_ideas|contributors|recipient_contributions)/i);
+  assert.doesNotMatch(statements, /insert into public\.(purchases|purchase_allocations|settlements|gift_ideas|contributors|recipient_contributions)/i);
+  assert.doesNotMatch(statements, /\b\w*(pennies|budget|balance|split|responsibility)\w*\b/i);
+  const alters = [...statements.matchAll(/alter table public\.(\w+)/g)].map((match) => match[1]);
+  assert.deepEqual([...new Set(alters)], ["notification_outbox"]);
 });
 
 test("one action sends one notification however many rows it wrote", () => {
@@ -132,7 +195,7 @@ test("one action sends one notification however many rows it wrote", () => {
   // that reached nobody blocked every later attempt for good; the two are now
   // tracked separately and only a delivery that actually landed stops a resend.
   assert.match(server, /ignoreDuplicates: true/);
-  assert.match(server, /if \(existing\.data\.delivered_count > 0\) \{/);
+  assert.match(server, /if \(ledger\.delivered_count > 0\) \{/);
   assert.doesNotMatch(server, /claim\.error\.code === "23505"/, "a duplicate claim must not be read as delivered");
 
   // No grants at all: only the server's secret-key client writes this ledger.

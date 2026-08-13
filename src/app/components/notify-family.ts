@@ -7,13 +7,22 @@
  * database remains the source of truth and Realtime still updates every open
  * screen; this only adds an alert for the people who do not have the app open.
  *
- * Deliberately fire-and-forget:
+ * THIS IS AN OPTIMISATION, NOT THE MECHANISM.
+ *
+ * A database trigger writes the same event into `notification_outbox` inside
+ * the very transaction that saved the purchase, gift idea or payment, so the
+ * family gets told whether or not this request is ever made, ever arrives, or
+ * ever completes. What this call buys is latency: it delivers immediately
+ * instead of waiting for the next time anybody's app asks for their inbox.
+ *
+ * That is why it can still be fire-and-forget:
  *
  *  - It never blocks the UI. The purchase is saved; making someone wait on a
  *    push fan-out to see that would be strictly worse.
  *  - It never surfaces an error. "Your purchase saved but we could not notify
- *    anyone" is noise the user cannot act on, and the failure is already
- *    visible where it matters — nobody's phone buzzed.
+ *    anyone" is noise the user cannot act on.
+ *  - Losing it costs nothing but a few seconds, because the outbox is the
+ *    thing that guarantees delivery.
  *  - It is safe to call twice. The server records each event once, so a retry
  *    or a double-tapped Save cannot produce a second notification.
  *
@@ -38,17 +47,27 @@ export function notifyFamily(kind: NotifiableEvent, id: string): void {
       // notification failure is not theirs to act on. But it is no longer
       // thrown away: swallowing this completely is precisely why a pipeline
       // that reached nobody looked identical to one that was working, for as
-      // long as it did. A developer with the console open can now see it.
+      // long as it did. A developer with the console open can now see the
+      // whole fan-out in one line.
       if (!response.ok) {
         console.warn("[notifications] dispatch rejected", { kind, status: response.status });
         return;
       }
-      const result = await response.json().catch(() => ({}));
-      if (result.sent === 0 && result.inAppCreated === 0 && result.skipped !== "already-sent") {
-        console.info("[notifications] dispatch reached nobody", { kind, skipped: result.skipped ?? null });
-      }
+      const report = await response.json().catch(() => ({}));
+      console.info("[notifications] dispatch", {
+        kind,
+        outcome: report.outcome ?? null,
+        audience: report.audience ?? 0,
+        preferencesAllowed: report.preferencesAllowed ?? 0,
+        subscribedRecipients: report.subscribedRecipients ?? 0,
+        inAppCreated: report.inAppCreated ?? 0,
+        delivered: report.delivered ?? 0,
+        failed: report.failed ?? 0,
+      });
     })
     .catch((error: unknown) => {
+      // The outbox still has this event, so a failure here delays delivery
+      // rather than losing it.
       console.warn("[notifications] dispatch failed", {
         kind,
         type: error instanceof Error ? error.name : "UnknownError",

@@ -24,10 +24,28 @@
 export type NotificationLogFields = {
   stage: string;
   kind?: string;
+  /** Which event this was, when a whole report is logged in one line. */
+  event?: string;
+  /** "action" for a live dispatch, "outbox" for a recovered one. */
+  source?: string;
+  /** A first name. Never a member id. */
+  actor?: string;
+  /** The first few characters of a row id: enough to correlate two lines. */
+  subject?: string;
+  /** Which repeatable event on that row: "created", "status:wrapped", … */
+  fingerprint?: string | null;
   /** Members the event was planned for. */
   recipients?: number;
+  /** Active members other than the one who acted. */
+  audience?: number;
+  /** Of those, how many their preferences left eligible. */
+  preferencesAllowed?: number;
+  /** Of those, how many had at least one registered device. */
+  subscribedRecipients?: number;
   /** Device rows found for those members. */
   subscriptions?: number;
+  /** Individual sends attempted, one per device. */
+  pushAttempts?: number;
   /** Push service hostname only — never the endpoint path. */
   pushHost?: string;
   /** The real HTTP status from the push service. */

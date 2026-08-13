@@ -19,7 +19,18 @@ const root = process.cwd();
 const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
 
 const migration = read("supabase", "migrations", "202608100019_add_notification_centre.sql");
-const server = read("src", "utils", "supabase", "notifications-server.ts");
+const outboxMigration = read("supabase", "migrations", "202608100020_add_notification_outbox.sql");
+
+/**
+ * The pipeline moved out of `notifications-server.ts` into `notification-dispatch.ts`
+ * so that the outbox drain and the live dispatch run the same code with a
+ * different reader — and so the whole chain can be executed by
+ * `notification-dispatch.test.mjs` without `server-only` or `next/headers`.
+ * These assertions are about both halves, so they read both halves.
+ */
+const dispatcher = read("src", "lib", "notification-dispatch.ts");
+const serverModule = read("src", "utils", "supabase", "notifications-server.ts");
+const server = `${serverModule}\n${dispatcher}`;
 const log = read("src", "lib", "notification-log.ts");
 const inboxRoute = read("src", "app", "api", "notifications", "inbox", "route.ts");
 const testRoute = read("src", "app", "api", "notifications", "test", "route.ts");
@@ -107,32 +118,58 @@ test("in-app notifications are created even when push is switched off", () => {
   // The order is load-bearing: the durable record is written first and is not
   // conditional on any push outcome, so turning off OS alerts cannot cost
   // someone their history.
-  const createIndex = server.indexOf("const inAppCreated = isNewEvent ? await createInAppNotifications");
+  const createIndex = server.indexOf("const inAppCreated = await createInAppNotifications");
   const deliverIndex = server.indexOf("const delivery = await deliver(");
   assert.ok(createIndex > 0 && createIndex < deliverIndex, "in-app rows must be written before push is attempted");
 
+  // And no longer conditional on having won the race to claim the event. With
+  // the outbox a first attempt can claim and then die before writing anything,
+  // and the retry would have skipped these rows forever. The database key
+  // discards repeats instead, which is idempotence rather than a guess.
+  assert.match(dispatcher, /onConflict: "app_member_id,event_kind,event_subject_id,category"/);
+  assert.match(outboxMigration, /create unique index if not exists notifications_event_recipient_key/);
+
   // A missing or malformed VAPID key degrades to "no OS alert", not "the event
-  // never happened" — the key is read inside deliver(), not at the top.
+  // never happened" — the sender is resolved inside deliver(), not at the top.
   assert.match(server, /stage: "push-not-configured"/);
-  const deliverBody = server.slice(server.indexOf("async function deliver("), server.indexOf("export async function sendTestNotification"));
-  assert.match(deliverBody, /keys = readVapidKeys\(\);/);
+  const deliverBody = dispatcher.slice(dispatcher.indexOf("async function deliver("), dispatcher.indexOf("// The outbox"));
+  assert.match(deliverBody, /const send = createPushSender\(\);/);
+  assert.match(deliverBody, /if \(!send\) \{/);
+  assert.match(serverModule, /const createPushSender: CreatePushSender = \(\) => \{/);
 });
 
 test("a delivery that reached nobody can be retried, a delivered one cannot repeat", () => {
   // The original trap: the event was claimed BEFORE sending, so a send that
   // reached nobody marked it handled forever.
   assert.match(migration, /add column if not exists delivered_count integer not null default 0/);
-  assert.match(server, /if \(existing\.data\.delivered_count > 0\) \{/);
-  assert.match(server, /skipped: "already-sent"/);
+  assert.match(server, /if \(ledger\.delivered_count > 0\) \{/);
+  assert.match(server, /outcome: "already-delivered"/);
 
-  // The in-app half stays exactly-once regardless, keyed off whether this call
-  // created the ledger row.
+  // The in-app half stays exactly-once regardless, now enforced by the database.
   assert.match(server, /ignoreDuplicates: true/);
-  assert.match(server, /const isNewEvent = \(claim\.data\?\.length \?\? 0\) > 0;/);
+  assert.match(server, /isNewEvent = \(claim\.data\?\.length \?\? 0\) > 0;/);
 
   // And the attempt is recorded, so a retry is visible rather than silent.
-  assert.match(server, /attempt_count: existing\.data\.attempt_count \+ 1/);
+  assert.match(server, /attempt_count: ledger\.attempt_count \+ 1/);
   assert.match(server, /last_attempt_at: new Date\(\)\.toISOString\(\)/);
+});
+
+test("a ledger that cannot be read does not silence the notification", () => {
+  // THE BUG THIS RELEASE FIXES. `notification_events.delivered_count` did not
+  // exist in the deployed database, because this migration had never been
+  // applied. The dispatcher read it, threw a 503, and the fire-and-forget
+  // caller discarded the failure — so every real event claimed a ledger row and
+  // then sent nothing, while "Send test notification" kept working perfectly.
+  //
+  // Bookkeeping is now stepped over and reported, never thrown.
+  const runBody = dispatcher.slice(
+    dispatcher.indexOf("const claim = await admin"),
+    dispatcher.indexOf("const delivery = await deliver("),
+  );
+  assert.doesNotMatch(runBody, /throw new NotificationError/, "no bookkeeping failure may abort delivery");
+  for (const stage of ["ledger-claim-failed", "ledger-read-failed", "in-app-write-failed"]) {
+    assert.ok(dispatcher.includes(`stage: "${stage}"`), `${stage} must be reported`);
+  }
 });
 
 test("every push service response is logged, and no secret ever is", () => {
@@ -200,13 +237,23 @@ test("the inbox routes carry no member identifier to tamper with", () => {
   // Scoping is RLS on the caller's own session, so there is no id in either
   // request that could be swapped for somebody else's.
   assert.doesNotMatch(inboxRoute, /app_member_id|appMemberId/);
-  assert.match(server, /export async function readInbox/);
-  const readBody = server.slice(server.indexOf("export async function readInbox"), server.indexOf("export async function markNotificationsRead"));
+  assert.match(serverModule, /export async function readInbox/);
+  const readBody = serverModule.slice(
+    serverModule.indexOf("export async function readInbox"),
+    serverModule.indexOf("export async function markNotificationsRead"),
+  );
   assert.match(readBody, /session\s*\n?\s*\.from\("notifications"\)/);
-  assert.doesNotMatch(readBody, /admin\./);
+  // The one non-session call here is the outbox flush, which reads nobody's
+  // inbox: it delivers events the browser failed to hand over. Every row this
+  // function returns still comes from the caller's own RLS-scoped session.
+  assert.doesNotMatch(readBody, /admin\.from\(/);
+  assert.match(readBody, /await flushNotificationOutbox\(\);/);
 
   // Mark-read likewise, and it only ever writes read_at.
-  const markBody = server.slice(server.indexOf("export async function markNotificationsRead"));
+  const markBody = serverModule.slice(
+    serverModule.indexOf("export async function markNotificationsRead"),
+    serverModule.indexOf("function safeInternalPath"),
+  );
   assert.match(markBody, /\.update\(\{ read_at: readAt \}\)/);
   assert.doesNotMatch(markBody, /admin\./);
 });

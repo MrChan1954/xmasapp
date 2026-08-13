@@ -43,8 +43,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "A valid record is required." }, { status: 400, headers: noStoreHeaders });
     }
 
-    const result = await dispatchNotificationEvent(kind as NotificationEventKind, id);
-    return NextResponse.json(result, { headers: noStoreHeaders });
+    const report = await dispatchNotificationEvent(kind as NotificationEventKind, id);
+
+    // The report is the whole point of this response. A dispatch that reached
+    // nobody used to be indistinguishable from one that reached everybody —
+    // both returned 200 and a number nothing read. Every field here is a count
+    // or a first name: no endpoint, no key, no notification text, no row id.
+    return NextResponse.json({
+      ...report,
+      // Kept for callers written against the previous shape.
+      sent: report.delivered,
+      ok: report.delivered > 0 || report.inAppCreated > 0 || report.outcome === "already-delivered",
+    }, { headers: noStoreHeaders });
   } catch (error) {
     if (error instanceof NotificationError) {
       return NextResponse.json({ error: error.message }, { status: error.status, headers: noStoreHeaders });
