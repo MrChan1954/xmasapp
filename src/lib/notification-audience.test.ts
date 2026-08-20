@@ -3,7 +3,7 @@ import test from "node:test";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { calculateNetOwedBalances, contributorOwedSummary } from "./owed.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { DEFAULT_NOTIFICATION_PREFERENCES, planGiftIdeaNotifications, planGiftStatusNotifications, planPaymentNotifications, planPurchaseNotifications, type NotifiableMember, type NotificationPreferences } from "./notification-audience.ts";
+import { DEFAULT_NOTIFICATION_PREFERENCES, planGiftIdeaNotifications, planGiftStatusNotifications, planPaymentNotifications, planPaymentReviewNotifications, planPurchaseNotifications, type NotifiableMember, type NotificationPreferences } from "./notification-audience.ts";
 
 /**
  * The family used throughout. Contributor ids are chosen so their sort order is
@@ -113,7 +113,7 @@ test("a share absorbed by an existing debt in the other direction is not an owed
 test("settled balances produce no owed alert at all", () => {
   const settled = calculateNetOwedBalances(
     [{ debtorContributorId: TAYLOR.contributor, creditorContributorId: JADE.contributor, amountPennies: 833 }],
-    [{ payerContributorId: TAYLOR.contributor, payeeContributorId: JADE.contributor, amountPennies: 833 }],
+    [{ payerContributorId: TAYLOR.contributor, payeeContributorId: JADE.contributor, amountPennies: 833, confirmedAmountPennies: 833 }],
   );
   assert.deepEqual(settled, [], "engine sanity check: the pair nets to nothing");
 
@@ -190,18 +190,23 @@ test("a member with no contributor account still hears about purchases", () => {
   assert.equal(planned.find((row) => row.appMemberId === "m-observer")?.payload.category, "purchases");
 });
 
-test("a recorded payment reaches the payer, and the receiver only when someone else logs it", () => {
-  const event = {
-    actorAppMemberId: PAIGE.member,
-    actorName: PAIGE.name,
-    settlementId: "settlement-1",
-    payerContributorId: TAYLOR.contributor,
-    payeeContributorId: PAIGE.contributor,
-    amountPennies: 1500,
-  };
+/** Taylor pays Paige £15. Confirmed in full unless a test says otherwise. */
+const PAYMENT = {
+  actorAppMemberId: PAIGE.member,
+  actorName: PAIGE.name,
+  settlementId: "settlement-1",
+  payerContributorId: TAYLOR.contributor,
+  payerName: TAYLOR.name,
+  payeeContributorId: PAIGE.contributor,
+  payeeName: PAIGE.name,
+  amountPennies: 1500,
+  confirmedAmountPennies: 1500,
+};
 
-  // Paige is the receiver and recorded it herself, so only Taylor hears.
-  const recordedByPayee = planPaymentNotifications(event, FAMILY);
+test("a payment the receiver recorded reaches the payer, and the receiver only when someone else logs it", () => {
+  // Paige is the receiver and recorded it herself, which confirms it, so only
+  // Taylor hears.
+  const recordedByPayee = planPaymentNotifications(PAYMENT, FAMILY);
   assert.deepEqual(recordedByPayee.map((row) => row.appMemberId), [TAYLOR.member]);
   assert.equal(recordedByPayee[0].payload.title, "💰 Payment recorded");
   // "£15", not "£15.00": the app's own `formatPennies` drops empty pence, and a
@@ -209,8 +214,8 @@ test("a recorded payment reaches the payer, and the receiver only when someone e
   assert.match(recordedByPayee[0].payload.body, /Paige recorded your £15 payment/);
   assert.equal(recordedByPayee[0].payload.url, "/owed");
 
-  // A Global Admin logging it on their behalf: both sides need telling.
-  const recordedByAdmin = planPaymentNotifications({ ...event, actorAppMemberId: KIRSTEN.member, actorName: KIRSTEN.name }, FAMILY);
+  // A Global Admin logging an already-confirmed one: both sides need telling.
+  const recordedByAdmin = planPaymentNotifications({ ...PAYMENT, actorAppMemberId: KIRSTEN.member, actorName: KIRSTEN.name }, FAMILY);
   assert.deepEqual(recordedByAdmin.map((row) => row.appMemberId).sort(), [PAIGE.member, TAYLOR.member]);
   assert.equal(
     recordedByAdmin.find((row) => row.appMemberId === PAIGE.member)?.payload.title,
@@ -218,15 +223,39 @@ test("a recorded payment reaches the payer, and the receiver only when someone e
   );
 });
 
-test("payment notifications respect the two money categories separately", () => {
-  const event = {
+test("a claim the payer recorded asks the receiver to confirm it, and nobody else", () => {
+  const claim = {
+    ...PAYMENT,
+    actorAppMemberId: TAYLOR.member,
+    actorName: TAYLOR.name,
+    confirmedAmountPennies: 0,
+  };
+  const planned = planPaymentNotifications(claim, FAMILY);
+
+  assert.deepEqual(planned.map((row) => row.appMemberId), [PAIGE.member]);
+  assert.equal(planned[0].payload.title, "💷 Payment to confirm");
+  assert.equal(planned[0].payload.body, "Taylor says they paid you £15.");
+  assert.equal(planned[0].payload.category, "money_owed_to_me");
+  assert.equal(planned[0].payload.url, "/owed");
+});
+
+test("a claim recorded by an admin is still named after the payer, not the recorder", () => {
+  const claim = {
+    ...PAYMENT,
     actorAppMemberId: KIRSTEN.member,
     actorName: KIRSTEN.name,
-    settlementId: "settlement-2",
-    payerContributorId: TAYLOR.contributor,
-    payeeContributorId: PAIGE.contributor,
-    amountPennies: 1500,
+    confirmedAmountPennies: 0,
   };
+  const planned = planPaymentNotifications(claim, FAMILY);
+  const byMember = new Map(planned.map((row) => [row.appMemberId, row.payload]));
+
+  assert.deepEqual([...byMember.keys()].sort(), [PAIGE.member, TAYLOR.member]);
+  assert.equal(byMember.get(PAIGE.member)?.body, "Taylor says they paid you £15.");
+  assert.match(byMember.get(TAYLOR.member)?.body ?? "", /waiting for Paige to confirm it/);
+});
+
+test("payment notifications respect the two money categories separately", () => {
+  const event = { ...PAYMENT, actorAppMemberId: KIRSTEN.member, actorName: KIRSTEN.name, settlementId: "settlement-2" };
   const planned = planPaymentNotifications(event, [
     member(TAYLOR, { money_i_owe: false }),
     member(PAIGE),
@@ -234,6 +263,67 @@ test("payment notifications respect the two money categories separately", () => 
   ]);
 
   assert.deepEqual(planned.map((row) => row.appMemberId), [PAIGE.member]);
+});
+
+test("a review tells the payer exactly what was confirmed, and tells nobody else", () => {
+  const review = {
+    actorAppMemberId: PAIGE.member,
+    reviewerName: PAIGE.name,
+    receiptId: "receipt-1",
+    payerContributorId: TAYLOR.contributor,
+    action: "confirm" as const,
+    claimedPennies: 2000,
+    confirmedTotalPennies: 2000,
+    reason: null,
+  };
+
+  const full = planPaymentReviewNotifications(review, FAMILY);
+  assert.deepEqual(full.map((row) => row.appMemberId), [TAYLOR.member], "only the payer is told");
+  assert.equal(full[0].payload.title, "✅ Payment confirmed");
+  assert.equal(full[0].payload.body, "Paige confirmed your £20 payment.");
+  assert.equal(full[0].payload.category, "money_i_owe");
+
+  const partial = planPaymentReviewNotifications({ ...review, confirmedTotalPennies: 1200 }, FAMILY);
+  assert.equal(partial[0].payload.title, "✅ Payment partly confirmed");
+  assert.equal(partial[0].payload.body, "Paige confirmed £12 of your £20 payment.");
+});
+
+test("a rejection keeps its reason out of the lock screen and inside the app", () => {
+  const planned = planPaymentReviewNotifications({
+    actorAppMemberId: PAIGE.member,
+    reviewerName: PAIGE.name,
+    receiptId: "receipt-2",
+    payerContributorId: TAYLOR.contributor,
+    action: "reject",
+    claimedPennies: 2000,
+    confirmedTotalPennies: 0,
+    reason: "Nothing has arrived in my bank yet.",
+  }, FAMILY);
+
+  assert.deepEqual(planned.map((row) => row.appMemberId), [TAYLOR.member]);
+  assert.equal(planned[0].payload.title, "⚠️ Payment not received");
+  assert.equal(planned[0].payload.body, "Paige rejected your £20 payment.");
+  assert.equal(
+    planned[0].payload.inAppBody,
+    "Paige rejected your £20 payment. Reason: Nothing has arrived in my bank yet.",
+  );
+});
+
+test("a review notification obeys the payer's own category switch", () => {
+  const review = {
+    actorAppMemberId: PAIGE.member,
+    reviewerName: PAIGE.name,
+    receiptId: "receipt-3",
+    payerContributorId: TAYLOR.contributor,
+    action: "confirm" as const,
+    claimedPennies: 2000,
+    confirmedTotalPennies: 2000,
+    reason: null,
+  };
+  assert.equal(planPaymentReviewNotifications(review, [member(TAYLOR, { money_i_owe: false })]).length, 0);
+  assert.equal(planPaymentReviewNotifications(review, [member(TAYLOR)]).length, 1);
+  // The reviewer caused this, so they are never told about their own review.
+  assert.equal(planPaymentReviewNotifications({ ...review, actorAppMemberId: TAYLOR.member }, FAMILY).length, 0);
 });
 
 test("gift ideas go to everyone else who wants them", () => {

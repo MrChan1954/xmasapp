@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "../../../utils/supabase/client";
 import { formatPennies } from "../../lib/currency";
 import { INPUT_LIMITS, validateEnum, validateUuid } from "../../lib/input-validation";
+import { paymentStatusLabel, type PaymentStatus } from "../../lib/payment-confirmation";
 import {
   activePaymentFilterCount,
   emptyPaymentFilters,
@@ -11,6 +12,7 @@ import {
   paymentStatus,
   sortPaymentRecords,
   summarizePaymentRecords,
+  unconfirmedAmountPennies,
   type PaymentLogFilters,
   type PaymentLogRecord,
   type PaymentLogResponse,
@@ -54,15 +56,21 @@ const quickFilters: { value: PaymentQuickFilter; label: string }[] = [
   { value: "today", label: "Today" },
   { value: "week", label: "This week" },
   { value: "month", label: "This month" },
-  { value: "paid", label: "Paid" },
-  { value: "voided", label: "Voided" },
+  { value: "pending", label: "Awaiting confirmation" },
+  { value: "confirmed", label: "Received" },
+  { value: "rejected", label: "Not received" },
+  { value: "voided", label: "Cancelled" },
 ];
 
 const personalQuickFilters: { value: PaymentQuickFilter; label: string }[] = [
   { value: "paid_by_me", label: "Paid by me" },
   { value: "paid_to_me", label: "Paid to me" },
   { value: "recorded_by_me", label: "Recorded by me" },
+  { value: "awaiting_my_confirmation", label: "Waiting on me" },
 ];
+
+/** Every status a record can hold, in the order the filter should offer them. */
+const statusOptions: PaymentStatus[] = ["pending", "partially_confirmed", "confirmed", "rejected", "voided"];
 
 export default function PaymentLogPage() {
   const [data, setData] = useState<PaymentLogResponse | null>(null);
@@ -122,7 +130,21 @@ export default function PaymentLogPage() {
     { key: "paymentDate", header: "Payment date", sortable: true, cell: (record) => <span className="font-medium whitespace-nowrap">{formatPaymentDate(record.paymentDate)}</span> },
     { key: "payerName", header: "From", sortable: true, cell: (record) => <span className="font-medium">{record.payerName}</span> },
     { key: "payeeName", header: "To", sortable: true, cell: (record) => <span className="font-medium">{record.payeeName}</span> },
-    { key: "amountPennies", header: "Amount", sortable: true, align: "right", cell: (record) => <span className="font-semibold whitespace-nowrap">{formatPennies(record.amountPennies)}</span> },
+    { key: "amountPennies", header: "Claimed", sortable: true, align: "right", cell: (record) => <span className="font-semibold whitespace-nowrap">{formatPennies(record.amountPennies)}</span> },
+    {
+      key: "confirmedAmountPennies",
+      header: "Confirmed",
+      sortable: true,
+      align: "right",
+      cell: (record) => (
+        <span className="whitespace-nowrap">
+          <span className="font-semibold">{formatPennies(record.confirmedAmountPennies)}</span>
+          {unconfirmedAmountPennies(record) > 0 && !record.voidedAt && (
+            <span className="block text-xs text-ink-600">{formatPennies(unconfirmedAmountPennies(record))} unconfirmed</span>
+          )}
+        </span>
+      ),
+    },
     { key: "recordedByName", header: "Recorded by", sortable: true, cell: (record) => <span className="text-ink-600">{record.recordedByName}</span> },
     { key: "recordedAt", header: "Recorded at", sortable: true, cell: (record) => <span className="text-xs whitespace-nowrap text-ink-600">{formatRecordedAt(record.recordedAt)}</span> },
     { key: "status", header: "Status", sortable: true, cell: (record) => <StatusBadge record={record} /> },
@@ -176,10 +198,11 @@ export default function PaymentLogPage() {
       {loading && <PaymentLogSkeleton />}
 
       {!loading && data && <>
-        <section className="mt-6 grid gap-3 sm:grid-cols-3">
-          <SummaryCard label="Active payments" value={formatPennies(summary.activeAmountPennies)} primary />
-          <SummaryCard label="Records" value={String(summary.recordCount)} />
-          <SummaryCard label="Voided" value={String(summary.voidedCount)} detail={summary.voidedCount ? `${formatPennies(summary.voidedAmountPennies)} retained in history` : "No voided records in this view"} />
+        <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <SummaryCard label="Confirmed received" value={formatPennies(summary.confirmedAmountPennies)} detail="The only money that has changed a balance" primary />
+          <SummaryCard label="Awaiting confirmation" value={formatPennies(summary.awaitingAmountPennies)} detail={summary.awaitingCount ? `${summary.awaitingCount} ${summary.awaitingCount === 1 ? "payment" : "payments"} waiting` : "Nothing waiting in this view"} />
+          <SummaryCard label="Records" value={String(summary.recordCount)} detail={summary.rejectedCount ? `${summary.rejectedCount} marked not received` : "Every record is kept"} />
+          <SummaryCard label="Cancelled" value={String(summary.voidedCount)} detail={summary.voidedCount ? `${formatPennies(summary.voidedAmountPennies)} retained in history` : "No cancelled records in this view"} />
         </section>
 
         <Toolbar
@@ -246,7 +269,11 @@ export default function PaymentLogPage() {
                 <div className="mt-2 flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <p className="truncate font-semibold">{record.payerName} <span aria-hidden className="px-1 text-ink-400">→</span> {record.payeeName}</p>
-                    <p className="mt-1 truncate text-xs text-ink-600">Recorded by {record.recordedByName}</p>
+                    <p className="mt-1 truncate text-xs text-ink-600">
+                      {record.confirmedAmountPennies === record.amountPennies
+                        ? `Recorded by ${record.recordedByName}`
+                        : `${formatPennies(record.confirmedAmountPennies)} confirmed of ${formatPennies(record.amountPennies)}`}
+                    </p>
                   </div>
                   <strong className="shrink-0 font-display text-lg font-semibold tabular-nums text-ink-900">{formatPennies(record.amountPennies)}</strong>
                 </div>
@@ -272,8 +299,9 @@ function FilterFields({ filters, setFilters, data }: { filters: PaymentLogFilter
     <FilterSelect label="From" value={filters.payerContributorId} onChange={(value) => update("payerContributorId", value)} options={data.contributors} allLabel="All payers" />
     <FilterSelect label="To" value={filters.payeeContributorId} onChange={(value) => update("payeeContributorId", value)} options={data.contributors} allLabel="All receivers" />
     <label className="block text-xs font-semibold">Status
-      <Select value={filters.status} onChange={(event) => { const status = validateEnum(event.target.value, ["all", "paid", "voided"] as const, "Invalid status."); if (status.ok) update("status", status.value); }} className={cx("mt-1.5 font-normal", compact)}>
-        <option value="all">All statuses</option><option value="paid">Paid</option><option value="voided">Voided</option>
+      <Select value={filters.status} onChange={(event) => { const status = validateEnum(event.target.value, ["all", ...statusOptions] as const, "Invalid status."); if (status.ok) update("status", status.value); }} className={cx("mt-1.5 font-normal", compact)}>
+        <option value="all">All statuses</option>
+        {statusOptions.map((status) => <option key={status} value={status}>{paymentStatusLabel(status)}</option>)}
       </Select>
     </label>
     <FilterSelect label="Recorded by" value={filters.recordedByAppMemberId} onChange={(value) => update("recordedByAppMemberId", value)} options={data.recorders} allLabel="All recorders" />
@@ -324,7 +352,7 @@ function ActiveFilterChips({ filters, data, onChange }: { filters: PaymentLogFil
     filters.search ? { key: "search", label: `Search: ${filters.search}` } : null,
     filters.payerContributorId ? { key: "payerContributorId", label: `From: ${optionName(data.contributors, filters.payerContributorId)}` } : null,
     filters.payeeContributorId ? { key: "payeeContributorId", label: `To: ${optionName(data.contributors, filters.payeeContributorId)}` } : null,
-    filters.status !== "all" ? { key: "status", label: `Status: ${filters.status === "paid" ? "Paid" : "Voided"}` } : null,
+    filters.status !== "all" ? { key: "status", label: `Status: ${paymentStatusLabel(filters.status)}` } : null,
     filters.recordedByAppMemberId ? { key: "recordedByAppMemberId", label: `Recorded by: ${optionName(data.recorders, filters.recordedByAppMemberId)}` } : null,
     filters.dateFrom ? { key: "dateFrom", label: `From date: ${formatPaymentDate(filters.dateFrom)}` } : null,
     filters.dateTo ? { key: "dateTo", label: `To date: ${formatPaymentDate(filters.dateTo)}` } : null,
@@ -392,22 +420,71 @@ function PaymentDetail({ record, isAdmin, onClose, onVoided }: { record: Payment
       <div className="px-5 pb-6 sm:px-7 sm:pb-7">
         {error && <Notice tone="danger" className="mb-4">{error}</Notice>}
         <div className="dark rounded-2xl border border-pine-700 bg-linear-to-br from-pine-900 to-pine-800 p-5 text-white">
-          <p className="text-xs font-medium text-pine-100">{record.voidedAt ? "Original amount" : "Amount"}</p>
+          <p className="text-xs font-medium text-pine-100">Claimed by {record.payerName}</p>
           <p className="mt-1 font-display text-4xl font-semibold tabular-nums">{formatPennies(record.amountPennies)}</p>
+          <div className="mt-3 grid grid-cols-2 gap-3 border-t border-pine-700 pt-3">
+            <div>
+              <p className="text-xs font-medium text-pine-100">Confirmed received</p>
+              <p className="mt-1 font-display text-xl font-semibold tabular-nums">{formatPennies(record.confirmedAmountPennies)}</p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-pine-100">Still unconfirmed</p>
+              <p className="mt-1 font-display text-xl font-semibold tabular-nums">{formatPennies(unconfirmedAmountPennies(record))}</p>
+            </div>
+          </div>
           <div className="mt-4"><StatusBadge record={record} /></div>
         </div>
         <DataList className="mt-5 rounded-2xl border border-line bg-surface px-5">
+          <DataRow label="Paid by" value={record.payerName} />
+          <DataRow label="Paid to" value={record.payeeName} />
           <DataRow label="Payment date" value={formatPaymentDate(record.paymentDate)} />
           <DataRow label={record.voidedAt ? "Originally recorded by" : "Recorded by"} value={record.recordedByName} />
           <DataRow label={record.voidedAt ? "Originally recorded at" : "Recorded at"} value={formatRecordedAtLong(record.recordedAt)} />
           <DataRow label="Notes" value={record.notes || "No notes were added."} />
-          {record.voidedAt && <DataRow label="Voided at" value={formatRecordedAtLong(record.voidedAt)} />}
-          {record.voidedAt && <DataRow label="Voided by" value={record.voidedByName || "Unknown member (record link missing)"} />}
+          {record.lastReviewedAt && <DataRow label="Last reviewed at" value={formatRecordedAtLong(record.lastReviewedAt)} />}
+          {record.reviewedByName && <DataRow label="Reviewed by" value={record.reviewedByName} />}
+          {record.confirmedAt && <DataRow label="Confirmed in full at" value={formatRecordedAtLong(record.confirmedAt)} />}
+          {record.rejectedAt && <DataRow label="Marked not received at" value={formatRecordedAtLong(record.rejectedAt)} />}
+          {record.rejectionReason && <DataRow label="Reason given" value={record.rejectionReason} />}
+          {record.voidedAt && <DataRow label="Cancelled at" value={formatRecordedAtLong(record.voidedAt)} />}
+          {record.voidedAt && <DataRow label="Cancelled by" value={record.voidedByName || "Unknown member (record link missing)"} />}
         </DataList>
+
+        <section className="mt-5 rounded-2xl border border-line bg-surface p-5">
+          <h3 className="font-display text-lg font-semibold">What happened</h3>
+          <ol className="mt-3 space-y-3">
+            <li className="flex items-start justify-between gap-4 border-b border-line pb-3">
+              <div>
+                <p className="text-sm font-semibold">{record.payerName} recorded a payment to {record.payeeName}</p>
+                <p className="mt-0.5 text-xs text-ink-600">Recorded by {record.recordedByName} · {formatRecordedAt(record.recordedAt)}</p>
+              </div>
+              <strong className="shrink-0 text-sm font-semibold tabular-nums">{formatPennies(record.amountPennies)}</strong>
+            </li>
+            {record.receipts.map((receipt) => (
+              <li key={receipt.id} className="flex items-start justify-between gap-4 border-b border-line pb-3 last:border-0 last:pb-0">
+                <div>
+                  <p className="text-sm font-semibold">
+                    {receipt.source === "migration"
+                      ? "Recorded by the receiver before confirmations existed"
+                      : receipt.action === "confirm"
+                        ? `${receipt.reviewerName} confirmed money arrived`
+                        : `${receipt.reviewerName} said this had not arrived`}
+                  </p>
+                  <p className="mt-0.5 text-xs text-ink-600">{formatRecordedAt(receipt.createdAt)}</p>
+                  {receipt.reason && <p className="mt-1 break-words text-sm">{receipt.reason}</p>}
+                </div>
+                <strong className="shrink-0 text-sm font-semibold tabular-nums">{formatPennies(receipt.amountPennies)}</strong>
+              </li>
+            ))}
+            {record.receipts.length === 0 && (
+              <li className="text-sm text-ink-600">Nobody has reviewed this payment yet.</li>
+            )}
+          </ol>
+        </section>
         {isAdmin && !record.voidedAt && (
           <div className="mt-5 rounded-2xl border border-berry-soft-border bg-berry-soft p-4">
             <h3 className="font-semibold text-berry">Correction</h3>
-            <p className="mt-1 text-xs leading-5 text-ink-600">Voiding keeps this record in the log and restores the payment to the Owed balance.</p>
+            <p className="mt-1 text-xs leading-5 text-ink-600">Voiding keeps this record in the log and restores any confirmed amount to the Owed balance.</p>
             <Button variant="danger" size="lg" disabled={voiding} onClick={() => setConfirming(true)} className="mt-3 w-full">
               {voiding ? "Voiding payment..." : "Void payment"}
             </Button>
@@ -420,7 +497,11 @@ function PaymentDetail({ record, isAdmin, onClose, onVoided }: { record: Payment
           title="Void payment?"
           body={<>
             <p className="font-semibold text-ink-900">{record.payerName} → {record.payeeName} · {formatPennies(record.amountPennies)}</p>
-            <p className="mt-2">This will restore the amount to the outstanding balance. The record stays in the log.</p>
+            <p className="mt-2">
+              {record.confirmedAmountPennies > 0
+                ? `This returns the ${formatPennies(record.confirmedAmountPennies)} already confirmed to the outstanding balance.`
+                : "Nothing was confirmed, so no balance changes."} The record stays in the log.
+            </p>
           </>}
           confirmLabel="Void payment"
           busyLabel="Voiding..."
@@ -437,7 +518,10 @@ function PaymentDetail({ record, isAdmin, onClose, onVoided }: { record: Payment
 
 function StatusBadge({ record }: { record: PaymentLogRecord }) {
   const status = paymentStatus(record);
-  return <Badge tone={status === "voided" ? "danger" : "success"}>{status === "voided" ? "Voided" : "Paid"}</Badge>;
+  const tone = status === "confirmed"
+    ? "success"
+    : status === "rejected" ? "danger" : status === "voided" ? "neutral" : status === "partially_confirmed" ? "gold" : "warning";
+  return <Badge tone={tone}>{paymentStatusLabel(status)}</Badge>;
 }
 
 function SummaryCard({ label, value, detail, primary = false }: { label: string; value: string; detail?: string; primary?: boolean }) {

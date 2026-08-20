@@ -1,5 +1,27 @@
-export type PaymentStatus = "paid" | "voided";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { paymentStatusOf, unconfirmedPennies, type PaymentStatus } from "./payment-confirmation.ts";
 
+export type { PaymentStatus };
+
+/** One review action in a payment's history. Append-only, oldest first. */
+export type PaymentLogReceipt = {
+  id: string;
+  action: "confirm" | "reject";
+  amountPennies: number;
+  reason: string | null;
+  source: "review" | "auto_receipt" | "migration";
+  reviewerName: string;
+  createdAt: string;
+};
+
+/**
+ * One payment, as the log shows it.
+ *
+ * `amountPennies` is what the payer CLAIMED and never changes.
+ * `confirmedAmountPennies` is what the receiver has acknowledged. Keeping both
+ * is the whole point: a £20 claim of which £12 arrived is not a £12 payment,
+ * and the log has to be able to say so a year later.
+ */
 export type PaymentLogRecord = {
   id: string;
   eventYear: number;
@@ -8,14 +30,23 @@ export type PaymentLogRecord = {
   payeeContributorId: string;
   payeeName: string;
   amountPennies: number;
+  confirmedAmountPennies: number;
   paymentDate: string;
   recordedByAppMemberId: string;
   recordedByName: string;
   recordedAt: string;
   notes: string | null;
+  status: PaymentStatus;
+  confirmedAt: string | null;
+  lastReviewedAt: string | null;
+  reviewedByAppMemberId: string | null;
+  reviewedByName: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
   voidedAt: string | null;
   voidedByAppMemberId: string | null;
   voidedByName: string | null;
+  receipts: PaymentLogReceipt[];
 };
 
 export type PaymentQuickFilter =
@@ -23,11 +54,14 @@ export type PaymentQuickFilter =
   | "today"
   | "week"
   | "month"
-  | "paid"
+  | "pending"
+  | "confirmed"
+  | "rejected"
   | "voided"
   | "paid_by_me"
   | "paid_to_me"
-  | "recorded_by_me";
+  | "recorded_by_me"
+  | "awaiting_my_confirmation";
 
 export type PaymentLogFilters = {
   search: string;
@@ -45,6 +79,7 @@ export type PaymentSortKey =
   | "payerName"
   | "payeeName"
   | "amountPennies"
+  | "confirmedAmountPennies"
   | "recordedByName"
   | "recordedAt"
   | "status";
@@ -76,8 +111,25 @@ export const emptyPaymentFilters: PaymentLogFilters = {
   quick: "all",
 };
 
+/**
+ * The record's status.
+ *
+ * `status` arrives from the database's generated column; this recomputes it
+ * from the same figures as a guard, so a stale or absent value can never make
+ * the log disagree with the money it is printing next to it.
+ */
 export function paymentStatus(record: PaymentLogRecord): PaymentStatus {
-  return record.voidedAt ? "voided" : "paid";
+  return paymentStatusOf(record);
+}
+
+/** What the receiver has not acknowledged. Zero once a payment is finished. */
+export function unconfirmedAmountPennies(record: PaymentLogRecord): number {
+  return unconfirmedPennies(record);
+}
+
+/** Still waiting on its receiver, as opposed to finished one way or the other. */
+export function isAwaitingConfirmation(record: PaymentLogRecord): boolean {
+  return !record.voidedAt && !record.rejectedAt && unconfirmedAmountPennies(record) > 0;
 }
 
 export function filterPaymentRecords(
@@ -98,6 +150,7 @@ export function filterPaymentRecords(
       record.payeeName,
       record.recordedByName,
       record.notes ?? "",
+      record.rejectionReason ?? "",
     ].some((value) => value.toLocaleLowerCase("en-GB").includes(search))) return false;
     if (filters.payerContributorId && record.payerContributorId !== filters.payerContributorId) return false;
     if (filters.payeeContributorId && record.payeeContributorId !== filters.payeeContributorId) return false;
@@ -106,11 +159,12 @@ export function filterPaymentRecords(
     if (filters.dateFrom && record.paymentDate < filters.dateFrom) return false;
     if (filters.dateTo && record.paymentDate > filters.dateTo) return false;
     if (quickRange && (record.paymentDate < quickRange.from || record.paymentDate > quickRange.to)) return false;
-    if (filters.quick === "paid" && paymentStatus(record) !== "paid") return false;
-    if (filters.quick === "voided" && paymentStatus(record) !== "voided") return false;
+    if (statusQuickFilter(filters.quick) && paymentStatus(record) !== statusQuickFilter(filters.quick)) return false;
     if (filters.quick === "paid_by_me" && record.payerContributorId !== context.currentContributorId) return false;
     if (filters.quick === "paid_to_me" && record.payeeContributorId !== context.currentContributorId) return false;
     if (filters.quick === "recorded_by_me" && record.recordedByAppMemberId !== context.currentAppMemberId) return false;
+    if (filters.quick === "awaiting_my_confirmation"
+      && (record.payeeContributorId !== context.currentContributorId || !isAwaitingConfirmation(record))) return false;
     return true;
   });
 }
@@ -130,20 +184,39 @@ export function sortPaymentRecords(
   });
 }
 
+/**
+ * The figures above the table.
+ *
+ * `confirmedAmountPennies` is the only one that describes money that has
+ * actually settled a debt; `awaitingAmountPennies` is what somebody has claimed
+ * and nobody has agreed to yet. Showing a single "total paid" would merge the
+ * two and undo the entire point of this screen.
+ */
 export function summarizePaymentRecords(records: PaymentLogRecord[]) {
   return records.reduce(
     (summary, record) => {
       summary.recordCount += 1;
-      if (record.voidedAt) {
+      const status = paymentStatus(record);
+      if (status === "voided") {
         summary.voidedCount += 1;
         summary.voidedAmountPennies += record.amountPennies;
-      } else {
-        summary.activeAmountPennies += record.amountPennies;
+        return summary;
+      }
+      summary.claimedAmountPennies += record.amountPennies;
+      summary.confirmedAmountPennies += record.confirmedAmountPennies;
+      if (status === "rejected") summary.rejectedCount += 1;
+      if (isAwaitingConfirmation(record)) {
+        summary.awaitingCount += 1;
+        summary.awaitingAmountPennies += unconfirmedAmountPennies(record);
       }
       return summary;
     },
     {
-      activeAmountPennies: 0,
+      claimedAmountPennies: 0,
+      confirmedAmountPennies: 0,
+      awaitingAmountPennies: 0,
+      awaitingCount: 0,
+      rejectedCount: 0,
       recordCount: 0,
       voidedCount: 0,
       voidedAmountPennies: 0,
@@ -164,12 +237,24 @@ export function activePaymentFilterCount(filters: PaymentLogFilters) {
   ].filter(Boolean).length;
 }
 
+/**
+ * The status a quick filter stands for, or null when it is about something
+ * else. "Part received" is deliberately not a chip: it is reachable from the
+ * status dropdown, and a chip for it would crowd out the ones people use.
+ */
+function statusQuickFilter(quick: PaymentQuickFilter): PaymentStatus | null {
+  return quick === "pending" || quick === "confirmed" || quick === "rejected" || quick === "voided"
+    ? quick
+    : null;
+}
+
 function comparePaymentValues(
   left: PaymentLogRecord,
   right: PaymentLogRecord,
   key: PaymentSortKey,
 ) {
   if (key === "amountPennies") return left.amountPennies - right.amountPennies;
+  if (key === "confirmedAmountPennies") return left.confirmedAmountPennies - right.confirmedAmountPennies;
   if (key === "status") return paymentStatus(left).localeCompare(paymentStatus(right), "en-GB");
   return left[key].localeCompare(right[key], "en-GB", { sensitivity: "base" });
 }

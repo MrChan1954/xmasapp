@@ -4,10 +4,28 @@ export type PurchaseObligation = {
   amountPennies: number;
 };
 
+/**
+ * One recorded payment, as the balance engine sees it.
+ *
+ * The two figures are deliberately separate, and both are required:
+ *
+ *   amountPennies           what the payer CLAIMS they sent. Display only. It
+ *                           never moves a balance on its own, because the
+ *                           person who owes the money is not the person who can
+ *                           tell whether it arrived.
+ *   confirmedAmountPennies  what the receiver has acknowledged arriving. THIS
+ *                           is the only figure that reduces Owed.
+ *
+ * `confirmedAmountPennies` has no default on purpose. Every construction site
+ * must state what has actually been confirmed, so a caller that has not been
+ * updated fails to compile rather than quietly settling a debt nobody agreed
+ * was paid.
+ */
 export type SettlementLedgerEntry = {
   payerContributorId: string;
   payeeContributorId: string;
   amountPennies: number;
+  confirmedAmountPennies: number;
   voidedAt?: string | null;
 };
 
@@ -42,14 +60,24 @@ export function calculateNetOwedBalances(
     );
   }
 
+  // ONLY CONFIRMED MONEY MOVES A BALANCE.
+  //
+  // A pending claim reduces nothing, a rejected claim reduces nothing, and a
+  // partly confirmed claim reduces exactly the part the receiver acknowledged.
+  // All three fall out of this one line, because each of those states is simply
+  // a `confirmedAmountPennies` of zero, zero, or something in between.
   for (const settlement of settlements) {
     validateLedgerAmount(settlement.amountPennies, "Settlement");
-    if (settlement.voidedAt || settlement.amountPennies === 0 || settlement.payerContributorId === settlement.payeeContributorId) continue;
+    validateLedgerAmount(settlement.confirmedAmountPennies, "Confirmed payment");
+    if (settlement.confirmedAmountPennies > settlement.amountPennies) {
+      throw new Error("A payment cannot have more confirmed than was claimed.");
+    }
+    if (settlement.voidedAt || settlement.confirmedAmountPennies === 0 || settlement.payerContributorId === settlement.payeeContributorId) continue;
     addSigned(
       signedByPair,
       settlement.payerContributorId,
       settlement.payeeContributorId,
-      -settlement.amountPennies,
+      -settlement.confirmedAmountPennies,
     );
   }
 

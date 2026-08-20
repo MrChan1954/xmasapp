@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { giftIdeaAddedNotification, giftStatusNotification, owedToYouNotification, paymentRecordedNotification, personUrl, purchaseAddedNotification, shortName, youOweNotification } from "./notification-content.ts";
+import { giftIdeaAddedNotification, giftStatusNotification, owedToYouNotification, paymentAwaitingConfirmationNotification, paymentClaimedNotification, paymentRecordedNotification, paymentReviewNotification, personUrl, purchaseAddedNotification, shortName, youOweNotification } from "./notification-content.ts";
 
 /**
  * These read like copy tests, and partly they are — but the assertions that
@@ -37,6 +37,10 @@ test("every notification opens a real in-app route", () => {
     youOweNotification({ creditorName: "Taylor", amountPennies: 833 }),
     owedToYouNotification({ debtorName: "Jade", amountPennies: 833 }),
     paymentRecordedNotification({ actorName: "Paige", amountPennies: 1500, audience: "payee", settlementId: "s1" }),
+    paymentClaimedNotification({ payerName: "Jade", amountPennies: 2000, settlementId: "s1" }),
+    paymentAwaitingConfirmationNotification({ payeeName: "Taylor", amountPennies: 2000, settlementId: "s1" }),
+    paymentReviewNotification({ reviewerName: "Taylor", claimedPennies: 2000, confirmedTotalPennies: 1200, action: "confirm", receiptId: "r1" }),
+    paymentReviewNotification({ reviewerName: "Taylor", claimedPennies: 2000, confirmedTotalPennies: 0, action: "reject", reason: "Nothing yet.", receiptId: "r2" }),
     giftIdeaAddedNotification({ actorName: "Kirsten", recipientName: "Dad", christmasRecipientId: "r1" }),
     giftStatusNotification({ recipientName: "Mum", status: "wrapped", christmasRecipientId: "r1", purchaseId: "p1" }),
   ];
@@ -102,4 +106,57 @@ test("only a first name is ever shown", () => {
   assert.equal(shortName("  Taylor   Brooks "), "Taylor");
   assert.equal(shortName(""), "Someone");
   assert.equal(shortName("   "), "Someone");
+});
+
+test("a claim says who says they paid, not who typed it in", () => {
+  const payload = paymentClaimedNotification({ payerName: "Jade", amountPennies: 2000, settlementId: "s9" });
+
+  assert.equal(payload.title, "\u{1F4B7} Payment to confirm");
+  assert.equal(payload.body, "Jade says they paid you £20.");
+  assert.equal(payload.category, "money_owed_to_me");
+  assert.equal(payload.url, "/owed");
+
+  const waiting = paymentAwaitingConfirmationNotification({ payeeName: "Taylor", amountPennies: 2000, settlementId: "s9" });
+  assert.equal(waiting.body, "Your £20 payment is waiting for Taylor to confirm it.");
+  assert.equal(waiting.category, "money_i_owe");
+});
+
+test("a review never merges the claim with what was confirmed", () => {
+  const full = paymentReviewNotification({ reviewerName: "Taylor", claimedPennies: 2000, confirmedTotalPennies: 2000, action: "confirm", receiptId: "r1" });
+  assert.equal(full.title, "✅ Payment confirmed");
+  assert.equal(full.body, "Taylor confirmed your £20 payment.");
+  assert.equal(full.inAppBody, undefined, "nothing extra to say in the app");
+
+  const partial = paymentReviewNotification({ reviewerName: "Taylor", claimedPennies: 2000, confirmedTotalPennies: 1200, action: "confirm", receiptId: "r1" });
+  assert.equal(partial.title, "✅ Payment partly confirmed");
+  assert.equal(partial.body, "Taylor confirmed £12 of your £20 payment.");
+  // Both figures survive: neither "£20" nor "£12" alone is the truth.
+  assert.match(partial.body, /£12 of your £20/);
+});
+
+test("a rejection reason is kept off the lock screen and inside the app", () => {
+  const payload = paymentReviewNotification({
+    reviewerName: "Taylor",
+    claimedPennies: 2000,
+    confirmedTotalPennies: 0,
+    action: "reject",
+    reason: "Nothing has arrived in my bank yet.",
+    receiptId: "r2",
+  });
+
+  assert.equal(payload.title, "⚠️ Payment not received");
+  assert.equal(payload.body, "Taylor rejected your £20 payment.");
+  assert.doesNotMatch(payload.body, /bank/, "the reason is somebody's free text and stays out of the push");
+  assert.equal(payload.inAppBody, "Taylor rejected your £20 payment. Reason: Nothing has arrived in my bank yet.");
+
+  // A long reason is trimmed rather than overflowing the column that stores it.
+  const long = paymentReviewNotification({
+    reviewerName: "Taylor",
+    claimedPennies: 2000,
+    confirmedTotalPennies: 0,
+    action: "reject",
+    reason: "x".repeat(500),
+    receiptId: "r3",
+  });
+  assert.ok((long.inAppBody ?? "").length <= 300, "the notifications table caps a body at 300 characters");
 });

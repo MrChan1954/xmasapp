@@ -35,6 +35,7 @@ import {
   planGiftIdeaNotifications,
   planGiftStatusNotifications,
   planPaymentNotifications,
+  planPaymentReviewNotifications,
   planPurchaseNotifications,
   type NotifiableMember,
   type PlannedNotification,
@@ -83,7 +84,7 @@ export class NotificationError extends Error {
   }
 }
 
-export type NotificationEventKind = "purchase" | "payment" | "gift_idea" | "gift_status";
+export type NotificationEventKind = "purchase" | "payment" | "gift_idea" | "gift_status" | "payment_review";
 
 /**
  * The bit of a Supabase client this module uses.
@@ -310,7 +311,7 @@ export async function loadAuthoritativeBalances(
       : Promise.resolve({ data: [] as { id: string; checkout_payer_contributor_id: string }[], error: null }),
     reader
       .from("settlements")
-      .select("payer_contributor_id,payee_contributor_id,amount_pennies,voided_at")
+      .select("payer_contributor_id,payee_contributor_id,amount_pennies,confirmed_amount_pennies,voided_at")
       .eq("christmas_event_id", eventId),
   ]);
   if (purchases.error || settlements.error) throw new NotificationError(503, "Owed balances could not be loaded.");
@@ -335,10 +336,16 @@ export async function loadAuthoritativeBalances(
     }];
   });
 
-  const ledger: SettlementLedgerEntry[] = (settlements.data ?? []).map((row: { payer_contributor_id: string; payee_contributor_id: string; amount_pennies: number; voided_at: string | null }) => ({
+  // `confirmed_amount_pennies` is the figure that moves a balance. A database
+  // that has not had migration 021 applied yet simply omits the column, and
+  // reading that absence as zero would unsettle every historical payment at
+  // once. The claimed amount is the correct fallback: before confirmations
+  // existed only a receiver could record a payment, so recorded meant received.
+  const ledger: SettlementLedgerEntry[] = (settlements.data ?? []).map((row: { payer_contributor_id: string; payee_contributor_id: string; amount_pennies: number; confirmed_amount_pennies?: number | null; voided_at: string | null }) => ({
     payerContributorId: row.payer_contributor_id,
     payeeContributorId: row.payee_contributor_id,
     amountPennies: row.amount_pennies,
+    confirmedAmountPennies: row.confirmed_amount_pennies ?? row.amount_pennies,
     voidedAt: row.voided_at,
   }));
 
@@ -445,7 +452,7 @@ export async function buildPlan(
   if (kind === "payment") {
     const settlement = await reader
       .from("settlements")
-      .select("id,payer_contributor_id,payee_contributor_id,amount_pennies,recorded_by_app_member_id,created_at,voided_at")
+      .select("id,payer_contributor_id,payee_contributor_id,amount_pennies,confirmed_amount_pennies,recorded_by_app_member_id,created_at,voided_at")
       .eq("id", subjectId)
       .maybeSingle();
     if (settlement.error || !settlement.data || settlement.data.voided_at) return null;
@@ -463,8 +470,60 @@ export async function buildPlan(
           actorName: nameOf(context, actorAppMemberId),
           settlementId: row.id,
           payerContributorId: row.payer_contributor_id,
+          payerName: context.contributorNames.get(row.payer_contributor_id) ?? "Someone",
           payeeContributorId: row.payee_contributor_id,
+          payeeName: context.contributorNames.get(row.payee_contributor_id) ?? "Someone",
           amountPennies: row.amount_pennies,
+          // Same fallback as the balance loader: without migration 021 a
+          // recorded payment was, by definition, one the receiver had already
+          // acknowledged.
+          confirmedAmountPennies: row.confirmed_amount_pennies ?? row.amount_pennies,
+        },
+        context.members,
+      ),
+    };
+  }
+
+  if (kind === "payment_review") {
+    // The subject is the RECEIPT, not the payment. Three partial confirmations
+    // of one claim are three separate events the payer needs to hear about, and
+    // every notification table is unique per (kind, subject, fingerprint) — so
+    // keying them on the settlement would deliver the first and silently
+    // swallow the rest.
+    const receipt = await reader
+      .from("payment_receipts")
+      .select("id,settlement_id,payer_contributor_id,action,amount_pennies,reason,source,reviewed_by_app_member_id,reviewer_contributor_id,created_at")
+      .eq("id", subjectId)
+      .maybeSingle();
+    if (receipt.error || !receipt.data) return null;
+    const row = receipt.data;
+    // An auto-receipt is already covered by the payment's own notification, and
+    // a migrated one describes history from before this feature existed.
+    if (row.source !== "review") return null;
+
+    const settlement = await reader
+      .from("settlements")
+      .select("id,amount_pennies,confirmed_amount_pennies,voided_at")
+      .eq("id", row.settlement_id)
+      .maybeSingle();
+    if (settlement.error || !settlement.data || settlement.data.voided_at) return null;
+
+    authorize(row.reviewed_by_app_member_id, row.created_at);
+    const actorAppMemberId = row.reviewed_by_app_member_id as string;
+
+    return {
+      actorAppMemberId,
+      fingerprint: "reviewed",
+      planned: planPaymentReviewNotifications(
+        {
+          actorAppMemberId,
+          reviewerName: context.contributorNames.get(row.reviewer_contributor_id) ?? nameOf(context, actorAppMemberId),
+          receiptId: row.id,
+          payerContributorId: row.payer_contributor_id,
+          action: row.action,
+          claimedPennies: settlement.data.amount_pennies,
+          confirmedTotalPennies: settlement.data.confirmed_amount_pennies ?? 0,
+          reason: row.reason ?? null,
         },
         context.members,
       ),
@@ -686,7 +745,9 @@ async function createInAppNotifications(
     app_member_id: row.appMemberId,
     category: row.payload.category,
     title: row.payload.title,
-    body: row.payload.body,
+    // The Notification Centre is behind the reader's own sign-in, so it may
+    // carry the fuller sentence where there is one. The push copy never does.
+    body: row.payload.inAppBody ?? row.payload.body,
     target_url: row.payload.url,
     event_kind: kind,
     event_subject_id: subjectId,
@@ -794,9 +855,14 @@ async function deliver(
   );
 
   const results = await Promise.all(jobs.map(async ({ device, notification }) => {
+    // `inAppBody` is stripped rather than merely unused: a lock-screen payload
+    // must not carry text that was deliberately kept out of the lock screen,
+    // whether or not today's service worker happens to read that field.
+    const pushPayload = { ...notification.payload };
+    delete pushPayload.inAppBody;
     const outcome = await send(
       { endpoint: device.endpoint, p256dh: device.p256dh, auth: device.auth },
-      JSON.stringify(notification.payload),
+      JSON.stringify(pushPayload),
     );
     // Every real push service response is recorded. Hostname only — the
     // endpoint path is a per-device bearer token.

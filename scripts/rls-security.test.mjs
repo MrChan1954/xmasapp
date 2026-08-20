@@ -39,6 +39,8 @@ const photosMigration = readFileSync(join(migrationsDirectory, photosMigrationNa
 const notificationsMigration = readFileSync(join(migrationsDirectory, notificationsMigrationName), "utf8");
 const notificationCentreMigration = readFileSync(join(migrationsDirectory, notificationCentreMigrationName), "utf8");
 const notificationOutboxMigration = readFileSync(join(migrationsDirectory, notificationOutboxMigrationName), "utf8");
+const paymentConfirmationsMigrationName = "202608100021_add_payment_confirmations.sql";
+const paymentConfirmationsMigration = readFileSync(join(migrationsDirectory, paymentConfirmationsMigrationName), "utf8");
 
 const applicationTables = [
   "christmas_events",
@@ -57,7 +59,7 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  assert.equal(migrationFiles.at(-1), notificationOutboxMigrationName);
+  assert.equal(migrationFiles.at(-1), paymentConfirmationsMigrationName);
 
   for (const table of applicationTables) {
     assert.match(
@@ -739,3 +741,299 @@ function walk(directory) {
     return entry.isDirectory() ? walk(path) : [path];
   });
 }
+
+// ---------------------------------------------------------------------------
+// Two-sided payment confirmation (migration 021)
+// ---------------------------------------------------------------------------
+// The rules below cannot be checked by running a function: they are properties
+// of the migration itself. A policy loosened, a lock removed or an admin
+// bypass added would leave every unit test passing and the money unguarded.
+
+test("only the person a payment was sent to can review it", () => {
+  const review = paymentConfirmationsMigration.match(
+    /create or replace function public\.review_payment[\s\S]*?\n\$\$;/,
+  )[0];
+
+  // The caller's contributor for THIS Christmas must be the payee. Not the
+  // payer, so nobody confirms their own payment, and not an unrelated member.
+  assert.match(
+    review,
+    /current_contributor_id := public\.current_app_contributor_id\(existing_settlement\.christmas_event_id\);[\s\S]*?current_contributor_id <> existing_settlement\.payee_contributor_id[\s\S]*?raise exception 'Only the person this payment was sent to can review it'/,
+  );
+  assert.match(review, /using errcode = '42501'/);
+
+  // Deliberately no admin bypass: an admin may void a payment, which gives
+  // money back to a balance, but may not assert that money arrived.
+  assert.doesNotMatch(
+    review,
+    /is_app_admin\(\)/,
+    "Global Admin must not be able to confirm somebody else's payment",
+  );
+});
+
+test("a confirmation is bounded by the claim, in the function and in the table", () => {
+  const review = paymentConfirmationsMigration.match(
+    /create or replace function public\.review_payment[\s\S]*?\n\$\$;/,
+  )[0];
+
+  assert.match(review, /remaining_pennies := existing_settlement\.amount_pennies - existing_settlement\.confirmed_amount_pennies;/);
+  assert.match(review, /p_amount_pennies > remaining_pennies[\s\S]*?raise exception 'You cannot confirm more than the amount still unconfirmed'/);
+  assert.match(review, /p_amount_pennies <= 0[\s\S]*?raise exception 'Enter how much you received'/);
+
+  // The backstop under the function: no caller of any kind can leave a row
+  // claiming less than has been confirmed against it.
+  assert.match(
+    paymentConfirmationsMigration,
+    /add constraint settlements_confirmed_within_claim_check\s*check \(\s*confirmed_amount_pennies >= 0\s*and confirmed_amount_pennies <= amount_pennies\s*\)/,
+  );
+});
+
+test("two devices cannot confirm the same claim twice", () => {
+  const review = paymentConfirmationsMigration.match(
+    /create or replace function public\.review_payment[\s\S]*?\n\$\$;/,
+  )[0];
+
+  // The row is locked BEFORE its confirmed total is read, so the second
+  // transaction waits and then sees the first one's total.
+  assert.match(review, /select \* into existing_settlement\s*from public\.settlements\s*where id = p_settlement_id\s*for update;/);
+  assert.ok(
+    review.indexOf("for update;") < review.indexOf("remaining_pennies :="),
+    "the lock must be taken before the remaining amount is calculated",
+  );
+  // And the pair is serialized as well, so a review and a new claim cannot
+  // size themselves against the same headroom. The pair lock is taken FIRST,
+  // in the same order `record_settlement` takes it, so the two can never
+  // deadlock against each other.
+  assert.match(review, /pg_catalog\.pg_advisory_xact_lock\(/);
+  assert.ok(
+    review.indexOf("pg_advisory_xact_lock") < review.indexOf("for update;"),
+    "the pair lock must be taken before the row lock",
+  );
+});
+
+test("a rejection must carry a reason, and cannot erase what already arrived", () => {
+  const review = paymentConfirmationsMigration.match(
+    /create or replace function public\.review_payment[\s\S]*?\n\$\$;/,
+  )[0];
+
+  assert.match(review, /clean_reason is null[\s\S]*?raise exception 'Say why the payment has not arrived'/);
+  // A rejection sets `rejected_at` and closes the remainder. It must never
+  // reduce `confirmed_amount_pennies`, which would rewrite an acknowledgement.
+  const rejectBranch = review.slice(review.indexOf("else"), review.indexOf("insert into public.payment_receipts"));
+  assert.doesNotMatch(rejectBranch, /confirmed_amount_pennies\s*=/);
+  assert.match(rejectBranch, /rejected_at = now\(\)/);
+
+  assert.match(
+    paymentConfirmationsMigration,
+    /add constraint settlements_rejection_recorded_check[\s\S]*?rejected_at is not null and rejection_reason is not null/,
+  );
+});
+
+test("confirmation history is append-only and readable only by the two people involved", () => {
+  assert.match(paymentConfirmationsMigration, /alter table public\.payment_receipts enable row level security;/);
+  assert.match(paymentConfirmationsMigration, /revoke all privileges on table public\.payment_receipts from public, anon, authenticated;/);
+  assert.match(paymentConfirmationsMigration, /grant select on table public\.payment_receipts to authenticated;/);
+
+  // No INSERT, UPDATE or DELETE policy exists at all, so the only writer is the
+  // SECURITY DEFINER function above.
+  assert.doesNotMatch(
+    paymentConfirmationsMigration,
+    /create policy[^;]*on public\.payment_receipts\s*\n?\s*for (insert|update|delete|all)/i,
+  );
+  const selectPolicy = paymentConfirmationsMigration.match(
+    /create policy "members read relevant payment receipts"[\s\S]*?;/,
+  )[0];
+  assert.match(selectPolicy, /payer_contributor_id = public\.current_app_contributor_id\(christmas_event_id\)/);
+  assert.match(selectPolicy, /payee_contributor_id = public\.current_app_contributor_id\(christmas_event_id\)/);
+
+  // Even a client with elevated rights cannot edit or delete a confirmation.
+  assert.match(
+    paymentConfirmationsMigration,
+    /create trigger payment_receipts_are_append_only\s*before update or delete on public\.payment_receipts/,
+  );
+  assert.match(
+    paymentConfirmationsMigration,
+    /function public\.payment_receipts_are_append_only\(\)[\s\S]*?security definer[\s\S]*?set search_path = ''/,
+  );
+});
+
+test("recording a payment still cannot be done by an unrelated member", () => {
+  const record = paymentConfirmationsMigration.match(
+    /create or replace function public\.record_settlement[\s\S]*?\n\$\$;/,
+  )[0];
+
+  assert.match(
+    record,
+    /not public\.is_app_admin\(\)\s*and current_contributor_id <> p_payee_contributor_id\s*and current_contributor_id <> p_payer_contributor_id\s*then\s*raise exception 'Only the payer, the receiver or Global Admin can record this payment'/,
+  );
+  // Only the receiver's own record confirms itself. Everybody else's is a claim.
+  assert.match(record, /caller_is_receiver := current_contributor_id = p_payee_contributor_id;/);
+  assert.match(record, /case when caller_is_receiver then p_amount_pennies else 0 end/);
+  // Owed is netted from CONFIRMED money, exactly as the TypeScript engine does.
+  assert.match(record, /select coalesce\(sum\(confirmed_amount_pennies\), 0\)\s*into forward_confirmed/);
+  assert.match(record, /claimable_pennies := outstanding_pennies - forward_awaiting;/);
+});
+
+test("a payer may withdraw only an untouched claim of their own", () => {
+  const voidFunction = paymentConfirmationsMigration.match(
+    /create or replace function public\.void_settlement[\s\S]*?\n\$\$;/,
+  )[0];
+
+  assert.match(voidFunction, /if not public\.is_app_admin\(\) then/);
+  assert.match(
+    voidFunction,
+    /current_contributor_id <> existing_settlement\.payer_contributor_id\s*or existing_settlement\.confirmed_amount_pennies > 0\s*or existing_settlement\.rejected_at is not null\s*then\s*raise exception 'Only Global Admin can void a payment'/,
+  );
+  assert.match(voidFunction, /for update;/);
+});
+
+test("every new function is revoked from anonymous callers and granted only to members", () => {
+  for (const signature of [
+    "record_settlement\\(uuid, uuid, uuid, integer, date, text\\)",
+    "void_settlement\\(uuid\\)",
+    "review_payment\\(uuid, text, integer, text\\)",
+  ]) {
+    assert.match(
+      paymentConfirmationsMigration,
+      new RegExp(`revoke all on function public\\.${signature} from public, anon, authenticated;`, "i"),
+    );
+    assert.match(
+      paymentConfirmationsMigration,
+      new RegExp(`grant execute on function public\\.${signature} to authenticated;`, "i"),
+    );
+  }
+  // The trigger helpers are reachable by nobody.
+  for (const helper of ["payment_receipts_are_append_only\\(\\)", "enqueue_payment_review_notification\\(\\)"]) {
+    assert.match(
+      paymentConfirmationsMigration,
+      new RegExp(`revoke all on function public\\.${helper} from public, anon, authenticated;`, "i"),
+    );
+    assert.doesNotMatch(
+      paymentConfirmationsMigration,
+      new RegExp(`grant execute on function public\\.${helper}`, "i"),
+    );
+  }
+  // Every SECURITY DEFINER function added here pins its search path.
+  const definers = paymentConfirmationsMigration.match(/security definer/g) ?? [];
+  const pinned = paymentConfirmationsMigration.match(/security definer\s*\nset search_path = ''/g) ?? [];
+  assert.equal(definers.length, pinned.length, "a definer without a fixed search_path is a privilege escalation");
+});
+
+test("the migration changes payment state and nothing else about Christmas", () => {
+  const statements = paymentConfirmationsMigration.replace(/--[^\n]*/g, "");
+
+  // Budgets, plans, purchases and allocations are not touched at all.
+  for (const table of ["purchases", "purchase_allocations", "recipient_contributions", "christmas_recipients", "gift_ideas", "contributors", "people"]) {
+    assert.doesNotMatch(statements, new RegExp(`alter table public\\.${table}\\b`, "i"), `${table} must not be altered`);
+    assert.doesNotMatch(statements, new RegExp(`(update|delete from|insert into)\\s+public\\.${table}\\b`, "i"), `${table} must not be written`);
+  }
+  // No financial history is ever deleted.
+  assert.doesNotMatch(statements, /delete from public\.(settlements|payment_receipts)/i);
+  assert.doesNotMatch(statements, /drop table/i);
+  // Direct mutation of settlements stays impossible from a browser session.
+  assert.doesNotMatch(statements, /grant [a-z, ]*(insert|update|delete)[a-z, ]* on table public\.settlements/i);
+});
+
+test("existing settled payments migrate as confirmed in full, once", () => {
+  // The one-shot guard: the backfill runs only when the column did not exist,
+  // so re-applying the file cannot confirm a payment that is legitimately
+  // pending.
+  assert.match(
+    paymentConfirmationsMigration,
+    /is_first_application boolean := not exists \([\s\S]*?attname = 'confirmed_amount_pennies'/,
+  );
+  assert.match(
+    paymentConfirmationsMigration,
+    /if is_first_application then[\s\S]*?update public\.settlements\s*set\s*confirmed_amount_pennies = amount_pennies/,
+  );
+  // And each of them gets a receipt explaining where that confirmation came
+  // from, rather than a status asserted out of nowhere.
+  assert.match(
+    paymentConfirmationsMigration,
+    /insert into public\.payment_receipts \([\s\S]*?'migration',/,
+  );
+  assert.match(
+    paymentConfirmationsMigration,
+    /where settlement\.confirmed_amount_pennies = settlement\.amount_pennies\s*and not exists \(/,
+  );
+});
+
+test("a review is queued for notification inside its own transaction", () => {
+  assert.match(
+    paymentConfirmationsMigration,
+    /create trigger enqueue_payment_review_notification\s*after insert on public\.payment_receipts/,
+  );
+  // AFTER, returns null, and only for a real review: a migrated row must not
+  // notify anybody about history, and an auto receipt is already covered by the
+  // payment's own notification.
+  assert.match(paymentConfirmationsMigration, /if new\.source = 'review' then/);
+  assert.doesNotMatch(paymentConfirmationsMigration, /^\s*before (insert) on public\.payment_receipts/im);
+
+  // And it swallows its own failures, so a notification problem -- including
+  // the notification tables not existing at all -- can never roll back a
+  // confirmation. Same rule migration 020 applies to its own triggers.
+  const trigger = paymentConfirmationsMigration.match(
+    /create or replace function public\.enqueue_payment_review_notification[\s\S]*?\n\$\$;/,
+  )[0];
+  assert.match(trigger, /exception\s*\n\s*when others then/);
+});
+
+test("payment confirmation installs on a database that has no notification tables", () => {
+  // The failure this test exists for: migration 021 refused to apply because
+  // `notification_outbox` (migration 020) was not there, so a financial feature
+  // was blocked by an alerting table. Both notification tables are optional and
+  // widened only when present.
+  const section = paymentConfirmationsMigration.slice(
+    paymentConfirmationsMigration.indexOf("-- 6. Notifications"),
+    paymentConfirmationsMigration.indexOf("create or replace function public.enqueue_payment_review_notification"),
+  );
+
+  for (const table of ["notification_outbox", "notifications"]) {
+    assert.match(
+      section,
+      new RegExp(`if pg_catalog\\.to_regclass\\('public\\.${table}'\\) is not null then`),
+      `${table} must be optional`,
+    );
+    // Skipping one is announced, so a half-applied schema is visible rather
+    // than silently degraded.
+    assert.match(section, new RegExp(`raise notice '${table} does not exist`));
+  }
+
+  // Every bare regclass cast in the whole file must be to a table this
+  // migration can rely on. `settlements` is the only one.
+  const casts = [...paymentConfirmationsMigration.matchAll(/'public\.(\w+)'::regclass/g)].map((match) => match[1]);
+  assert.deepEqual([...new Set(casts)].sort(), ["notification_outbox", "notifications", "settlements"]);
+  for (const cast of ["notification_outbox", "notifications"]) {
+    assert.ok(
+      section.indexOf(`to_regclass('public.${cast}')`) < section.indexOf(`'public.${cast}'::regclass`),
+      `${cast} must be guarded before it is cast`,
+    );
+  }
+});
+
+test("a confirmation reaches every open tab through the subscription that already exists", () => {
+  // Realtime requirement, stated as the two facts it depends on.
+  //
+  // 1. Every review writes its settlement row in the same transaction as the
+  //    receipt, so the `settlements` stream carries the change.
+  const review = paymentConfirmationsMigration.match(
+    /create or replace function public\.review_payment[\s\S]*?\n\$\$;/,
+  )[0];
+  assert.match(review, /update public\.settlements\s*set\s*confirmed_amount_pennies/);
+  assert.match(review, /update public\.settlements\s*set\s*rejected_at = now\(\)/);
+  assert.match(review, /insert into public\.payment_receipts/);
+
+  // 2. `settlements` is already published, and no second publication entry is
+  //    added -- `payment_receipts` would deliver a duplicate event for the same
+  //    change and make every tab refetch twice.
+  assert.match(realtimeMigration, /'settlements'/);
+  assert.doesNotMatch(paymentConfirmationsMigration, /alter publication supabase_realtime add table/);
+
+  // And the screens subscribe once each, to the tables they read.
+  const owedPage = readFileSync(join(root, "src", "app", "owed", "page.tsx"), "utf8");
+  const paymentLogPage = readFileSync(join(root, "src", "app", "payment-log", "page.tsx"), "utf8");
+  for (const page of [owedPage, paymentLogPage]) {
+    assert.equal((page.match(/useRealtimeRefresh\(/g) ?? []).length, 1, "one subscription per screen");
+    assert.match(page, /"settlements"/);
+  }
+});

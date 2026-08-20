@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 const noStoreHeaders = { "Cache-Control": "private, no-store, max-age=0" };
 
-const KINDS: NotificationEventKind[] = ["purchase", "payment", "gift_idea", "gift_status"];
+const KINDS: NotificationEventKind[] = ["purchase", "payment", "gift_idea", "gift_status", "payment_review"];
 
 /**
  * "Something I just did is worth telling the family about."

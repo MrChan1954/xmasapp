@@ -5,6 +5,7 @@ import {
   type PurchaseObligation,
   type SettlementLedgerEntry,
 } from "../../lib/owed";
+import { paymentStatusOf, type PaymentStatus } from "../../lib/payment-confirmation";
 
 const CHRISTMAS_YEAR = 2026;
 
@@ -15,12 +16,31 @@ export type OwedObligationDetail = PurchaseObligation & {
   purchaseDate: string;
 };
 
+/** One review action taken on a payment. Append-only; newest last. */
+export type OwedReceiptDetail = {
+  id: string;
+  settlementId: string;
+  action: "confirm" | "reject";
+  amountPennies: number;
+  reason: string | null;
+  source: "review" | "auto_receipt" | "migration";
+  reviewerContributorId: string;
+  createdAt: string;
+};
+
 export type OwedSettlementDetail = SettlementLedgerEntry & {
   id: string;
   paymentDate: string;
   notes: string | null;
   createdAt: string;
   voidedAt: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
+  confirmedAt: string | null;
+  lastReviewedAt: string | null;
+  /** The database's own generated status, not a second opinion computed here. */
+  status: PaymentStatus;
+  receipts: OwedReceiptDetail[];
 };
 
 export type OwedData = {
@@ -78,7 +98,7 @@ export async function loadOwedData(): Promise<OwedData> {
         .is("deleted_at", null)
       : Promise.resolve({ data: [], error: null }),
     db.from("settlements")
-      .select("id,payer_contributor_id,payee_contributor_id,amount_pennies,payment_date,notes,created_at,voided_at")
+      .select("id,payer_contributor_id,payee_contributor_id,amount_pennies,confirmed_amount_pennies,payment_date,notes,created_at,voided_at,rejected_at,rejection_reason,confirmed_at,last_reviewed_at,status")
       .eq("christmas_event_id", eventId)
       .order("payment_date", { ascending: false })
       .order("created_at", { ascending: false }),
@@ -88,12 +108,24 @@ export async function loadOwedData(): Promise<OwedData> {
 
   const purchases = purchaseResult.data ?? [];
   const purchaseIds = purchases.map((row) => row.id);
-  const allocationResult = purchaseIds.length
-    ? await db.from("purchase_allocations")
-      .select("purchase_id,contributor_id,responsibility_pennies")
-      .in("purchase_id", purchaseIds)
-    : { data: [], error: null };
+  const settlementIds = (settlementResult.data ?? []).map((row) => row.id);
+  const [allocationResult, receiptResult] = await Promise.all([
+    purchaseIds.length
+      ? db.from("purchase_allocations")
+        .select("purchase_id,contributor_id,responsibility_pennies")
+        .in("purchase_id", purchaseIds)
+      : Promise.resolve({ data: [], error: null }),
+    // The review history behind each payment. Oldest first, because it reads as
+    // a story: claimed, then part received, then the rest.
+    settlementIds.length
+      ? db.from("payment_receipts")
+        .select("id,settlement_id,action,amount_pennies,reason,source,reviewer_contributor_id,created_at")
+        .in("settlement_id", settlementIds)
+        .order("created_at", { ascending: true })
+      : Promise.resolve({ data: [], error: null }),
+  ]);
   if (allocationResult.error) throw new Error("Purchase responsibility allocations could not be loaded.");
+  if (receiptResult.error) throw new Error(owedFeatureError(receiptResult.error.code));
 
   const personNames = new Map((peopleResult.data ?? []).map((row) => [row.id, row.name]));
   const contributorNames = new Map(contributorResult.data.map((row) => [
@@ -120,15 +152,48 @@ export async function loadOwedData(): Promise<OwedData> {
     }];
   });
 
+  const receiptsBySettlement = new Map<string, OwedReceiptDetail[]>();
+  for (const row of receiptResult.data ?? []) {
+    const receipt: OwedReceiptDetail = {
+      id: row.id,
+      settlementId: row.settlement_id,
+      action: row.action,
+      amountPennies: row.amount_pennies,
+      reason: row.reason,
+      source: row.source,
+      reviewerContributorId: row.reviewer_contributor_id,
+      createdAt: row.created_at,
+    };
+    receiptsBySettlement.set(row.settlement_id, [
+      ...(receiptsBySettlement.get(row.settlement_id) ?? []),
+      receipt,
+    ]);
+  }
+
   const settlements: OwedSettlementDetail[] = (settlementResult.data ?? []).map((row) => ({
     id: row.id,
     payerContributorId: row.payer_contributor_id,
     payeeContributorId: row.payee_contributor_id,
     amountPennies: row.amount_pennies,
+    confirmedAmountPennies: row.confirmed_amount_pennies,
     paymentDate: row.payment_date,
     notes: row.notes,
     createdAt: row.created_at,
     voidedAt: row.voided_at,
+    rejectedAt: row.rejected_at,
+    rejectionReason: row.rejection_reason,
+    confirmedAt: row.confirmed_at,
+    lastReviewedAt: row.last_reviewed_at,
+    // The generated column is authoritative. `paymentStatusOf` is the fallback
+    // for the moment between a deploy and the migration being applied, and the
+    // two are asserted to agree in `payment-confirmation.test.ts`.
+    status: (row.status as PaymentStatus | null) ?? paymentStatusOf({
+      amountPennies: row.amount_pennies,
+      confirmedAmountPennies: row.confirmed_amount_pennies,
+      rejectedAt: row.rejected_at,
+      voidedAt: row.voided_at,
+    }),
+    receipts: receiptsBySettlement.get(row.id) ?? [],
   }));
 
   return {
@@ -143,8 +208,11 @@ export async function loadOwedData(): Promise<OwedData> {
 }
 
 function owedFeatureError(code?: string) {
+  if (code === "42703" || code === "PGRST204") {
+    return "Payment confirmations are not ready yet. Apply the payment confirmations migration, then refresh.";
+  }
   if (code === "42P01" || code === "42883" || code === "PGRST202" || code === "PGRST205") {
-    return "Owed and payments are not ready yet. Apply the settlements migration, then refresh.";
+    return "Owed and payments are not ready yet. Apply the settlements and payment confirmations migrations, then refresh.";
   }
   return "Payment history could not be loaded. Check your connection and try again.";
 }

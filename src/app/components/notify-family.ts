@@ -30,7 +30,7 @@
  * name recipients or supply text: the server derives both, having first checked
  * that this member really is the one who made the change.
  */
-export type NotifiableEvent = "purchase" | "payment" | "gift_idea" | "gift_status";
+export type NotifiableEvent = "purchase" | "payment" | "gift_idea" | "gift_status" | "payment_review";
 
 export function notifyFamily(kind: NotifiableEvent, id: string): void {
   void fetch("/api/notifications/dispatch", {

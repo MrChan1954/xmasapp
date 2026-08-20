@@ -25,7 +25,7 @@
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { contributorOwedSummary, pairKey, type NetOwedBalance } from "./owed.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { giftIdeaAddedNotification, giftStatusNotification, owedToYouNotification, paymentRecordedNotification, purchaseAddedNotification, shortName, youOweNotification, type NotificationPayload } from "./notification-content.ts";
+import { giftIdeaAddedNotification, giftStatusNotification, owedToYouNotification, paymentAwaitingConfirmationNotification, paymentClaimedNotification, paymentRecordedNotification, paymentReviewNotification, purchaseAddedNotification, shortName, youOweNotification, type NotificationPayload } from "./notification-content.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { formatPennies } from "./currency.ts";
 
@@ -164,22 +164,40 @@ export type PaymentEvent = {
   actorName: string;
   settlementId: string;
   payerContributorId: string;
+  payerName: string;
   payeeContributorId: string;
+  payeeName: string;
   amountPennies: number;
+  /**
+   * How much of the claim the receiver has already acknowledged. Zero for the
+   * ordinary case — the payer recording that they have sent something — and the
+   * full amount when the receiver recorded it themselves, which is an
+   * acknowledgement in one step.
+   */
+  confirmedAmountPennies: number;
 };
 
 /**
- * A recorded repayment.
+ * A newly recorded payment.
  *
- * `record_settlement` only lets the receiver or a Global Admin record one, so
- * normally the payer is the single person who has not yet heard. When an admin
- * records on someone's behalf, both sides are told.
+ * Two different things wear this event, and the wording has to tell them apart:
+ *
+ *   AWAITING CONFIRMATION  the payer (or an admin) recorded a claim. The
+ *                          receiver is the person who must act, so they are
+ *                          told what was claimed and by whom. Nothing has moved
+ *                          in anyone's balance yet, and the message must not
+ *                          imply otherwise.
+ *   ALREADY CONFIRMED      the receiver recorded it themselves, so the payer is
+ *                          the one who has not heard. Unchanged from before.
+ *
+ * The claim is always named after the PAYER, never after whoever pressed Save.
  */
 export function planPaymentNotifications(
   event: PaymentEvent,
   members: NotifiableMember[],
 ): PlannedNotification[] {
   const planned: PlannedNotification[] = [];
+  const awaitingConfirmation = event.confirmedAmountPennies < event.amountPennies;
 
   for (const member of members) {
     if (member.appMemberId === event.actorAppMemberId) continue;
@@ -188,29 +206,88 @@ export function planPaymentNotifications(
     if (member.contributorId === event.payerContributorId && member.preferences.money_i_owe) {
       planned.push({
         appMemberId: member.appMemberId,
-        payload: paymentRecordedNotification({
-          actorName: shortName(event.actorName),
-          amountPennies: event.amountPennies,
-          audience: "payer",
-          settlementId: event.settlementId,
-        }),
+        payload: awaitingConfirmation
+          ? paymentAwaitingConfirmationNotification({
+            payeeName: shortName(event.payeeName),
+            amountPennies: event.amountPennies,
+            settlementId: event.settlementId,
+          })
+          : paymentRecordedNotification({
+            actorName: shortName(event.actorName),
+            amountPennies: event.amountPennies,
+            audience: "payer",
+            settlementId: event.settlementId,
+          }),
       });
     }
 
     if (member.contributorId === event.payeeContributorId && member.preferences.money_owed_to_me) {
       planned.push({
         appMemberId: member.appMemberId,
-        payload: paymentRecordedNotification({
-          actorName: shortName(event.actorName),
-          amountPennies: event.amountPennies,
-          audience: "payee",
-          settlementId: event.settlementId,
-        }),
+        payload: awaitingConfirmation
+          ? paymentClaimedNotification({
+            payerName: shortName(event.payerName),
+            amountPennies: event.amountPennies,
+            settlementId: event.settlementId,
+          })
+          : paymentRecordedNotification({
+            actorName: shortName(event.actorName),
+            amountPennies: event.amountPennies,
+            audience: "payee",
+            settlementId: event.settlementId,
+          }),
       });
     }
   }
 
   return planned;
+}
+
+export type PaymentReviewEvent = {
+  actorAppMemberId: string;
+  reviewerName: string;
+  receiptId: string;
+  payerContributorId: string;
+  action: "confirm" | "reject";
+  /** The original claim. Never the amount of this one review action. */
+  claimedPennies: number;
+  /** The running total confirmed after this review, which is what the payer reads. */
+  confirmedTotalPennies: number;
+  reason: string | null;
+};
+
+/**
+ * The receiver's verdict on a claim.
+ *
+ * Exactly one person hears about it: the payer. The reviewer is the receiver,
+ * so actor exclusion already covers them, and nobody else in the family has any
+ * business being told that Jade's payment to Taylor was short.
+ *
+ * It uses the existing `money_i_owe` switch rather than introducing a sixth
+ * category — a message about a debt the reader is trying to clear is precisely
+ * what that switch already describes.
+ */
+export function planPaymentReviewNotifications(
+  event: PaymentReviewEvent,
+  members: NotifiableMember[],
+): PlannedNotification[] {
+  return members
+    .filter((member) =>
+      member.appMemberId !== event.actorAppMemberId
+      && member.contributorId === event.payerContributorId
+      && member.preferences.money_i_owe,
+    )
+    .map((member) => ({
+      appMemberId: member.appMemberId,
+      payload: paymentReviewNotification({
+        reviewerName: shortName(event.reviewerName),
+        claimedPennies: event.claimedPennies,
+        confirmedTotalPennies: event.confirmedTotalPennies,
+        action: event.action,
+        reason: event.reason,
+        receiptId: event.receiptId,
+      }),
+    }));
 }
 
 export type GiftIdeaEvent = {

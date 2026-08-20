@@ -192,6 +192,7 @@ function familyStore(overrides = {}) {
       created_at: NOW(),
     }],
     settlements: [],
+    payment_receipts: [],
     // Everybody has exactly one device registered, which is the state the
     // family is actually in: the test button works for all four of them.
     push_subscriptions: MEMBERS.map((member) => ({
@@ -562,4 +563,227 @@ test("the summary line says what happened and leaks nothing", async () => {
     assert.doesNotMatch(line, /push\.example\/\w/, "no endpoint path");
     assert.doesNotMatch(line, /You owe|New purchase for|secret/, "no notification text and no key material");
   }
+});
+
+// ---------------------------------------------------------------------------
+// Two-sided payment confirmation
+// ---------------------------------------------------------------------------
+// Jade owes Taylor. Every test below runs the real pipeline over the real
+// tables, so what they assert is what a phone would actually receive.
+
+/** A claim: Jade recorded it, Taylor has confirmed none of it. */
+function claim(store, overrides = {}) {
+  store.settlements = [{
+    id: "set-1",
+    christmas_event_id: "evt",
+    payer_contributor_id: "c-jade",
+    payee_contributor_id: "c-taylor",
+    amount_pennies: 2000,
+    confirmed_amount_pennies: 0,
+    recorded_by_app_member_id: "m-jade",
+    created_at: NOW(),
+    rejected_at: null,
+    voided_at: null,
+    ...overrides,
+  }];
+  return store.settlements[0];
+}
+
+function receipt(store, overrides = {}) {
+  const row = {
+    id: `rec-${store.payment_receipts.length + 1}`,
+    settlement_id: "set-1",
+    payer_contributor_id: "c-jade",
+    payee_contributor_id: "c-taylor",
+    action: "confirm",
+    amount_pennies: 2000,
+    reason: null,
+    source: "review",
+    reviewed_by_app_member_id: "m-taylor",
+    reviewer_contributor_id: "c-taylor",
+    created_at: NOW(),
+    ...overrides,
+  };
+  store.payment_receipts.push(row);
+  return row;
+}
+
+test("a claim the payer records asks the receiver to confirm it, and tells nobody else", async () => {
+  const store = familyStore();
+  claim(store);
+  const sender = recordingSender();
+
+  const report = await run(store, { sender, kind: "payment", subjectId: "set-1", caller: "m-jade" });
+
+  assert.equal(report.preferencesAllowed, 1, "only the receiver has anything to do");
+  assert.equal(report.inAppCreated, 1);
+  assert.equal(report.delivered, 1);
+  assert.deepEqual(sender.sent.map((row) => row.endpoint), ["https://push.example/taylor"]);
+  assert.equal(sender.sent[0].payload.body, "Jade says they paid you £20.");
+  assert.equal(sender.sent[0].payload.category, "money_owed_to_me");
+  assert.deepEqual(store.notifications.map((row) => row.app_member_id), ["m-taylor"]);
+});
+
+test("confirming a claim in full tells the payer, and only the payer", async () => {
+  const store = familyStore();
+  claim(store, { confirmed_amount_pennies: 2000 });
+  receipt(store);
+  const sender = recordingSender();
+
+  const report = await run(store, { sender, kind: "payment_review", subjectId: "rec-1", caller: "m-taylor" });
+
+  assert.equal(report.preferencesAllowed, 1);
+  assert.equal(report.delivered, 1);
+  assert.deepEqual(sender.sent.map((row) => row.endpoint), ["https://push.example/jade"]);
+  assert.equal(sender.sent[0].payload.title, "✅ Payment confirmed");
+  assert.equal(sender.sent[0].payload.body, "Taylor confirmed your £20 payment.");
+  assert.equal(store.notifications.length, 1);
+  assert.equal(store.notifications[0].app_member_id, "m-jade");
+  assert.equal(store.notifications[0].event_kind, "payment_review");
+});
+
+test("a partial confirmation quotes both figures", async () => {
+  const store = familyStore();
+  claim(store, { confirmed_amount_pennies: 1200 });
+  receipt(store, { amount_pennies: 1200 });
+  const sender = recordingSender();
+
+  await run(store, { sender, kind: "payment_review", subjectId: "rec-1", caller: "m-taylor" });
+
+  assert.equal(sender.sent[0].payload.body, "Taylor confirmed £12 of your £20 payment.");
+  assert.equal(store.notifications[0].body, "Taylor confirmed £12 of your £20 payment.");
+});
+
+test("every partial confirmation of one payment is its own notification", async () => {
+  // The receipt is the subject, not the settlement. Keying these on the payment
+  // would deliver the first £10 and silently swallow the £15 and the £5.
+  const store = familyStore();
+  claim(store, { confirmed_amount_pennies: 1000 });
+  receipt(store, { amount_pennies: 1000 });
+  const first = recordingSender();
+  await run(store, { sender: first, kind: "payment_review", subjectId: "rec-1", caller: "m-taylor" });
+
+  store.settlements[0].confirmed_amount_pennies = 2000;
+  receipt(store, { amount_pennies: 1000 });
+  const second = recordingSender();
+  const report = await run(store, { sender: second, kind: "payment_review", subjectId: "rec-2", caller: "m-taylor" });
+
+  assert.equal(report.deduplicated, false);
+  assert.equal(second.sent.length, 1, "the second confirmation is its own event");
+  assert.equal(store.notifications.length, 2, "and its own inbox entry");
+  assert.equal(second.sent[0].payload.body, "Taylor confirmed your £20 payment.");
+});
+
+test("a rejection reaches the payer, with its reason in the app and not on the lock screen", async () => {
+  const store = familyStore();
+  claim(store, { rejected_at: NOW() });
+  receipt(store, { action: "reject", amount_pennies: 2000, reason: "Nothing has arrived in my bank yet." });
+  const sender = recordingSender();
+
+  await run(store, { sender, kind: "payment_review", subjectId: "rec-1", caller: "m-taylor" });
+
+  assert.deepEqual(sender.sent.map((row) => row.endpoint), ["https://push.example/jade"]);
+  assert.equal(sender.sent[0].payload.body, "Taylor rejected your £20 payment.");
+  assert.equal(sender.sent[0].payload.inAppBody, undefined, "the push payload must not carry it at all");
+  assert.doesNotMatch(JSON.stringify(sender.sent[0].payload), /bank/);
+  assert.equal(
+    store.notifications[0].body,
+    "Taylor rejected your £20 payment. Reason: Nothing has arrived in my bank yet.",
+  );
+});
+
+test("the receiver is never notified about their own review", async () => {
+  const store = familyStore();
+  claim(store, { confirmed_amount_pennies: 2000 });
+  receipt(store);
+  const sender = recordingSender();
+
+  await run(store, { sender, kind: "payment_review", subjectId: "rec-1", caller: "m-taylor" });
+
+  assert.ok(!sender.sent.some((row) => row.endpoint.includes("taylor")));
+  assert.ok(!store.notifications.some((row) => row.app_member_id === "m-taylor"));
+});
+
+test("the receiver recording a payment themselves is not announced twice", async () => {
+  // Recording as the receiver confirms in one step, so the auto receipt must
+  // not produce a second message on top of the payment's own.
+  const store = familyStore();
+  claim(store, { confirmed_amount_pennies: 2000, recorded_by_app_member_id: "m-taylor" });
+  receipt(store, { source: "auto_receipt" });
+  const sender = recordingSender();
+
+  const report = await run(store, { sender, kind: "payment_review", subjectId: "rec-1", caller: "m-taylor" });
+  assert.equal(report.outcome, "not-applicable");
+  assert.equal(sender.sent.length, 0);
+  assert.equal(store.notifications.length, 0);
+});
+
+test("a review of a voided payment notifies nobody", async () => {
+  const store = familyStore();
+  claim(store, { confirmed_amount_pennies: 2000, voided_at: NOW() });
+  receipt(store);
+  const sender = recordingSender();
+
+  const report = await run(store, { sender, kind: "payment_review", subjectId: "rec-1", caller: "m-taylor" });
+  assert.equal(report.outcome, "not-applicable");
+  assert.equal(sender.sent.length, 0);
+});
+
+test("a member cannot fire somebody else's review notification", async () => {
+  const store = familyStore();
+  claim(store, { confirmed_amount_pennies: 2000 });
+  receipt(store);
+
+  await assert.rejects(
+    () => run(store, { sender: recordingSender(), kind: "payment_review", subjectId: "rec-1", caller: "m-paige" }),
+    (error) => error instanceof NotificationError && error.status === 403,
+  );
+  assert.equal(store.notifications.length, 0);
+});
+
+test("a review the browser never dispatched is still delivered by the outbox", async () => {
+  const store = familyStore();
+  claim(store, { confirmed_amount_pennies: 2000 });
+  receipt(store);
+  store.notification_outbox = [{
+    id: "out-review",
+    kind: "payment_review",
+    subject_id: "rec-1",
+    fingerprint: "reviewed",
+    actor_app_member_id: "m-taylor",
+    created_at: NOW(),
+    attempts: 0,
+    processed_at: null,
+  }];
+  const admin = createClient(store);
+  const sender = recordingSender();
+
+  const reports = await drainNotificationOutbox({
+    admin,
+    createPushSender: sender.create,
+    loadContext: (client) => loadFamilyContext(client, client, "evt"),
+  });
+
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].delivered, 1);
+  assert.equal(reports[0].inAppCreated, 1);
+  assert.equal(store.notification_outbox[0].processed_at !== null, true);
+});
+
+test("a pending claim never moves the balance a notification quotes", async () => {
+  // Jade carries £10 of the £40 purchase Taylor paid for, so she owes £10. A
+  // claim she has recorded but Taylor has not confirmed must not change that.
+  const store = familyStore();
+  claim(store, { amount_pennies: 1000, confirmed_amount_pennies: 0 });
+  const admin = createClient(store);
+  const context = await loadFamilyContext(admin, admin, "evt");
+
+  const jadeToTaylor = context.balances.find((balance) => balance.pairKey.includes("c-jade"));
+  assert.equal(jadeToTaylor.amountPennies, 1000, "the claim is not a repayment");
+  assert.equal(jadeToTaylor.debtorContributorId, "c-jade");
+
+  // And once Taylor confirms it, the same engine says the debt is gone.
+  store.settlements[0].confirmed_amount_pennies = 1000;
+  const settled = await loadFamilyContext(admin, admin, "evt");
+  assert.equal(settled.balances.some((balance) => balance.pairKey.includes("c-jade")), false);
 });

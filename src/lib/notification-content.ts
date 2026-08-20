@@ -27,6 +27,17 @@ export type NotificationCategory =
 export type NotificationPayload = {
   title: string;
   body: string;
+  /**
+   * A longer body for the Notification Centre only, when the in-app record can
+   * responsibly say more than a lock screen should.
+   *
+   * The only current use is a rejection reason: the payer needs to read why
+   * their payment was refused, but that sentence is somebody's free text and
+   * has no business appearing above a locked phone in a room full of people.
+   * The dispatcher writes this into the `notifications` row and strips it from
+   * the payload the push service ever sees.
+   */
+  inAppBody?: string;
   /** In-app path opened on tap. Same-origin and always one of the real routes. */
   url: string;
   /**
@@ -130,6 +141,88 @@ export function paymentRecordedNotification(input: {
     };
 }
 
+/**
+ * "Somebody says they have paid you." The first half of the two-sided flow.
+ *
+ * Named after the PAYER rather than whoever tapped Save, because an admin
+ * recording a payment on Jade's behalf still means Jade is the one saying she
+ * paid. Getting that wrong would put the wrong name in front of the money.
+ */
+export function paymentClaimedNotification(input: {
+  payerName: string;
+  amountPennies: number;
+  settlementId: string;
+}): NotificationPayload {
+  return {
+    title: "\u{1F4B7} Payment to confirm",
+    body: `${input.payerName} says they paid you ${formatPennies(input.amountPennies)}.`,
+    url: OWED_URL,
+    tag: `payment:${input.settlementId}`,
+    category: "money_owed_to_me",
+  };
+}
+
+/** The payer's copy, when somebody else recorded the claim for them. */
+export function paymentAwaitingConfirmationNotification(input: {
+  payeeName: string;
+  amountPennies: number;
+  settlementId: string;
+}): NotificationPayload {
+  return {
+    title: "\u{1F4B7} Payment recorded",
+    body: `Your ${formatPennies(input.amountPennies)} payment is waiting for ${input.payeeName} to confirm it.`,
+    url: OWED_URL,
+    tag: `payment:${input.settlementId}`,
+    category: "money_i_owe",
+  };
+}
+
+/**
+ * The receiver's verdict, told to the payer.
+ *
+ * Three readings of one review, and the figures are never rounded or merged:
+ * "confirmed £12 of your £20" is the whole point of partial confirmation and
+ * would be a lie as either "confirmed your £20" or "confirmed £12".
+ *
+ * A rejection reason goes in `inAppBody` only. See the note on that field.
+ */
+export function paymentReviewNotification(input: {
+  reviewerName: string;
+  claimedPennies: number;
+  confirmedTotalPennies: number;
+  action: "confirm" | "reject";
+  reason?: string | null;
+  receiptId: string;
+}): NotificationPayload {
+  const claimed = formatPennies(input.claimedPennies);
+
+  if (input.action === "reject") {
+    const body = `${input.reviewerName} rejected your ${claimed} payment.`;
+    const reason = (input.reason ?? "").trim();
+    return {
+      title: "⚠️ Payment not received",
+      body,
+      // Trimmed so the finished sentence always fits the 300-character column
+      // the Notification Centre stores it in.
+      inAppBody: reason ? `${body} Reason: ${truncate(reason, 200)}` : body,
+      url: OWED_URL,
+      tag: `payment-review:${input.receiptId}`,
+      category: "money_i_owe",
+    };
+  }
+
+  const fullyConfirmed = input.confirmedTotalPennies >= input.claimedPennies;
+  return {
+    title: fullyConfirmed ? "✅ Payment confirmed" : "✅ Payment partly confirmed",
+    body: fullyConfirmed
+      ? `${input.reviewerName} confirmed your ${claimed} payment.`
+      : `${input.reviewerName} confirmed ${formatPennies(input.confirmedTotalPennies)} of your ${claimed} payment.`,
+    url: OWED_URL,
+    tag: `payment-review:${input.receiptId}`,
+    category: "money_i_owe",
+  };
+}
+
 /** A new gift idea. The idea's title is withheld for the same reason as above. */
 export function giftIdeaAddedNotification(input: {
   actorName: string;
@@ -170,4 +263,9 @@ export function giftStatusNotification(input: {
 export function shortName(fullName: string): string {
   const first = fullName.trim().split(/\s+/)[0];
   return first && first.length > 0 ? first : "Someone";
+}
+
+/** Keep a quoted sentence inside the column that has to store it. */
+function truncate(value: string, maxLength: number): string {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1).trimEnd()}…`;
 }

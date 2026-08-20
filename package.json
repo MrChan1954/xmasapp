@@ -17,6 +17,7 @@
     "test:recipient-allocations": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/recipient-allocations.test.ts",
     "test:owed": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/owed.test.ts",
     "test:payment-log": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/payment-log.test.ts",
+    "test:payment-confirmation": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/payment-confirmation.test.ts",
     "test:validation": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/input-validation.test.ts",
     "test:request-origin": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/request-origin.test.ts",
     "test:photo-limits": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/photo-limits.test.ts",

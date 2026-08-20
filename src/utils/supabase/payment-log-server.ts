@@ -1,7 +1,8 @@
 import "server-only";
 
 import { createClient as createAdminSupabaseClient } from "@supabase/supabase-js";
-import type { PaymentLogRecord, PaymentLogResponse } from "@/lib/payment-log";
+import type { PaymentLogReceipt, PaymentLogRecord, PaymentLogResponse } from "@/lib/payment-log";
+import { paymentStatusOf, type PaymentStatus } from "@/lib/payment-confirmation";
 import { createClient as createSessionClient } from "../../../utils/supabase/server";
 
 const CHRISTMAS_YEAR = 2026;
@@ -39,7 +40,7 @@ export async function loadPaymentLog(): Promise<PaymentLogResponse> {
       .eq("christmas_event_id", event.id),
     session
       .from("settlements")
-      .select("id,payer_contributor_id,payee_contributor_id,amount_pennies,payment_date,recorded_by_app_member_id,notes,created_at,voided_at,voided_by_app_member_id")
+      .select("id,payer_contributor_id,payee_contributor_id,amount_pennies,confirmed_amount_pennies,payment_date,recorded_by_app_member_id,notes,created_at,status,confirmed_at,last_reviewed_at,reviewed_by_app_member_id,rejected_at,rejection_reason,voided_at,voided_by_app_member_id")
       .eq("christmas_event_id", event.id)
       .order("payment_date", { ascending: false })
       .order("created_at", { ascending: false }),
@@ -56,8 +57,22 @@ export async function loadPaymentLog(): Promise<PaymentLogResponse> {
   if (!currentContributor) throw new PaymentLogServerError(403, "Your account is not linked to an active Christmas contributor.");
 
   const settlementRows = settlementsResult.data;
+
+  // The review history behind every payment on this screen. Oldest first, so
+  // the detail panel can read as a sequence of events rather than a set.
+  const settlementIds = settlementRows.map((row) => row.id);
+  const receiptsResult = settlementIds.length
+    ? await session
+      .from("payment_receipts")
+      .select("id,settlement_id,action,amount_pennies,reason,source,reviewer_contributor_id,created_at")
+      .in("settlement_id", settlementIds)
+      .order("created_at", { ascending: true })
+    : { data: [], error: null };
+  if (receiptsResult.error) throw new PaymentLogServerError(503, paymentLogDatabaseError(receiptsResult.error.code));
+
   const appMemberIds = [...new Set(settlementRows.flatMap((row) => [
     row.recorded_by_app_member_id,
+    ...(row.reviewed_by_app_member_id ? [row.reviewed_by_app_member_id] : []),
     ...(row.voided_by_app_member_id ? [row.voided_by_app_member_id] : []),
   ]))];
   const appMembers = appMemberIds.length
@@ -85,6 +100,23 @@ export async function loadPaymentLog(): Promise<PaymentLogResponse> {
       : "Unknown member (person link missing)",
   ]));
 
+  const receiptsBySettlement = new Map<string, PaymentLogReceipt[]>();
+  for (const row of receiptsResult.data ?? []) {
+    const receipt: PaymentLogReceipt = {
+      id: row.id,
+      action: row.action,
+      amountPennies: row.amount_pennies,
+      reason: row.reason,
+      source: row.source,
+      reviewerName: namesByContributorId.get(row.reviewer_contributor_id) ?? "Unknown contributor (record link missing)",
+      createdAt: row.created_at,
+    };
+    receiptsBySettlement.set(row.settlement_id, [
+      ...(receiptsBySettlement.get(row.settlement_id) ?? []),
+      receipt,
+    ]);
+  }
+
   const records: PaymentLogRecord[] = settlementRows.map((row) => ({
     id: row.id,
     eventYear: event.year,
@@ -93,16 +125,34 @@ export async function loadPaymentLog(): Promise<PaymentLogResponse> {
     payeeContributorId: row.payee_contributor_id,
     payeeName: namesByContributorId.get(row.payee_contributor_id) ?? "Unknown contributor (record link missing)",
     amountPennies: row.amount_pennies,
+    confirmedAmountPennies: row.confirmed_amount_pennies,
     paymentDate: row.payment_date,
     recordedByAppMemberId: row.recorded_by_app_member_id,
     recordedByName: namesByAppMemberId.get(row.recorded_by_app_member_id) ?? "Unknown member (record link missing)",
     recordedAt: row.created_at,
     notes: row.notes,
+    // The database's generated column, with the pure function as a fallback for
+    // the window between deploying this code and applying migration 021.
+    status: (row.status as PaymentStatus | null) ?? paymentStatusOf({
+      amountPennies: row.amount_pennies,
+      confirmedAmountPennies: row.confirmed_amount_pennies,
+      rejectedAt: row.rejected_at,
+      voidedAt: row.voided_at,
+    }),
+    confirmedAt: row.confirmed_at,
+    lastReviewedAt: row.last_reviewed_at,
+    reviewedByAppMemberId: row.reviewed_by_app_member_id,
+    reviewedByName: row.reviewed_by_app_member_id
+      ? namesByAppMemberId.get(row.reviewed_by_app_member_id) ?? "Unknown member (record link missing)"
+      : null,
+    rejectedAt: row.rejected_at,
+    rejectionReason: row.rejection_reason,
     voidedAt: row.voided_at,
     voidedByAppMemberId: row.voided_by_app_member_id,
     voidedByName: row.voided_by_app_member_id
       ? namesByAppMemberId.get(row.voided_by_app_member_id) ?? "Unknown member (record link missing)"
       : null,
+    receipts: receiptsBySettlement.get(row.id) ?? [],
   }));
 
   const contributors = contributorsResult.data.map((contributor) => ({
@@ -151,6 +201,7 @@ function londonDateInput() {
 }
 
 function paymentLogDatabaseError(code?: string) {
-  if (code === "42P01" || code === "PGRST205") return "The existing settlements migration must be applied before Payment Log can load.";
+  if (code === "42703" || code === "PGRST204") return "The payment confirmations migration must be applied before Payment Log can load.";
+  if (code === "42P01" || code === "PGRST205") return "The settlements and payment confirmations migrations must be applied before Payment Log can load.";
   return "Payment records could not be loaded.";
 }
