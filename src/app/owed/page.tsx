@@ -202,11 +202,14 @@ export default function OwedPage() {
                 />
               </div>
         ) : (
-          <section className="mt-6 rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
+          // Each balance is its own card on the page ground — the same shape
+          // as the contributor cards on Home — rather than lines inside one
+          // enormous shared box.
+          <section className="mt-8">
             <h2 className="font-display text-xl font-semibold">All balances</h2>
             <p className="mt-1 text-sm text-ink-600">Current balances after purchases and confirmed payments.</p>
             {data.balances.length === 0 ? <AllSettled compact /> : (
-              <div className="mt-5 grid gap-3 md:grid-cols-2">
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
                 {data.balances.map((balance) => <BalanceCard key={balance.pairKey} balance={balance} currentContributorId={data.currentContributorId} names={names} onView={() => setOpenPairKey(balance.pairKey)} onPay={() => setPaymentBalance(balance)} allView />)}
               </div>
             )}
@@ -731,12 +734,22 @@ function BalanceSection({ title, empty, balances, currentContributorId, names, o
       <GarlandRule className="mt-4" />
       {balances.length === 0
         ? <p className="mt-4 text-sm text-ink-600">{empty}</p>
-        : <div className="mt-2 divide-y divide-line">{balances.map((balance) => <BalanceCard key={balance.pairKey} balance={balance} currentContributorId={currentContributorId} names={names} onView={() => onView(balance)} onPay={() => onPay(balance)} />)}</div>}
+        : <div className="mt-4 space-y-3">{balances.map((balance) => <BalanceCard key={balance.pairKey} balance={balance} currentContributorId={currentContributorId} names={names} onView={() => onView(balance)} onPay={() => onPay(balance)} />)}</div>}
     </section>
   );
 }
 
-/** A ledger line, not a card-in-card: name left, amount right, actions beneath. */
+/**
+ * One balance, as its own card.
+ *
+ * The same component serves both views, in two weights: a full standalone card
+ * for the "All balances" grid, and a lighter nested card inside the "You are
+ * owed" / "You owe" sections — the shape `PendingReviewSection` already uses
+ * for its payment cards, so the page reads as one family.
+ *
+ * `flex-col` with the footer on `mt-auto` keeps the action rows of a grid row
+ * aligned even when one title wraps and its neighbour's does not.
+ */
 function BalanceCard({ balance, currentContributorId, names, onView, onPay, allView = false }: { balance: NetOwedBalance; currentContributorId: string; names: Map<string, string>; onView: () => void; onPay: () => void; allView?: boolean }) {
   const debtor = contributorName(names, balance.debtorContributorId);
   const creditor = contributorName(names, balance.creditorContributorId);
@@ -751,17 +764,34 @@ function BalanceCard({ balance, currentContributorId, names, onView, onPay, allV
   // are deliberately identical to everybody else's.
   const recordLabel = iOweThis ? "I have paid this" : "Record a payment received";
   return (
-    <article className="py-4">
-      <div className="flex items-baseline justify-between gap-4">
-        <p className="min-w-0 truncate font-semibold">{title}</p>
-        <p className="shrink-0 font-display text-2xl font-semibold tabular-nums text-ink-900">{formatPennies(balance.amountPennies)}</p>
+    <article
+      className={cx(
+        "flex min-w-0 flex-col border border-line transition hover:border-line-strong",
+        allView ? "rounded-2xl bg-surface p-5 shadow-card" : "rounded-xl bg-surface-2/60 p-4",
+      )}
+    >
+      {/* `flex-wrap`, not `truncate`: long names drop the amount onto its own
+          line rather than squeezing both onto one, and a name is never cut. */}
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
+        <h3 className="min-w-0 font-semibold break-words text-ink-900">{title}</h3>
+        <p className="shrink-0 font-display text-2xl font-semibold tabular-nums text-accent">{formatPennies(balance.amountPennies)}</p>
       </div>
-      <div className="mt-2.5 flex flex-wrap items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={onView}>Why this balance?</Button>
-        {(iOweThis || iAmOwedThis)
-          ? <Button variant="tonal" size="sm" onClick={onPay}>{recordLabel}</Button>
-          : <span className="text-xs font-medium text-ink-400">Only these two can record a payment</span>}
+      <p className="mt-0.5 text-xs font-medium text-ink-600">Current outstanding balance</p>
+
+      {/* Absorbs spare height so footers align across a grid row; the footer's
+          own `mt-4` is the guaranteed minimum gap when there is none spare. */}
+      <div aria-hidden className="grow" />
+
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-3">
+        <Button variant="ghost" size="sm" onClick={onView} className="-ml-2.5 text-accent hover:bg-accent-soft hover:text-accent">Why this balance?</Button>
+        {(iOweThis || iAmOwedThis) && <Button variant="tonal" size="sm" onClick={onPay}>{recordLabel}</Button>}
       </div>
+      {!(iOweThis || iAmOwedThis) && (
+        // Read-only for everyone else — information, not a greyed-out control.
+        <p className="mt-1.5 text-xs leading-5 text-ink-400">
+          Only {debtor} and {creditor} can record payments for this balance.
+        </p>
+      )}
     </article>
   );
 }

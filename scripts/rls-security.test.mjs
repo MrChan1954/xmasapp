@@ -1670,9 +1670,11 @@ test("3. a normal member can read the settlements behind another pair's balance"
 test("4. Why this balance? is available for any pair, to any active member", () => {
   const owedPage = readFileSync(join(root, "src", "app", "owed", "page.tsx"), "utf8");
 
-  // The explanation button is unconditional on every balance card.
+  // The explanation button is unconditional on every balance card. Matched on
+  // its behaviour (ghost variant, onView handler, the label) rather than its
+  // exact styling, which the card redesign is free to adjust.
   const card = owedPage.slice(owedPage.indexOf("function BalanceCard"), owedPage.indexOf("function Breakdown"));
-  assert.match(card, /<Button variant="ghost" size="sm" onClick=\{onView\}>Why this balance\?<\/Button>/);
+  assert.match(card, /<Button variant="ghost" size="sm" onClick=\{onView\}[^>]*>Why this balance\?<\/Button>/);
   assert.doesNotMatch(
     card.slice(card.indexOf("Why this balance?") - 200, card.indexOf("Why this balance?")),
     /isAdmin/,
@@ -1694,10 +1696,17 @@ test("4. Why this balance? is available for any pair, to any active member", () 
 test("5. an unrelated member is shown the balance read-only, and refused by the database", () => {
   const owedPage = readFileSync(join(root, "src", "app", "owed", "page.tsx"), "utf8");
 
-  // UI: no control at all for a non-participant -- not a disabled one.
+  // UI: no control at all for a non-participant -- not a disabled one. The
+  // payment button renders only for the two people; everybody else gets a
+  // read-only sentence naming who can act.
   assert.match(
     owedPage,
-    /\{\(iOweThis \|\| iAmOwedThis\)\s*\?\s*<Button variant="tonal"[^>]*>\{recordLabel\}<\/Button>\s*:\s*<span[^>]*>Only these two can record a payment<\/span>\}/,
+    /\{\(iOweThis \|\| iAmOwedThis\) && <Button variant="tonal"[^>]*>\{recordLabel\}<\/Button>\}/,
+  );
+  assert.match(
+    owedPage,
+    /\{!\(iOweThis \|\| iAmOwedThis\) && \([\s\S]{0,220}Only \{debtor\} and \{creditor\} can record payments for this balance\./,
+    "the read-only explanation names the two people who can act",
   );
   assert.doesNotMatch(owedPage, /<Button[^>]*disabled=\{!\(iOweThis \|\| iAmOwedThis\)\}/, "no fake disabled button");
 
