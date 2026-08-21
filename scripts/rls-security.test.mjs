@@ -45,6 +45,8 @@ const paymentConfirmationsMigration = readFileSync(join(migrationsDirectory, pay
 const adminOverrideMigration = readFileSync(join(migrationsDirectory, adminOverrideMigrationName), "utf8");
 const notificationRepairMigrationName = "202608100023_repair_notification_centre_and_outbox.sql";
 const notificationRepairMigration = readFileSync(join(migrationsDirectory, notificationRepairMigrationName), "utf8");
+const balanceVisibilityMigrationName = "202608100024_family_wide_balance_visibility.sql";
+const balanceVisibilityMigration = readFileSync(join(migrationsDirectory, balanceVisibilityMigrationName), "utf8");
 
 const applicationTables = [
   "christmas_events",
@@ -63,7 +65,7 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  assert.equal(migrationFiles.at(-1), notificationRepairMigrationName);
+  assert.equal(migrationFiles.at(-1), balanceVisibilityMigrationName);
 
   for (const table of applicationTables) {
     assert.match(
@@ -1598,4 +1600,233 @@ test("the UI keeps recipient creation and removal behind Global Admin", () => {
   assert.match(peoplePage, /\{isAdmin && adding && <AddForm/);
   // Editing details and removing from Christmas.
   assert.match(personModal, /\{isAdmin && \(\s*<section[\s\S]*?Edit person[\s\S]*?Remove from Christmas/);
+});
+
+// ---------------------------------------------------------------------------
+// Family-wide balance visibility (migration 024)
+// ---------------------------------------------------------------------------
+// Seeing a balance and changing one are separate permissions. These tests hold
+// that line: the reads widen to every active member, and every write stays
+// exactly where migrations 021 and 022 put it.
+
+test("1-2. every active member can open both balance views", () => {
+  const owedPage = readFileSync(join(root, "src", "app", "owed", "page.tsx"), "utf8");
+
+  // The view switcher must not be behind an admin check any more.
+  assert.match(owedPage, /ariaLabel="Balance view"/);
+  const switcherAt = owedPage.indexOf('ariaLabel="Balance view"');
+  const beforeSwitcher = owedPage.slice(Math.max(0, switcherAt - 700), switcherAt);
+  assert.doesNotMatch(
+    beforeSwitcher,
+    /\{data\.isAdmin && \(\s*<div[^>]*>\s*<Segmented/,
+    "the balance view switcher must not be admin-gated",
+  );
+  assert.doesNotMatch(beforeSwitcher, /\{data\.isAdmin && \($/m, "no admin wrapper immediately before the switcher");
+
+  // Both options are still offered.
+  assert.match(owedPage, /value: "mine", label: "My balances"/);
+  assert.match(owedPage, /value: "all", label: "All balances"/);
+
+  // "My balances" keeps its own summary and empty state.
+  assert.match(owedPage, /label="You are owed"/);
+  assert.match(owedPage, /label="You owe"/);
+  assert.match(owedPage, /personalBalances\.length === 0\s*\?\s*<AllSettled \/>/);
+});
+
+test("3. a normal member can read the settlements behind another pair's balance", () => {
+  // The reason the tab was restricted: this policy used to require the reader
+  // to be one of the two people, so anybody else's balance came out as the
+  // gross purchase total with the repayments silently filtered away.
+  assert.match(
+    balanceVisibilityMigration,
+    /create policy "active members read family settlements"\s*on public\.settlements\s*for select\s*to authenticated\s*using \(public\.is_active_app_member\(\)\);/,
+  );
+  // The old, narrower policy is removed rather than left to sit alongside it.
+  assert.match(
+    balanceVisibilityMigration,
+    /drop policy if exists "members read relevant settlements" on public\.settlements;/,
+  );
+  assert.doesNotMatch(
+    balanceVisibilityMigration.match(/create policy "active members read family settlements"[\s\S]*?;/)[0],
+    /is_app_admin|current_app_contributor_id/,
+    "reading a family balance must not depend on role or on being a participant",
+  );
+
+  // Obligations were always readable by every active member -- that asymmetry
+  // is what made the restricted settlements policy produce a wrong number.
+  const purchasesMigration = readFileSync(
+    join(migrationsDirectory, "202608100008_add_purchases.sql"),
+    "utf8",
+  );
+  for (const table of ["purchases", "purchase allocations"]) {
+    assert.match(
+      purchasesMigration,
+      new RegExp(`create policy "active members read ${table}"[\\s\\S]*?using \\(public\\.is_active_app_member\\(\\)\\)`),
+      `${table} were already family-readable`,
+    );
+  }
+});
+
+test("4. Why this balance? is available for any pair, to any active member", () => {
+  const owedPage = readFileSync(join(root, "src", "app", "owed", "page.tsx"), "utf8");
+
+  // The explanation button is unconditional on every balance card.
+  const card = owedPage.slice(owedPage.indexOf("function BalanceCard"), owedPage.indexOf("function Breakdown"));
+  assert.match(card, /<Button variant="ghost" size="sm" onClick=\{onView\}>Why this balance\?<\/Button>/);
+  assert.doesNotMatch(
+    card.slice(card.indexOf("Why this balance?") - 200, card.indexOf("Why this balance?")),
+    /isAdmin/,
+    "the explanation must not be admin-gated",
+  );
+
+  // And the receipt history the panel renders is readable family-wide, or the
+  // panel would show a confirmed figure with no account of the rest.
+  assert.match(
+    balanceVisibilityMigration,
+    /create policy "active members read family payment receipts"\s*on public\.payment_receipts\s*for select\s*to authenticated\s*using \(public\.is_active_app_member\(\)\);/,
+  );
+  assert.match(
+    balanceVisibilityMigration,
+    /drop policy if exists "members read relevant payment receipts" on public\.payment_receipts;/,
+  );
+});
+
+test("5. an unrelated member is shown the balance read-only, and refused by the database", () => {
+  const owedPage = readFileSync(join(root, "src", "app", "owed", "page.tsx"), "utf8");
+
+  // UI: no control at all for a non-participant -- not a disabled one.
+  assert.match(
+    owedPage,
+    /\{\(iOweThis \|\| iAmOwedThis\)\s*\?\s*<Button variant="tonal"[^>]*>\{recordLabel\}<\/Button>\s*:\s*<span[^>]*>Only these two can record a payment<\/span>\}/,
+  );
+  assert.doesNotMatch(owedPage, /<Button[^>]*disabled=\{!\(iOweThis \|\| iAmOwedThis\)\}/, "no fake disabled button");
+
+  // The breakdown's record button is gated on the same thing, with no role term.
+  const breakdown = owedPage.slice(owedPage.indexOf("const canRecord ="), owedPage.indexOf("const voidPayment"));
+  assert.doesNotMatch(breakdown, /isAdmin/);
+  assert.match(breakdown, /creditorContributorId === data\.currentContributorId/);
+  assert.match(breakdown, /debtorContributorId === data\.currentContributorId/);
+
+  // Database: the ordinary payment function admits exactly two people, and
+  // migration 024 does not touch it.
+  const record = adminOverrideMigration.match(/create or replace function public\.record_settlement[\s\S]*?\n\$\$;/)[0];
+  assert.match(
+    record,
+    /if current_contributor_id <> p_payee_contributor_id\s*and current_contributor_id <> p_payer_contributor_id\s*then\s*raise exception 'Only the payer or the person being paid can record this payment'/,
+  );
+});
+
+test("6. an unrelated member cannot review, confirm, partly confirm or reject", () => {
+  const review = paymentConfirmationsMigration.match(
+    /create or replace function public\.review_payment[\s\S]*?\n\$\$;/,
+  )[0];
+  // Only the payee reviews. Not the payer, not an unrelated member, not an admin.
+  assert.match(
+    review,
+    /raise exception 'Only the person this payment was sent to can review it'/,
+  );
+  assert.match(review, /current_contributor_id is null/);
+  // A confirmation is still bounded by what is left unconfirmed.
+  assert.match(review, /p_amount_pennies > remaining_pennies/);
+  // Widening the read did not add a write route.
+  assert.doesNotMatch(balanceVisibilityMigration, /create or replace function/i);
+  assert.doesNotMatch(balanceVisibilityMigration, /^grant /im);
+});
+
+test("7-8. the payer can still record and the receiver can still review", () => {
+  const record = adminOverrideMigration.match(/create or replace function public\.record_settlement[\s\S]*?\n\$\$;/)[0];
+  // Recording is allowed for either party, and only the receiver's record
+  // auto-confirms.
+  assert.match(record, /caller_is_receiver := current_contributor_id = p_payee_contributor_id;/);
+  assert.match(record, /case when caller_is_receiver then p_amount_pennies else 0 end/);
+
+  const review = paymentConfirmationsMigration.match(
+    /create or replace function public\.review_payment[\s\S]*?\n\$\$;/,
+  )[0];
+  assert.match(review, /for update;/, "the review still locks the row it is changing");
+  assert.match(review, /pg_advisory_xact_lock/, "and still takes the pair lock first");
+});
+
+test("9-11. Global Admin sees the same tabs, with the same payment rules", () => {
+  const owedPage = readFileSync(join(root, "src", "app", "owed", "page.tsx"), "utf8");
+
+  // The switcher is not conditional at all, so an admin sees what a member sees.
+  assert.equal(
+    (owedPage.match(/ariaLabel="Balance view"/g) ?? []).length,
+    1,
+    "one switcher, rendered for everybody",
+  );
+
+  // The ordinary payment function still knows nothing about admins.
+  const record = adminOverrideMigration.match(/create or replace function public\.record_settlement[\s\S]*?\n\$\$;/)[0];
+  assert.doesNotMatch(record, /is_app_admin/);
+
+  // The separate override survives, admin-only, reason required.
+  const override = adminOverrideMigration.match(
+    /create or replace function public\.admin_record_confirmed_payment[\s\S]*?\n\$\$;/,
+  )[0];
+  assert.match(override, /if not public\.is_app_admin\(\) then/);
+  assert.match(override, /Give a reason for recording this payment as already confirmed/);
+  // And it is still reached through its own clearly separated Admin tools area.
+  assert.match(owedPage, /\{data\.isAdmin && <AdminTools/);
+  assert.match(owedPage, /rpc\("admin_record_confirmed_payment"/);
+  assert.ok(
+    owedPage.indexOf("<AdminTools") > owedPage.indexOf("<BalanceSection"),
+    "admin tools stay below the ordinary controls",
+  );
+});
+
+test("12. inactive and signed-out visitors still see nothing", () => {
+  // Every widened policy is still gated on active membership, and is granted to
+  // `authenticated` only -- `anon` has no route in.
+  for (const policy of [
+    /create policy "active members read family settlements"[\s\S]*?using \(public\.is_active_app_member\(\)\)/,
+    /create policy "active members read family payment receipts"[\s\S]*?using \(public\.is_active_app_member\(\)\)/,
+  ]) {
+    assert.match(balanceVisibilityMigration, policy);
+  }
+  assert.doesNotMatch(balanceVisibilityMigration, /to anon/i);
+  assert.doesNotMatch(balanceVisibilityMigration, /to public\b/i);
+  // `is_active_app_member` is the same function every other read already uses,
+  // and it requires an active row for the caller's auth uid.
+  assert.match(
+    authorizationMigration,
+    /create or replace function public\.is_active_app_member[\s\S]*?where user_id = \(select auth\.uid\(\)\)[\s\S]*?and active = true/,
+  );
+});
+
+test("13. the visibility migration changes no money and no write permission", () => {
+  const statements = balanceVisibilityMigration.replace(/--[^\n]*/g, "");
+
+  // Reads only. No function, no trigger, no constraint, no column, no data.
+  assert.doesNotMatch(statements, /create or replace function/i);
+  assert.doesNotMatch(statements, /create trigger|drop trigger/i);
+  assert.doesNotMatch(statements, /add constraint|drop constraint/i);
+  assert.doesNotMatch(statements, /add column|drop column|alter column/i);
+  assert.doesNotMatch(statements, /^\s*(insert into|update|delete from|truncate)/im);
+  assert.doesNotMatch(statements, /generated always as/i);
+
+  // No grant is issued or revoked: the tables stay SELECT-only to browsers.
+  assert.doesNotMatch(statements, /^\s*grant /im);
+  assert.doesNotMatch(statements, /^\s*revoke /im);
+
+  // Only SELECT policies are created, and only on the two intended tables.
+  const created = statements.match(/create policy[\s\S]*?;/g) ?? [];
+  assert.equal(created.length, 2, "exactly two policies");
+  for (const policy of created) {
+    assert.match(policy, /for select/, "read-only");
+    assert.doesNotMatch(policy, /with check/, "a SELECT policy has no with check");
+    assert.match(policy, /on public\.(settlements|payment_receipts)/);
+  }
+
+  // The end-state block refuses to let a write grant coexist with this change.
+  assert.match(statements, /privilege_type in \('INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'\)/);
+  assert.match(statements, /raise exception 'Balance visibility migration did not complete cleanly/);
+
+  // And the append-only guarantee on review history is untouched.
+  assert.doesNotMatch(statements, /payment_receipts_are_append_only/);
+  assert.match(
+    paymentConfirmationsMigration,
+    /create trigger payment_receipts_are_append_only\s*before update or delete on public\.payment_receipts/,
+  );
 });

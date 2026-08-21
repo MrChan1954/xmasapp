@@ -150,19 +150,33 @@ export default function OwedPage() {
           <BalanceSummary label="You owe" value={personalSummary.youOwePennies} detail="Money you need to repay other contributors" />
         </section>
 
-        {data.isAdmin && (
-          <div className="mt-8 max-w-sm">
-            <Segmented
-              ariaLabel="Balance view"
-              value={view}
-              onChange={setView}
-              options={[
-                { value: "mine", label: "My balances" },
-                { value: "all", label: "All balances" },
-              ]}
-            />
-          </div>
-        )}
+        {/*
+          * Both views are open to every active member.
+          *
+          * This used to be admin-only, and not really as a policy decision: the
+          * RLS policy on `settlements` only let a member read payments they
+          * were part of, so anybody else's "All balances" figure would have
+          * been the gross purchase obligation with their repayments invisibly
+          * missing — a wrong number, not a hidden one. Restricting the tab hid
+          * the symptom. Migration 024 fixes the cause by letting every active
+          * member READ the family's settlements, so the figure is right for
+          * everyone.
+          *
+          * Seeing a balance still confers nothing: the record and review
+          * controls below are gated on being one of the two people, and the
+          * database enforces that independently of anything rendered here.
+          */}
+        <div className="mt-8 max-w-sm">
+          <Segmented
+            ariaLabel="Balance view"
+            value={view}
+            onChange={setView}
+            options={[
+              { value: "mine", label: "My balances" },
+              { value: "all", label: "All balances" },
+            ]}
+          />
+        </div>
 
         {view === "mine" ? (
           personalBalances.length === 0

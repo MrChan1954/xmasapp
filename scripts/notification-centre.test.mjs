@@ -274,7 +274,7 @@ test("the bell renders an unread badge and both panel shapes", () => {
   assert.match(bell, /aria-label=\{unreadCount > 0 \? `Notifications, \$\{unreadCount\} unread` : "Notifications"\}/);
   // Bottom sheet on a phone, anchored dropdown from `sm:` up.
   assert.match(bell, /fixed inset-x-0 bottom-0/);
-  assert.match(bell, /sm:absolute/);
+  assert.match(bell, /absolute right-0 top-\[calc\(100%\+0\.5rem\)\][^"]*sm:flex/);
   // Safe-area padding so the sheet clears a home indicator in an installed app.
   assert.match(bell, /env\(safe-area-inset-bottom\)/);
 });
@@ -288,4 +288,184 @@ test("the bell never appears on the sign-in screens", () => {
   assert.match(frame, /if \(isAuthRoute\(pathname\)\) return <>\{children\}<\/>;/);
   const shell = read("src", "app", "components", "app-shell.tsx");
   assert.match(shell, /<TopBar/);
+});
+
+// ---------------------------------------------------------------------------
+// The phone sheet, and why it is portalled
+// ---------------------------------------------------------------------------
+// The bug these cover: on iPhone the panel showed a single line, "14m ago", with
+// the page visible below it.
+//
+// `TopBar`'s header carries `backdrop-blur-md`, and backdrop-filter makes an
+// element a containing block for `position: fixed` descendants. The sheet was a
+// `fixed inset-x-0 bottom-0` sibling of the trigger INSIDE that header, so it
+// resolved against the header's ~64px box instead of the viewport: its bottom
+// edge pinned to the bottom of the header and the panel grew upward off the top
+// of the screen. A notification row prints title, then body, then timestamp, so
+// the only line left inside the visible strip was the timestamp.
+//
+// The data was never at fault. Every stored notification carries a title and a
+// body; the CHECK constraints on that table do not permit otherwise.
+
+test("the phone sheet escapes the header's backdrop-filter containing block", () => {
+  const topBar = read("src", "app", "components", "top-bar.tsx");
+
+  // The cause, asserted so the link is not lost: the header creates a
+  // containing block for fixed descendants.
+  assert.match(topBar, /<header className="sticky top-0[^"]*backdrop-blur/);
+  assert.match(topBar, /<NotificationBell \/>/, "and the bell is rendered inside it");
+
+  // The fix: the phone sheet is portalled to <body>, where `fixed` means the
+  // viewport again.
+  assert.match(bell, /import \{ createPortal \} from "react-dom";/);
+  assert.match(bell, /createPortal\(/);
+  assert.match(bell, /document\.body,/);
+
+  // The portal is guarded so it does not run during SSR.
+  assert.match(bell, /const mounted = useMounted\(\);/);
+  assert.match(bell, /\{mounted && createPortal\(/);
+
+  // The scrim goes with it, or it would cover only the header strip and leave
+  // the page behind looking live.
+  const portal = bell.slice(bell.indexOf("{mounted && createPortal("), bell.indexOf("document.body,"));
+  assert.match(portal, /fixed inset-0 z-40 bg-scrim/);
+  assert.match(portal, /fixed inset-x-0 bottom-0 z-50/);
+});
+
+test("a tap inside the portalled sheet does not dismiss it", () => {
+  // The sheet is no longer a descendant of the bell's wrapper, so the
+  // outside-click handler has to know about it explicitly. Without this every
+  // tap on a notification would register as an outside click and close the
+  // panel before the tap could land.
+  assert.match(bell, /const sheet = useRef<HTMLDivElement>\(null\);/);
+  assert.match(
+    bell,
+    /if \(root\.current\?\.contains\(target\) \|\| sheet\.current\?\.contains\(target\)\) return;/,
+  );
+  assert.match(bell, /ref=\{sheet\}/);
+});
+
+test("the phone sheet fits the visible viewport and scrolls inside itself", () => {
+  const portal = bell.slice(bell.indexOf("{mounted && createPortal("), bell.indexOf("document.body,"));
+
+  // `dvh`, not `vh`: on iOS `vh` is the large viewport and includes browser
+  // chrome, so 75vh can be taller than what is actually on screen.
+  assert.match(portal, /max-h-\[75dvh\]/);
+  assert.doesNotMatch(portal, /max-h-\[\d+vh\]/, "vh would overflow the visible area on iOS");
+
+  // Safe-area padding clears the home indicator in an installed app.
+  assert.match(portal, /pb-\[env\(safe-area-inset-bottom\)\]/);
+
+  // The list scrolls within the panel rather than pushing it past its height.
+  // `min-h-0` is what allows a flex child to shrink and scroll at all.
+  assert.match(bell, /min-h-0 flex-1 overflow-y-auto overscroll-contain/);
+  assert.match(bell, /flex flex-col overflow-hidden/);
+  // The header row must not be squeezed by the list.
+  assert.match(bell, /flex shrink-0 items-center justify-between/);
+});
+
+test("a notification row renders its title, body and timestamp", () => {
+  // The row that a phone was clipping. All three must be present, and in this
+  // order — the timestamp being last is why it was the survivor.
+  const titleAt = bell.indexOf("{title}");
+  const bodyAt = bell.indexOf("{body}<");
+  const timeAt = bell.indexOf("relativeTime(notification.createdAt)");
+  assert.ok(titleAt > 0, "the title must be rendered");
+  assert.ok(bodyAt > 0, "the body must be rendered");
+  assert.ok(timeAt > 0, "the timestamp must be rendered");
+  assert.ok(titleAt < bodyAt && bodyAt < timeAt, "title, then body, then timestamp");
+
+  // Read/unread styling and the dot are unchanged.
+  assert.match(bell, /const unread = !notification\.readAt;/);
+  assert.match(bell, /unread \? "font-semibold text-ink-900" : "font-medium text-ink-700"/);
+  assert.match(bell, /unread && <span aria-hidden className="mt-2 h-2 w-2 shrink-0 rounded-full bg-accent"/);
+});
+
+test("long notification text wraps instead of being clipped", () => {
+  // A 120-character title and a 300-character body are both permitted by the
+  // table's CHECK constraints, so the row has to cope with them.
+  assert.match(bell, /className="min-w-0 flex-1"/, "the text column must be allowed to shrink");
+  assert.match(bell, /block break-words text-sm leading-5/, "and long words must wrap");
+  // Nothing may truncate the message itself.
+  const row = bell.slice(bell.indexOf("notifications.map("), bell.indexOf("unread && <span aria-hidden"));
+  assert.doesNotMatch(row, /\btruncate\b/, "a notification must never be cut off mid-sentence");
+  assert.doesNotMatch(row, /line-clamp-/, "nor clamped to a fixed number of lines");
+  assert.doesNotMatch(row, /\bh-\[\d/, "nor given a fixed height");
+});
+
+test("the renderer is kind-agnostic, with a fallback that is never a bare timestamp", () => {
+  // Every notification prints the sentence the dispatcher already composed, so
+  // a new event kind needs no branch here and cannot fall through one. That is
+  // what stops a future kind rendering as a timestamp and nothing else.
+  assert.match(bell, /const title = notification\.title\?\.trim\(\) \|\| FALLBACK_TITLE;/);
+  assert.match(bell, /const FALLBACK_TITLE = "[^"]+";/);
+  assert.doesNotMatch(bell, /event_kind|eventKind/, "the row must not branch on kind");
+
+  // An unrecognised category still gets an icon.
+  assert.match(bell, /CATEGORY_ICONS\[notification\.category\] \?\? Bell/);
+
+  // And every kind the app can dispatch does have real copy behind it.
+  const content = read("src", "lib", "notification-content.ts");
+  for (const builder of [
+    "purchaseAddedNotification",
+    "giftIdeaAddedNotification",
+    "giftStatusNotification",
+    "paymentRecordedNotification",
+    "paymentClaimedNotification",
+    "paymentReviewNotification",
+    "paymentAdminOverrideNotification",
+  ]) {
+    assert.match(content, new RegExp(`export function ${builder}`), `${builder} must exist`);
+  }
+  // Each one produces a title AND a body, never a title alone. Split on the
+  // next export rather than the next closing brace — the first `}` in one of
+  // these is the end of its parameter object, not the end of the function.
+  const builders = content
+    .split(/\nexport function /)
+    .slice(1)
+    .filter((chunk) => /^\w+Notification\(/.test(chunk));
+  assert.ok(builders.length >= 7, `expected at least 7 builders, found ${builders.length}`);
+  for (const builder of builders) {
+    const name = builder.slice(0, builder.indexOf("("));
+    assert.match(builder, /title:/, `${name} needs a title`);
+    assert.match(builder, /body:/, `${name} needs a body`);
+  }
+});
+
+test("the desktop dropdown is unchanged and is not portalled", () => {
+  // Anchored under the bell, inside the trigger's own `relative` wrapper, so it
+  // was never affected by the header's containing block and must stay put.
+  assert.match(
+    bell,
+    /absolute right-0 top-\[calc\(100%\+0\.5rem\)\] z-50 hidden max-h-\[28rem\] w-\[22rem\][^"]*sm:flex/,
+  );
+  // It sits before the portal in the tree and is not inside it.
+  const desktopAt = bell.indexOf("absolute right-0 top-[calc(100%+0.5rem)]");
+  const portalAt = bell.indexOf("{mounted && createPortal(");
+  assert.ok(desktopAt > 0 && portalAt > desktopAt, "the desktop panel is not inside the portal");
+  // Still a dropdown, not a sheet: no full-width fixed positioning on desktop.
+  const desktop = bell.slice(desktopAt, portalAt);
+  assert.doesNotMatch(desktop, /fixed inset-x-0/);
+  assert.doesNotMatch(desktop, /rounded-t-3xl/);
+});
+
+test("both shapes render the same list from one component", () => {
+  // One list, used twice, so there is a single set of behaviour to reason about
+  // and the two shapes cannot drift.
+  assert.match(bell, /function InboxPanel\(/);
+  assert.equal((bell.match(/\{panel\}/g) ?? []).length, 2, "desktop and phone render the same panel");
+  assert.match(bell, /const panel = \(\s*<InboxPanel/);
+  // Only one is ever visible.
+  assert.match(bell, /hidden max-h-\[28rem\][^"]*sm:flex/, "desktop hidden below sm");
+  assert.match(bell, /<div className="sm:hidden">/, "phone hidden from sm up");
+});
+
+test("opening a notification still marks it read and routes internally", () => {
+  assert.match(bell, /if \(!notification\.readAt\) void markRead\(notification\.id\);/);
+  assert.match(bell, /router\.push\(notification\.targetUrl\);/);
+  // The path is constrained at rest and re-validated on read; the bell must not
+  // build a URL of its own.
+  assert.doesNotMatch(bell, /window\.location/);
+  assert.doesNotMatch(bell, /href=\{notification/);
+  assert.match(migration, /target_url text not null check \(target_url ~ '\^\/\[\^\/\]' or target_url = '\/'\)/);
 });
