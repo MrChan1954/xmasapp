@@ -1,5 +1,5 @@
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { paymentStatusOf, unconfirmedPennies, type PaymentStatus } from "./payment-confirmation.ts";
+import { isAdminConfirmed, paymentStatusOf, unconfirmedPennies, type PaymentReceiptSource, type PaymentStatus } from "./payment-confirmation.ts";
 
 export type { PaymentStatus };
 
@@ -9,7 +9,9 @@ export type PaymentLogReceipt = {
   action: "confirm" | "reject";
   amountPennies: number;
   reason: string | null;
-  source: "review" | "auto_receipt" | "migration";
+  source: PaymentReceiptSource;
+  /** The member who acted. For an override that is the admin, not the receiver. */
+  actedByName: string;
   reviewerName: string;
   createdAt: string;
 };
@@ -130,6 +132,21 @@ export function unconfirmedAmountPennies(record: PaymentLogRecord): number {
 /** Still waiting on its receiver, as opposed to finished one way or the other. */
 export function isAwaitingConfirmation(record: PaymentLogRecord): boolean {
   return !record.voidedAt && !record.rejectedAt && unconfirmedAmountPennies(record) > 0;
+}
+
+/**
+ * Confirmed by a Global Admin rather than by the person being paid.
+ *
+ * The log must never let one of these pass for an ordinary confirmation, so
+ * this drives a distinct badge rather than a footnote.
+ */
+export function isAdminConfirmedPayment(record: PaymentLogRecord): boolean {
+  return isAdminConfirmed(record.receipts);
+}
+
+/** The admin's written justification, if this was an override. */
+export function adminOverrideReason(record: PaymentLogRecord): string | null {
+  return record.receipts.find((receipt) => receipt.source === "admin_override")?.reason ?? null;
 }
 
 export function filterPaymentRecords(

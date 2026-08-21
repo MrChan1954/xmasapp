@@ -388,3 +388,37 @@ test("members with no stored preferences are treated as opted in", () => {
     gift_status: true,
   });
 });
+
+test("an admin override tells both people, and says an admin did it", () => {
+  // Kirsten (Global Admin) reconciles a payment Taylor made to Paige. Neither
+  // of them recorded it, so neither may be quoted as having said anything.
+  const planned = planPaymentNotifications({
+    ...PAYMENT,
+    actorAppMemberId: KIRSTEN.member,
+    actorName: KIRSTEN.name,
+    settlementId: "settlement-admin",
+    adminOverride: true,
+  }, FAMILY);
+  const byMember = new Map(planned.map((row) => [row.appMemberId, row.payload]));
+
+  assert.deepEqual([...byMember.keys()].sort(), [PAIGE.member, TAYLOR.member]);
+  assert.equal(byMember.get(TAYLOR.member)?.body, "Kirsten recorded a confirmed £15 payment from you to Paige.");
+  assert.equal(byMember.get(PAIGE.member)?.body, "Kirsten recorded a confirmed £15 payment from Taylor to you.");
+  assert.equal(byMember.get(TAYLOR.member)?.category, "money_i_owe");
+  assert.equal(byMember.get(PAIGE.member)?.category, "money_owed_to_me");
+  for (const payload of byMember.values()) {
+    assert.doesNotMatch(payload.body, /says they paid/);
+  }
+});
+
+test("being an admin changes nothing about an ordinary payment's notifications", () => {
+  // The same event, planned twice. Nothing in the planner can tell whether the
+  // actor holds the admin role, which is exactly the property being asserted:
+  // the only inputs are who paid, who was paid, and how much is confirmed.
+  const claim = { ...PAYMENT, actorAppMemberId: TAYLOR.member, actorName: TAYLOR.name, confirmedAmountPennies: 0 };
+
+  assert.deepEqual(
+    planPaymentNotifications(claim, FAMILY).map((row) => [row.appMemberId, row.payload.title, row.payload.body]),
+    planPaymentNotifications({ ...claim, adminOverride: false }, FAMILY).map((row) => [row.appMemberId, row.payload.title, row.payload.body]),
+  );
+});

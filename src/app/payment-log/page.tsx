@@ -7,8 +7,10 @@ import { INPUT_LIMITS, validateEnum, validateUuid } from "../../lib/input-valida
 import { paymentStatusLabel, type PaymentStatus } from "../../lib/payment-confirmation";
 import {
   activePaymentFilterCount,
+  adminOverrideReason,
   emptyPaymentFilters,
   filterPaymentRecords,
+  isAdminConfirmedPayment,
   paymentStatus,
   sortPaymentRecords,
   summarizePaymentRecords,
@@ -450,6 +452,19 @@ function PaymentDetail({ record, isAdmin, onClose, onVoided }: { record: Payment
           {record.voidedAt && <DataRow label="Cancelled by" value={record.voidedByName || "Unknown member (record link missing)"} />}
         </DataList>
 
+        {isAdminConfirmedPayment(record) && (
+          <div className="mt-5 rounded-2xl border border-warning-border bg-gold-soft p-4">
+            <h3 className="font-semibold">Admin confirmed payment</h3>
+            <p className="mt-1 text-sm leading-6">
+              A Global Admin recorded this as already received, so {record.payeeName} was never asked to confirm it.
+              It reduced the balance immediately.
+            </p>
+            {adminOverrideReason(record) && (
+              <p className="mt-2 break-words text-sm"><span className="font-semibold">Reason: </span>{adminOverrideReason(record)}</p>
+            )}
+          </div>
+        )}
+
         <section className="mt-5 rounded-2xl border border-line bg-surface p-5">
           <h3 className="font-display text-lg font-semibold">What happened</h3>
           <ol className="mt-3 space-y-3">
@@ -466,9 +481,11 @@ function PaymentDetail({ record, isAdmin, onClose, onVoided }: { record: Payment
                   <p className="text-sm font-semibold">
                     {receipt.source === "migration"
                       ? "Recorded by the receiver before confirmations existed"
-                      : receipt.action === "confirm"
-                        ? `${receipt.reviewerName} confirmed money arrived`
-                        : `${receipt.reviewerName} said this had not arrived`}
+                      : receipt.source === "admin_override"
+                        ? `${receipt.actedByName} recorded this as confirmed (admin override)`
+                        : receipt.action === "confirm"
+                          ? `${receipt.reviewerName} confirmed money arrived`
+                          : `${receipt.reviewerName} said this had not arrived`}
                   </p>
                   <p className="mt-0.5 text-xs text-ink-600">{formatRecordedAt(receipt.createdAt)}</p>
                   {receipt.reason && <p className="mt-1 break-words text-sm">{receipt.reason}</p>}
@@ -516,12 +533,24 @@ function PaymentDetail({ record, isAdmin, onClose, onVoided }: { record: Payment
 
 
 
+/**
+ * The status, plus a second badge when an admin was the one who confirmed it.
+ *
+ * A payment settled by an override must never be indistinguishable from one the
+ * receiver agreed to. Two badges is the whole mechanism: the money reads the
+ * same, and how it got there does not.
+ */
 function StatusBadge({ record }: { record: PaymentLogRecord }) {
   const status = paymentStatus(record);
   const tone = status === "confirmed"
     ? "success"
     : status === "rejected" ? "danger" : status === "voided" ? "neutral" : status === "partially_confirmed" ? "gold" : "warning";
-  return <Badge tone={tone}>{paymentStatusLabel(status)}</Badge>;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <Badge tone={tone}>{paymentStatusLabel(status)}</Badge>
+      {isAdminConfirmedPayment(record) && <Badge tone="gold">Admin confirmed</Badge>}
+    </span>
+  );
 }
 
 function SummaryCard({ label, value, detail, primary = false }: { label: string; value: string; detail?: string; primary?: boolean }) {

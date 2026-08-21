@@ -461,6 +461,17 @@ export async function buildPlan(
     authorize(row.recorded_by_app_member_id, row.created_at);
     const actorAppMemberId = row.recorded_by_app_member_id as string;
 
+    // A payment created by the admin override is confirmed from the start and
+    // nobody agreed to it, so it must not be worded as though somebody did.
+    // The receipt is where that fact lives; a database without migration 022
+    // simply returns nothing here and the ordinary wording applies.
+    const override = await reader
+      .from("payment_receipts")
+      .select("id")
+      .eq("settlement_id", row.id)
+      .eq("source", "admin_override")
+      .limit(1);
+
     return {
       actorAppMemberId,
       fingerprint: "recorded",
@@ -478,6 +489,7 @@ export async function buildPlan(
           // recorded payment was, by definition, one the receiver had already
           // acknowledged.
           confirmedAmountPennies: row.confirmed_amount_pennies ?? row.amount_pennies,
+          adminOverride: !override.error && (override.data?.length ?? 0) > 0,
         },
         context.members,
       ),

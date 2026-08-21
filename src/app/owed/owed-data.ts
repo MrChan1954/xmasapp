@@ -5,7 +5,7 @@ import {
   type PurchaseObligation,
   type SettlementLedgerEntry,
 } from "../../lib/owed";
-import { paymentStatusOf, type PaymentStatus } from "../../lib/payment-confirmation";
+import { paymentStatusOf, type PaymentReceiptSource, type PaymentStatus } from "../../lib/payment-confirmation";
 
 const CHRISTMAS_YEAR = 2026;
 
@@ -23,10 +23,13 @@ export type OwedReceiptDetail = {
   action: "confirm" | "reject";
   amountPennies: number;
   reason: string | null;
-  source: "review" | "auto_receipt" | "migration";
+  source: PaymentReceiptSource;
   reviewerContributorId: string;
   createdAt: string;
 };
+
+/** An active contributor, for the pickers on the admin-only payment form. */
+export type OwedContributorOption = { id: string; name: string };
 
 export type OwedSettlementDetail = SettlementLedgerEntry & {
   id: string;
@@ -48,6 +51,8 @@ export type OwedData = {
   currentContributorId: string;
   isAdmin: boolean;
   contributorNames: Map<string, string>;
+  /** Active contributors only, name-sorted. Used by the admin payment form. */
+  contributors: OwedContributorOption[];
   obligations: OwedObligationDetail[];
   settlements: OwedSettlementDetail[];
   balances: NetOwedBalance[];
@@ -201,6 +206,10 @@ export async function loadOwedData(): Promise<OwedData> {
     currentContributorId: currentContributor.id,
     isAdmin: member.role === "admin",
     contributorNames,
+    contributors: contributorResult.data
+      .filter((row) => row.active)
+      .map((row) => ({ id: row.id, name: contributorNames.get(row.id) ?? "Unknown contributor" }))
+      .sort((left, right) => left.name.localeCompare(right.name, "en-GB")),
     obligations,
     settlements,
     balances: calculateNetOwedBalances(obligations, settlements),

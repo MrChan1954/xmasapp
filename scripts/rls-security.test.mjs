@@ -40,7 +40,9 @@ const notificationsMigration = readFileSync(join(migrationsDirectory, notificati
 const notificationCentreMigration = readFileSync(join(migrationsDirectory, notificationCentreMigrationName), "utf8");
 const notificationOutboxMigration = readFileSync(join(migrationsDirectory, notificationOutboxMigrationName), "utf8");
 const paymentConfirmationsMigrationName = "202608100021_add_payment_confirmations.sql";
+const adminOverrideMigrationName = "202608100022_separate_admin_payment_override.sql";
 const paymentConfirmationsMigration = readFileSync(join(migrationsDirectory, paymentConfirmationsMigrationName), "utf8");
+const adminOverrideMigration = readFileSync(join(migrationsDirectory, adminOverrideMigrationName), "utf8");
 
 const applicationTables = [
   "christmas_events",
@@ -59,7 +61,7 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  assert.equal(migrationFiles.at(-1), paymentConfirmationsMigrationName);
+  assert.equal(migrationFiles.at(-1), adminOverrideMigrationName);
 
   for (const table of applicationTables) {
     assert.match(
@@ -1036,4 +1038,192 @@ test("a confirmation reaches every open tab through the subscription that alread
     assert.equal((page.match(/useRealtimeRefresh\(/g) ?? []).length, 1, "one subscription per screen");
     assert.match(page, /"settlements"/);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Global Admin uses the normal payment flow (migration 022)
+// ---------------------------------------------------------------------------
+
+test("the ordinary payment function does not know what an admin is", () => {
+  const record = adminOverrideMigration.match(
+    /create or replace function public\.record_settlement[\s\S]*?\n\$\$;/,
+  )[0];
+
+  // The rule, in full: two people, decided by their relationship to the money.
+  assert.match(
+    record,
+    /if current_contributor_id <> p_payee_contributor_id\s*and current_contributor_id <> p_payer_contributor_id\s*then\s*raise exception 'Only the payer or the person being paid can record this payment'/,
+  );
+  // The whole point of this migration: no role check anywhere in the ordinary
+  // path, so an admin walks exactly the member's path.
+  assert.doesNotMatch(record, /is_app_admin/, "admin must not appear in the ordinary payment flow");
+
+  // Auto-confirmation is decided by being the receiver, and by nothing else.
+  assert.match(record, /caller_is_receiver := current_contributor_id = p_payee_contributor_id;/);
+  assert.match(record, /case when caller_is_receiver then p_amount_pennies else 0 end/);
+  assert.doesNotMatch(
+    record,
+    /is_app_admin\(\)[\s\S]*?confirmed_amount_pennies/,
+    "no path may auto-confirm because of a role",
+  );
+});
+
+test("an admin recording their own outgoing payment gets a pending claim", () => {
+  const record = adminOverrideMigration.match(
+    /create or replace function public\.record_settlement[\s\S]*?\n\$\$;/,
+  )[0];
+
+  // The insert has exactly one condition on every confirmation column, and it
+  // is `caller_is_receiver`. An admin who is the payer fails it like anybody
+  // else, so their payment starts at zero confirmed and Owed does not move.
+  const insert = record.slice(record.indexOf("insert into public.settlements"), record.indexOf("returning * into saved_settlement"));
+  const conditions = insert.match(/case when (\w+) then/g) ?? [];
+  assert.equal(conditions.length, 4, "confirmed amount, confirmed_at, last_reviewed_at, reviewed_by");
+  assert.ok(conditions.every((condition) => condition === "case when caller_is_receiver then"));
+
+  // And the auto receipt is written under the same single condition.
+  assert.match(record, /if caller_is_receiver then\s*insert into public\.payment_receipts/);
+});
+
+test("the admin override is a separate function, admin-only, and refuses self-dealing", () => {
+  const override = adminOverrideMigration.match(
+    /create or replace function public\.admin_record_confirmed_payment[\s\S]*?\n\$\$;/,
+  )[0];
+
+  // Admin-gated at the top, before anything is read or written.
+  assert.match(
+    override,
+    /begin\s*if not public\.is_app_admin\(\) then\s*raise exception 'Only Global Admin can record a confirmed payment on behalf of others'\s*using errcode = '42501';/,
+  );
+  // An admin cannot confirm a payment they themselves made -- the exact bypass
+  // two-sided confirmation exists to prevent.
+  assert.match(
+    override,
+    /current_contributor_id = p_payer_contributor_id\s*then\s*raise exception 'You cannot confirm your own payment/,
+  );
+  // A reason is mandatory, in the function and again in the table.
+  assert.match(override, /clean_reason is null\s*then\s*raise exception 'Give a reason for recording this payment as already confirmed'/);
+  assert.match(
+    adminOverrideMigration,
+    /add constraint payment_receipts_override_reason_check\s*check \(source <> 'admin_override' or reason is not null\)/,
+  );
+});
+
+test("a forced payment is confirmed immediately and labelled as an override", () => {
+  const override = adminOverrideMigration.match(
+    /create or replace function public\.admin_record_confirmed_payment[\s\S]*?\n\$\$;/,
+  )[0];
+
+  // Confirmed in full at creation, so Owed moves straight away.
+  const insert = override.slice(override.indexOf("insert into public.settlements"), override.indexOf("returning * into saved_settlement"));
+  assert.match(insert, /p_amount_pennies,\s*now\(\),\s*now\(\),\s*current_member_id/);
+  assert.doesNotMatch(insert, /case when/, "an override is never conditional");
+
+  // And the receipt says what it is, who did it, and why.
+  const receipt = override.slice(override.indexOf("insert into public.payment_receipts"));
+  assert.match(receipt, /'admin_override'/);
+  assert.match(receipt, /clean_reason/);
+  assert.match(receipt, /current_member_id/);
+  assert.match(
+    adminOverrideMigration,
+    /add constraint payment_receipts_source_check\s*check \(source in \('review', 'auto_receipt', 'migration', 'admin_override'\)\)/,
+  );
+  // It still cannot invent money: the same ceiling as the ordinary path.
+  assert.match(override, /p_amount_pennies > claimable_pennies[\s\S]*?raise exception 'Payment exceeds the amount still outstanding and unclaimed'/);
+});
+
+test("the override is reachable only through its own function, never through the ordinary one", () => {
+  for (const signature of [
+    "record_settlement\\(uuid, uuid, uuid, integer, date, text\\)",
+    "admin_record_confirmed_payment\\(uuid, uuid, uuid, integer, date, text\\)",
+  ]) {
+    assert.match(
+      adminOverrideMigration,
+      new RegExp(`revoke all on function public\\.${signature} from public, anon, authenticated;`, "i"),
+    );
+    assert.match(
+      adminOverrideMigration,
+      new RegExp(`grant execute on function public\\.${signature} to authenticated;`, "i"),
+    );
+  }
+  // A normal member calling the override is refused by the function, not by a
+  // hidden button: the check is the first statement in the body.
+  const override = adminOverrideMigration.match(
+    /create or replace function public\.admin_record_confirmed_payment[\s\S]*?\n\$\$;/,
+  )[0];
+  assert.ok(
+    override.indexOf("is_app_admin()") < override.indexOf("insert into"),
+    "authorization must precede any write",
+  );
+  assert.match(override, /security definer\s*\nset search_path = ''/);
+
+  // The browser cannot reach the table directly either -- unchanged from 021,
+  // and re-asserted here because this migration is the one that adds a second
+  // way to write a settlement.
+  assert.doesNotMatch(adminOverrideMigration, /grant [a-z, ]*(insert|update|delete)[a-z, ]* on table public\./i);
+});
+
+test("the admin override changes nothing about the confirmation state model", () => {
+  const statements = adminOverrideMigration.replace(/--[^\n]*/g, "");
+
+  // 021's review path, status column, receipts table and RLS are untouched.
+  assert.doesNotMatch(statements, /create or replace function public\.review_payment/);
+  assert.doesNotMatch(statements, /create or replace function public\.void_settlement/);
+  assert.doesNotMatch(statements, /drop policy/i);
+  assert.doesNotMatch(statements, /create policy/i);
+  assert.doesNotMatch(statements, /alter table public\.settlements/i);
+  assert.doesNotMatch(statements, /generated always as/i);
+  assert.doesNotMatch(statements, /drop table|delete from/i);
+
+  // It runs AFTER 021 and builds on it rather than repeating it: no second
+  // receipts table, no second status column, and no second backfill. 021 wrote
+  // one migration receipt per payment that already existed; doing that again on
+  // the applied database would duplicate every one of them.
+  assert.doesNotMatch(statements, /create table/i);
+  assert.doesNotMatch(statements, /add column/i);
+  const receiptInserts = statements.split(/insert into public\.payment_receipts/i).slice(1);
+  assert.equal(receiptInserts.length, 2, "the ordinary auto-receipt and the override receipt, and nothing else");
+  for (const chunk of receiptInserts) {
+    const statement = chunk.slice(0, chunk.indexOf(";"));
+    assert.match(statement, /\)\s*values\s*\(/i, "a receipt here is one literal row");
+    assert.doesNotMatch(statement, /select/i, "never a SELECT over existing settlements");
+  }
+
+  // And no Christmas data is read or written.
+  for (const table of ["recipient_contributions", "christmas_recipients", "gift_ideas", "people"]) {
+    assert.doesNotMatch(statements, new RegExp(`(update|delete from|insert into)\\s+public\\.${table}\\b`, "i"));
+  }
+});
+
+test("the Owed screen offers the ordinary payment action to the two people only", () => {
+  const owedPage = readFileSync(join(root, "src", "app", "owed", "page.tsx"), "utf8");
+
+  // The record button is gated on the reader's relationship to the balance,
+  // with no admin term -- so an admin sees exactly what a member sees.
+  assert.match(owedPage, /\{\(iOweThis \|\| iAmOwedThis\)/);
+  assert.doesNotMatch(owedPage, /iOweThis \|\| iAmOwedThis \|\| isAdmin/);
+  const breakdown = owedPage.slice(owedPage.indexOf("const canRecord ="), owedPage.indexOf("const voidPayment"));
+  assert.doesNotMatch(breakdown, /isAdmin/, "the breakdown's record button must not be widened for admins");
+
+  // The override lives in its own section, behind its own component, and calls
+  // its own RPC. It is not adjacent to the ordinary button.
+  assert.match(owedPage, /function AdminTools\(/);
+  assert.match(owedPage, /Admin tools/);
+  assert.match(owedPage, /\{data\.isAdmin && <AdminTools/);
+  assert.match(owedPage, /rpc\("admin_record_confirmed_payment"/);
+  // Rendered last, below the balances and below the reader's own payments, so
+  // it is nowhere near the button people press every day.
+  assert.ok(
+    owedPage.indexOf("<AdminTools") > owedPage.indexOf("<BalanceSection"),
+    "admin tools must sit below the ordinary payment actions",
+  );
+  assert.ok(
+    owedPage.indexOf("<AdminTools") > owedPage.indexOf("<MyPaymentsSection"),
+    "admin tools must sit below the reader's own payments",
+  );
+
+  // The Payment Log never lets an override pass for an ordinary confirmation.
+  const paymentLogPage = readFileSync(join(root, "src", "app", "payment-log", "page.tsx"), "utf8");
+  assert.match(paymentLogPage, /isAdminConfirmedPayment\(record\) && <Badge tone="gold">Admin confirmed<\/Badge>/);
+  assert.match(paymentLogPage, /adminOverrideReason\(record\)/);
 });

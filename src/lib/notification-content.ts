@@ -178,6 +178,34 @@ export function paymentAwaitingConfirmationNotification(input: {
 }
 
 /**
+ * A Global Admin recorded a payment as already confirmed.
+ *
+ * Deliberately worded as what it is. "Jade says she paid you" would be a lie
+ * here -- Jade did not say anything, an admin reconciled the ledger -- and the
+ * person reading it needs to know their balance moved without either of them
+ * agreeing to it in the app.
+ */
+export function paymentAdminOverrideNotification(input: {
+  adminName: string;
+  payerName: string;
+  payeeName: string;
+  amountPennies: number;
+  audience: "payer" | "payee";
+  settlementId: string;
+}): NotificationPayload {
+  const amount = formatPennies(input.amountPennies);
+  return {
+    title: "\u{1F4B7} Payment recorded by an admin",
+    body: input.audience === "payer"
+      ? `${input.adminName} recorded a confirmed ${amount} payment from you to ${input.payeeName}.`
+      : `${input.adminName} recorded a confirmed ${amount} payment from ${input.payerName} to you.`,
+    url: OWED_URL,
+    tag: `payment:${input.settlementId}`,
+    category: input.audience === "payer" ? "money_i_owe" : "money_owed_to_me",
+  };
+}
+
+/**
  * The receiver's verdict, told to the payer.
  *
  * Three readings of one review, and the figures are never rounded or merged:

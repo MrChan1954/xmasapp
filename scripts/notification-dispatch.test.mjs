@@ -787,3 +787,181 @@ test("a pending claim never moves the balance a notification quotes", async () =
   const settled = await loadFamilyContext(admin, admin, "evt");
   assert.equal(settled.balances.some((balance) => balance.pairKey.includes("c-jade")), false);
 });
+
+// ---------------------------------------------------------------------------
+// Global Admin is an ordinary payer (and an ordinary receiver)
+// ---------------------------------------------------------------------------
+// Taylor is the Global Admin throughout. None of these tests tell the pipeline
+// that: the point is that his role never enters into it, so the same rows
+// produce the same notifications for him as for anybody else.
+
+test("a Global Admin recording their own payment notifies exactly like a member", async () => {
+  // Taylor (admin) says he paid Jade. Taylor is the payer, so this is a claim.
+  const adminStore = familyStore();
+  adminStore.settlements = [{
+    id: "set-1",
+    christmas_event_id: "evt",
+    payer_contributor_id: "c-taylor",
+    payee_contributor_id: "c-jade",
+    amount_pennies: 2000,
+    confirmed_amount_pennies: 0,
+    recorded_by_app_member_id: "m-taylor",
+    created_at: NOW(),
+    rejected_at: null,
+    voided_at: null,
+  }];
+  const adminSender = recordingSender();
+  const adminReport = await run(adminStore, { sender: adminSender, kind: "payment", subjectId: "set-1", caller: "m-taylor" });
+
+  // The identical situation with the roles swapped: Paige is nobody special.
+  const memberStore = familyStore();
+  memberStore.settlements = [{
+    ...adminStore.settlements[0],
+    payer_contributor_id: "c-paige",
+    payee_contributor_id: "c-jade",
+    confirmed_amount_pennies: 0,
+    recorded_by_app_member_id: "m-paige",
+  }];
+  const memberSender = recordingSender();
+  const memberReport = await run(memberStore, { sender: memberSender, kind: "payment", subjectId: "set-1", caller: "m-paige" });
+
+  assert.equal(adminReport.preferencesAllowed, memberReport.preferencesAllowed);
+  assert.equal(adminReport.delivered, memberReport.delivered);
+  assert.deepEqual(adminSender.sent.map((row) => row.endpoint), ["https://push.example/jade"]);
+  assert.deepEqual(memberSender.sent.map((row) => row.endpoint), ["https://push.example/jade"]);
+  assert.equal(adminSender.sent[0].payload.title, memberSender.sent[0].payload.title);
+  assert.equal(adminSender.sent[0].payload.body, "Taylor says they paid you £20.");
+  assert.equal(memberSender.sent[0].payload.body, "Paige says they paid you £20.");
+  assert.equal(adminSender.sent[0].payload.category, "money_owed_to_me");
+});
+
+test("a Global Admin recording a payment they received confirms it, like any receiver", async () => {
+  const store = familyStore();
+  store.settlements = [{
+    id: "set-1",
+    christmas_event_id: "evt",
+    payer_contributor_id: "c-jade",
+    payee_contributor_id: "c-taylor",
+    amount_pennies: 2000,
+    confirmed_amount_pennies: 2000,
+    recorded_by_app_member_id: "m-taylor",
+    created_at: NOW(),
+    rejected_at: null,
+    voided_at: null,
+  }];
+  const sender = recordingSender();
+  await run(store, { sender, kind: "payment", subjectId: "set-1", caller: "m-taylor" });
+
+  // The payer hears that it was acknowledged -- the receiver's own record IS
+  // the acknowledgement, whether or not that receiver happens to be an admin.
+  assert.deepEqual(sender.sent.map((row) => row.endpoint), ["https://push.example/jade"]);
+  assert.equal(sender.sent[0].payload.body, "Taylor recorded your £20 payment.");
+  assert.equal(sender.sent[0].payload.category, "money_i_owe");
+});
+
+test("an admin override is announced as an admin override, to both people", async () => {
+  // Taylor reconciles a £20 payment Jade made to Paige outside the app.
+  const store = familyStore();
+  store.settlements = [{
+    id: "set-1",
+    christmas_event_id: "evt",
+    payer_contributor_id: "c-jade",
+    payee_contributor_id: "c-paige",
+    amount_pennies: 2000,
+    confirmed_amount_pennies: 2000,
+    recorded_by_app_member_id: "m-taylor",
+    created_at: NOW(),
+    rejected_at: null,
+    voided_at: null,
+  }];
+  store.payment_receipts = [{
+    id: "rec-1",
+    settlement_id: "set-1",
+    payer_contributor_id: "c-jade",
+    payee_contributor_id: "c-paige",
+    action: "confirm",
+    amount_pennies: 2000,
+    reason: "Payment confirmed outside the app",
+    source: "admin_override",
+    reviewed_by_app_member_id: "m-taylor",
+    reviewer_contributor_id: "c-paige",
+    created_at: NOW(),
+  }];
+  const sender = recordingSender();
+  const report = await run(store, { sender, kind: "payment", subjectId: "set-1", caller: "m-taylor" });
+
+  assert.equal(report.preferencesAllowed, 2, "both people whose balance moved");
+  assert.deepEqual(
+    sender.sent.map((row) => row.endpoint).sort(),
+    ["https://push.example/jade", "https://push.example/paige"],
+  );
+
+  const byEndpoint = new Map(sender.sent.map((row) => [row.endpoint, row.payload]));
+  assert.equal(byEndpoint.get("https://push.example/jade").body, "Taylor recorded a confirmed £20 payment from you to Paige.");
+  assert.equal(byEndpoint.get("https://push.example/paige").body, "Taylor recorded a confirmed £20 payment from Jade to you.");
+
+  // The one wording that would be a lie: nobody said they paid anything.
+  for (const payload of sender.sent.map((row) => row.payload)) {
+    assert.doesNotMatch(payload.body, /says they paid/);
+  }
+  // And the admin's justification is not broadcast to anybody's lock screen.
+  assert.doesNotMatch(JSON.stringify(sender.sent), /outside the app/);
+});
+
+test("an ordinary confirmed payment is never mistaken for an admin override", async () => {
+  const store = familyStore();
+  store.settlements = [{
+    id: "set-1",
+    christmas_event_id: "evt",
+    payer_contributor_id: "c-jade",
+    payee_contributor_id: "c-taylor",
+    amount_pennies: 2000,
+    confirmed_amount_pennies: 2000,
+    recorded_by_app_member_id: "m-taylor",
+    created_at: NOW(),
+    rejected_at: null,
+    voided_at: null,
+  }];
+  store.payment_receipts = [{
+    id: "rec-1",
+    settlement_id: "set-1",
+    payer_contributor_id: "c-jade",
+    payee_contributor_id: "c-taylor",
+    action: "confirm",
+    amount_pennies: 2000,
+    reason: null,
+    source: "auto_receipt",
+    reviewed_by_app_member_id: "m-taylor",
+    reviewer_contributor_id: "c-taylor",
+    created_at: NOW(),
+  }];
+  const sender = recordingSender();
+  await run(store, { sender, kind: "payment", subjectId: "set-1", caller: "m-taylor" });
+
+  assert.equal(sender.sent[0].payload.body, "Taylor recorded your £20 payment.");
+  assert.doesNotMatch(sender.sent[0].payload.title, /admin/i);
+});
+
+test("a database without the override table still notifies about ordinary payments", async () => {
+  // Migration 022 not applied: the receipt lookup fails, and the ordinary
+  // wording must still go out rather than the event being lost.
+  const store = familyStore();
+  delete store.payment_receipts;
+  store.settlements = [{
+    id: "set-1",
+    christmas_event_id: "evt",
+    payer_contributor_id: "c-taylor",
+    payee_contributor_id: "c-jade",
+    amount_pennies: 2000,
+    confirmed_amount_pennies: 0,
+    recorded_by_app_member_id: "m-taylor",
+    created_at: NOW(),
+    rejected_at: null,
+    voided_at: null,
+  }];
+  const sender = recordingSender();
+  const report = await run(store, { sender, kind: "payment", subjectId: "set-1", caller: "m-taylor" });
+
+  assert.equal(report.delivered, 1);
+  assert.equal(sender.sent[0].payload.body, "Taylor says they paid you £20.");
+});

@@ -10,6 +10,7 @@ import {
   type NetOwedBalance,
 } from "../../lib/owed";
 import {
+  adminPaymentError,
   isAwaitingReview,
   paymentStatusLabel,
   payerStatusSummary,
@@ -36,6 +37,7 @@ import {
   MoneyInput,
   Notice,
   Segmented,
+  Select,
   Skeleton,
   Textarea,
   cx,
@@ -55,6 +57,7 @@ export default function OwedPage() {
   const [openPairKey, setOpenPairKey] = useState<string | null>(null);
   const [paymentBalance, setPaymentBalance] = useState<NetOwedBalance | null>(null);
   const [review, setReview] = useState<{ payment: OwedSettlementDetail; choice: ReviewChoice } | null>(null);
+  const [adminPayment, setAdminPayment] = useState(false);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -171,7 +174,6 @@ export default function OwedPage() {
                   balances={owedToYou}
                   currentContributorId={data.currentContributorId}
                   names={names}
-                  isAdmin={data.isAdmin}
                   onView={(balance) => setOpenPairKey(balance.pairKey)}
                   onPay={setPaymentBalance}
                 />
@@ -181,7 +183,6 @@ export default function OwedPage() {
                   balances={youOwe}
                   currentContributorId={data.currentContributorId}
                   names={names}
-                  isAdmin={data.isAdmin}
                   onView={(balance) => setOpenPairKey(balance.pairKey)}
                   onPay={setPaymentBalance}
                 />
@@ -192,7 +193,7 @@ export default function OwedPage() {
             <p className="mt-1 text-sm text-ink-600">Current balances after purchases and confirmed payments.</p>
             {data.balances.length === 0 ? <AllSettled compact /> : (
               <div className="mt-5 grid gap-3 md:grid-cols-2">
-                {data.balances.map((balance) => <BalanceCard key={balance.pairKey} balance={balance} currentContributorId={data.currentContributorId} names={names} isAdmin onView={() => setOpenPairKey(balance.pairKey)} onPay={() => setPaymentBalance(balance)} allView />)}
+                {data.balances.map((balance) => <BalanceCard key={balance.pairKey} balance={balance} currentContributorId={data.currentContributorId} names={names} onView={() => setOpenPairKey(balance.pairKey)} onPay={() => setPaymentBalance(balance)} allView />)}
               </div>
             )}
           </section>
@@ -205,6 +206,8 @@ export default function OwedPage() {
             onRefresh={refresh}
           />
         )}
+
+        {data.isAdmin && <AdminTools onOpen={() => setAdminPayment(true)} />}
 
         {openPairKey && <Breakdown
           pairKeyValue={openPairKey}
@@ -225,6 +228,11 @@ export default function OwedPage() {
           names={names}
           onClose={() => setReview(null)}
           onReviewed={async () => { setReview(null); await refresh(); }}
+        />}
+        {adminPayment && data.isAdmin && <AdminPaymentSheet
+          data={data}
+          onClose={() => setAdminPayment(false)}
+          onSaved={async () => { setAdminPayment(false); await refresh(); }}
         />}
       </>}
     </AppShell>
@@ -520,6 +528,175 @@ function ReviewSheet({ payment, choice, names, onClose, onReviewed }: { payment:
   );
 }
 
+/**
+ * The admin-only corner of the Owed screen.
+ *
+ * Deliberately last on the page, deliberately not beside anything a member
+ * presses every day, and deliberately explicit about what it does. Everything
+ * above this point behaves identically whether or not the reader is an admin —
+ * which is the point: an admin testing the app walks the real user's path.
+ */
+function AdminTools({ onOpen }: { onOpen: () => void }) {
+  return (
+    <section className="mt-8 rounded-2xl border border-dashed border-line-strong bg-surface-2 p-5 sm:p-6">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="font-display text-lg font-semibold">Admin tools</h2>
+        <Badge tone="neutral">Global Admin only</Badge>
+      </div>
+      <p className="mt-2 text-sm leading-6 text-ink-600">
+        For money that changed hands outside the app and was never recorded. This skips the normal
+        confirmation step, so use it only when you know the payment really happened — everyone else
+        should record their own payments above and let the other person confirm.
+      </p>
+      <Button variant="secondary" size="lg" onClick={onOpen} className="mt-4">
+        Record confirmed payment
+      </Button>
+    </section>
+  );
+}
+
+/**
+ * The override form.
+ *
+ * It asks for a reason and will not proceed without one, because the record it
+ * writes says a payment arrived when nobody confirmed that it did. The reason is
+ * the only thing that makes that entry answerable later.
+ */
+function AdminPaymentSheet({ data, onClose, onSaved }: { data: OwedData; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [payerId, setPayerId] = useState("");
+  const [payeeId, setPayeeId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(todayInput());
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // What the pair currently owes, so the admin is not typing blind.
+  const pairBalance = payerId && payeeId && payerId !== payeeId
+    ? data.balances.find((row) => row.pairKey === pairKey(payerId, payeeId)) ?? null
+    : null;
+  const outstanding = pairBalance && pairBalance.debtorContributorId === payerId
+    ? pairBalance.amountPennies
+    : 0;
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    setError(null);
+
+    if (!payerId || !payeeId) { setError("Choose who paid and who received it."); return; }
+    if (payerId === payeeId) { setError("The payer and the receiver must be different people."); return; }
+    if (payerId === data.currentContributorId) {
+      setError("You cannot confirm your own payment. Record it normally and let the other person confirm it.");
+      return;
+    }
+    const parsed = parsePoundsToPennies(amount);
+    if (!parsed.ok) { setError(parsed.error); return; }
+    if (parsed.pennies <= 0) { setError(`Enter an amount greater than ${formatPennies(0)}.`); return; }
+    const validDate = validateDateInput(date, "Choose a valid payment date.");
+    if (!validDate.ok) { setError(validDate.error); return; }
+    const validReason = validateRejectionReason(reason);
+    if (!validReason.ok) {
+      setError(reason.trim() ? validReason.error : "Give a reason for recording this as already confirmed.");
+      return;
+    }
+    const ids = [data.eventId, payerId, payeeId].map((id) => validateUuid(id, "This payment link is invalid."));
+    if (ids.some((result) => !result.ok)) { setError("This payment link is invalid. Refresh and try again."); return; }
+
+    setSaving(true);
+    const result = await createClient().rpc("admin_record_confirmed_payment", {
+      p_christmas_event_id: data.eventId,
+      p_payer_contributor_id: payerId,
+      p_payee_contributor_id: payeeId,
+      p_amount_pennies: parsed.pennies,
+      p_payment_date: validDate.value,
+      p_reason: validReason.reason,
+    });
+    if (result.error) {
+      setError(adminPaymentError(result.error.code, result.error.message));
+      setSaving(false);
+      return;
+    }
+
+    // Both people need telling, and in wording that says an admin did this.
+    const settlementId = (result.data as { id?: string } | null)?.id;
+    if (settlementId) notifyFamily("payment", settlementId);
+
+    await onSaved();
+  };
+
+  return (
+    <Modal labelledBy="admin-payment-title" onClose={onClose} size="md" surface="white" dismissible={!saving}>
+      <form onSubmit={(event) => void save(event)}>
+        <ModalHeader
+          id="admin-payment-title"
+          eyebrow="Global Admin only"
+          title="Record confirmed payment"
+          onClose={onClose}
+          closeLabel="Close admin payment form"
+        />
+        <div className="px-5 pb-6 sm:px-7 sm:pb-7">
+          <Notice tone="warning">
+            This records the payment as already received. The person being paid is not asked to
+            confirm it, and the balance changes straight away.
+          </Notice>
+
+          {error && <Notice tone="danger" className="mt-4">{error}</Notice>}
+
+          <div className="mt-5 space-y-4">
+            <Field label="Who paid" required>
+              <Select required value={payerId} onChange={(event) => setPayerId(event.target.value)}>
+                <option value="">Choose a contributor</option>
+                {data.contributors
+                  .filter((contributor) => contributor.id !== data.currentContributorId)
+                  .map((contributor) => <option key={contributor.id} value={contributor.id}>{contributor.name}</option>)}
+              </Select>
+            </Field>
+            <Field label="Who received it" required>
+              <Select required value={payeeId} onChange={(event) => setPayeeId(event.target.value)}>
+                <option value="">Choose a contributor</option>
+                {data.contributors
+                  .filter((contributor) => contributor.id !== payerId)
+                  .map((contributor) => <option key={contributor.id} value={contributor.id}>{contributor.name}</option>)}
+              </Select>
+            </Field>
+            {payerId && payeeId && payerId !== payeeId && (
+              <p className="rounded-xl border border-accent-soft-border bg-accent-soft p-3 text-sm">
+                {outstanding > 0
+                  ? <>Currently outstanding in this direction: <strong className="tabular-nums">{formatPennies(outstanding)}</strong></>
+                  : "There is nothing outstanding in this direction, so this payment will be refused."}
+              </p>
+            )}
+            <Field label="Amount" required>
+              <MoneyInput required maxLength={INPUT_LIMITS.money} value={amount} onValueChange={setAmount} />
+            </Field>
+            <Field label="Payment date" required>
+              <Input required type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+            </Field>
+            <Field label="Why are you recording this?" required>
+              <Textarea
+                required
+                rows={3}
+                maxLength={500}
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                placeholder="Payment confirmed outside the app"
+              />
+            </Field>
+            <p className="text-xs leading-5 text-ink-600">
+              Your name, the time and this reason are stored with the payment and shown in the Payment Log.
+            </p>
+          </div>
+
+          <div className="mt-6 grid grid-cols-2 gap-3">
+            <Button variant="secondary" size="lg" onClick={onClose}>Cancel</Button>
+            <Button type="submit" size="lg" disabled={saving}>{saving ? "Recording..." : "Record as confirmed"}</Button>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function BalanceSummary({ label, value, detail, positive = false }: { label: string; value: number; detail: string; positive?: boolean }) {
   return (
     <div className={cx(
@@ -533,20 +710,20 @@ function BalanceSummary({ label, value, detail, positive = false }: { label: str
   );
 }
 
-function BalanceSection({ title, empty, balances, currentContributorId, names, isAdmin, onView, onPay }: { title: string; empty: string; balances: NetOwedBalance[]; currentContributorId: string; names: Map<string, string>; isAdmin: boolean; onView: (balance: NetOwedBalance) => void; onPay: (balance: NetOwedBalance) => void }) {
+function BalanceSection({ title, empty, balances, currentContributorId, names, onView, onPay }: { title: string; empty: string; balances: NetOwedBalance[]; currentContributorId: string; names: Map<string, string>; onView: (balance: NetOwedBalance) => void; onPay: (balance: NetOwedBalance) => void }) {
   return (
     <section className="rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
       <h2 className="font-display text-xl font-semibold">{title}</h2>
       <GarlandRule className="mt-4" />
       {balances.length === 0
         ? <p className="mt-4 text-sm text-ink-600">{empty}</p>
-        : <div className="mt-2 divide-y divide-line">{balances.map((balance) => <BalanceCard key={balance.pairKey} balance={balance} currentContributorId={currentContributorId} names={names} isAdmin={isAdmin} onView={() => onView(balance)} onPay={() => onPay(balance)} />)}</div>}
+        : <div className="mt-2 divide-y divide-line">{balances.map((balance) => <BalanceCard key={balance.pairKey} balance={balance} currentContributorId={currentContributorId} names={names} onView={() => onView(balance)} onPay={() => onPay(balance)} />)}</div>}
     </section>
   );
 }
 
 /** A ledger line, not a card-in-card: name left, amount right, actions beneath. */
-function BalanceCard({ balance, currentContributorId, names, isAdmin, onView, onPay, allView = false }: { balance: NetOwedBalance; currentContributorId: string; names: Map<string, string>; isAdmin: boolean; onView: () => void; onPay: () => void; allView?: boolean }) {
+function BalanceCard({ balance, currentContributorId, names, onView, onPay, allView = false }: { balance: NetOwedBalance; currentContributorId: string; names: Map<string, string>; onView: () => void; onPay: () => void; allView?: boolean }) {
   const debtor = contributorName(names, balance.debtorContributorId);
   const creditor = contributorName(names, balance.creditorContributorId);
   const iOweThis = balance.debtorContributorId === currentContributorId;
@@ -554,11 +731,11 @@ function BalanceCard({ balance, currentContributorId, names, isAdmin, onView, on
   const title = allView
     ? `${debtor} owes ${creditor}`
     : iAmOwedThis ? `${debtor} owes you` : `You owe ${creditor}`;
-  // The person who owes it can now say they have paid; the person owed can
-  // record what they received, which confirms it in one step.
-  const recordLabel = iOweThis
-    ? "I have paid this"
-    : iAmOwedThis ? "Record a payment received" : "Record payment";
+  // The person who owes it can say they have paid; the person owed can record
+  // what they received, which confirms it in one step. Nobody else can record
+  // anything here — including a Global Admin, whose ordinary payment actions
+  // are deliberately identical to everybody else's.
+  const recordLabel = iOweThis ? "I have paid this" : "Record a payment received";
   return (
     <article className="py-4">
       <div className="flex items-baseline justify-between gap-4">
@@ -567,7 +744,7 @@ function BalanceCard({ balance, currentContributorId, names, isAdmin, onView, on
       </div>
       <div className="mt-2.5 flex flex-wrap items-center gap-2">
         <Button variant="ghost" size="sm" onClick={onView}>Why this balance?</Button>
-        {(iOweThis || iAmOwedThis || isAdmin)
+        {(iOweThis || iAmOwedThis)
           ? <Button variant="tonal" size="sm" onClick={onPay}>{recordLabel}</Button>
           : <span className="text-xs font-medium text-ink-400">Only these two can record a payment</span>}
       </div>
@@ -585,9 +762,11 @@ function Breakdown({ pairKeyValue, data, onClose, onPay, onRefresh }: { pairKeyV
   const names = data.contributorNames;
   const explanation = calculatePairBalanceExplanation(ids[0], ids[1], pairObligations, pairSettlements);
   const balance = explanation.currentBalance;
+  // The two people in the balance, and nobody else. An admin looking at
+  // somebody else's pair sees the history and the void control, not a way to
+  // record a payment between them — that lives in Admin tools.
   const canRecord = balance && (
-    data.isAdmin
-    || balance.creditorContributorId === data.currentContributorId
+    balance.creditorContributorId === data.currentContributorId
     || balance.debtorContributorId === data.currentContributorId
   );
 
@@ -709,9 +888,11 @@ function Breakdown({ pairKeyValue, data, onClose, onPay, onRefresh }: { pairKeyV
                             <span>
                               {receipt.source === "migration"
                                 ? "Recorded before confirmations existed"
-                                : receipt.action === "confirm"
-                                  ? `${contributorName(names, receipt.reviewerContributorId)} confirmed ${formatPennies(receipt.amountPennies)}`
-                                  : `${contributorName(names, receipt.reviewerContributorId)} marked ${formatPennies(receipt.amountPennies)} as not received`}
+                                : receipt.source === "admin_override"
+                                  ? `An admin recorded ${formatPennies(receipt.amountPennies)} as confirmed`
+                                  : receipt.action === "confirm"
+                                    ? `${contributorName(names, receipt.reviewerContributorId)} confirmed ${formatPennies(receipt.amountPennies)}`
+                                    : `${contributorName(names, receipt.reviewerContributorId)} marked ${formatPennies(receipt.amountPennies)} as not received`}
                             </span>
                             <time className="shrink-0 tabular-nums">{formatDate(receipt.createdAt)}</time>
                           </li>

@@ -34,6 +34,17 @@ export type PaymentStatus =
   | "rejected"
   | "voided";
 
+/**
+ * How an acknowledgement came about.
+ *
+ *   review          the receiver pressed a button
+ *   auto_receipt    the receiver recorded the payment themselves
+ *   migration       the payment predates confirmations entirely
+ *   admin_override  a Global Admin recorded it as confirmed, with a written
+ *                   reason, without the receiver confirming anything
+ */
+export type PaymentReceiptSource = "review" | "auto_receipt" | "migration" | "admin_override";
+
 /** The minimum a caller must know about a payment to reason about its state. */
 export type PaymentClaim = {
   /** What the payer says they sent. Never rewritten by a review. */
@@ -82,6 +93,17 @@ export function unconfirmedPennies(claim: PaymentClaim): number {
  */
 export function isAwaitingReview(claim: PaymentClaim): boolean {
   return !claim.voidedAt && !claim.rejectedAt && unconfirmedPennies(claim) > 0;
+}
+
+/**
+ * Whether a payment was confirmed by a Global Admin rather than by the person
+ * who was supposed to receive it.
+ *
+ * Read from the receipts, which are the record of what actually happened, so a
+ * screen cannot show "Received" for money nobody acknowledged.
+ */
+export function isAdminConfirmed(receipts: readonly { source: PaymentReceiptSource }[]): boolean {
+  return receipts.some((receipt) => receipt.source === "admin_override");
 }
 
 /** Plain-language labels. No accounting jargon anywhere in the UI. */
@@ -177,4 +199,24 @@ export function reviewPaymentError(code?: string): string {
     return "Payment confirmations are not ready yet. Apply the payment confirmations migration, then refresh.";
   }
   return "This review could not be saved. Nothing was changed.";
+}
+
+/**
+ * The error a failed admin override should be shown as.
+ *
+ * `42501` covers two refusals the admin needs told apart from a general
+ * permission problem: not being an admin at all, and being the payer — an admin
+ * cannot confirm their own payment, which is the point of the whole feature.
+ */
+export function adminPaymentError(code?: string, message?: string): string {
+  if (code === "42501") {
+    return message?.includes("your own payment")
+      ? "You cannot confirm your own payment. Record it normally and let the other person confirm it."
+      : "Only Global Admin can record a confirmed payment on behalf of others.";
+  }
+  if (code === "23514") return "That payment does not fit the current balance between these two people. Refresh and check what is outstanding.";
+  if (code === "42P01" || code === "42883" || code === "PGRST202" || code === "PGRST205") {
+    return "Admin payment tools are not ready yet. Apply the admin payment override migration, then refresh.";
+  }
+  return "This payment could not be recorded. Nothing was changed.";
 }

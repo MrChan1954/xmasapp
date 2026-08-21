@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { isAwaitingReview, payerStatusSummary, paymentStatusLabel, paymentStatusOf, reviewPaymentError, unconfirmedPennies, validateConfirmationAmount, validateRejectionReason } from "./payment-confirmation.ts";
+import { adminPaymentError, isAdminConfirmed, isAwaitingReview, payerStatusSummary, paymentStatusLabel, paymentStatusOf, reviewPaymentError, unconfirmedPennies, validateConfirmationAmount, validateRejectionReason } from "./payment-confirmation.ts";
 
 /**
  * The rules a receiver's review has to obey, and the states a payment can be
@@ -149,4 +149,26 @@ test("the status ladder matches the generated column in migration 021", () => {
   const order = ["'voided'", "'confirmed'", "'partially_confirmed'", "'rejected'", "'pending'"]
     .map((value) => generated.indexOf(value));
   assert.deepEqual([...order].sort((left, right) => left - right), order);
+});
+
+test("an admin-confirmed payment is identifiable from its receipts alone", () => {
+  assert.equal(isAdminConfirmed([]), false);
+  assert.equal(isAdminConfirmed([{ source: "review" }, { source: "auto_receipt" }]), false);
+  assert.equal(isAdminConfirmed([{ source: "migration" }]), false, "history is not an override");
+  assert.equal(isAdminConfirmed([{ source: "review" }, { source: "admin_override" }]), true);
+
+  // The status itself is unaffected: an override produces an ordinary
+  // "confirmed" payment, and it is the receipt that says how it got there.
+  assert.equal(paymentStatusOf({ amountPennies: 2_000, confirmedAmountPennies: 2_000 }), "confirmed");
+});
+
+test("admin override failures are translated, and name the two refusals apart", () => {
+  assert.match(
+    adminPaymentError("42501", "You cannot confirm your own payment. Record it normally..."),
+    /cannot confirm your own payment/,
+  );
+  assert.match(adminPaymentError("42501", "Only Global Admin can record a confirmed payment"), /Only Global Admin/);
+  assert.match(adminPaymentError("23514"), /does not fit the current balance/);
+  assert.match(adminPaymentError("42P01"), /admin payment override migration/i);
+  assert.match(adminPaymentError(), /could not be recorded/);
 });

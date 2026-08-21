@@ -64,17 +64,22 @@ export async function loadPaymentLog(): Promise<PaymentLogResponse> {
   const receiptsResult = settlementIds.length
     ? await session
       .from("payment_receipts")
-      .select("id,settlement_id,action,amount_pennies,reason,source,reviewer_contributor_id,created_at")
+      .select("id,settlement_id,action,amount_pennies,reason,source,reviewed_by_app_member_id,reviewer_contributor_id,created_at")
       .in("settlement_id", settlementIds)
       .order("created_at", { ascending: true })
     : { data: [], error: null };
   if (receiptsResult.error) throw new PaymentLogServerError(503, paymentLogDatabaseError(receiptsResult.error.code));
 
-  const appMemberIds = [...new Set(settlementRows.flatMap((row) => [
-    row.recorded_by_app_member_id,
-    ...(row.reviewed_by_app_member_id ? [row.reviewed_by_app_member_id] : []),
-    ...(row.voided_by_app_member_id ? [row.voided_by_app_member_id] : []),
-  ]))];
+  const appMemberIds = [...new Set([
+    ...settlementRows.flatMap((row) => [
+      row.recorded_by_app_member_id,
+      ...(row.reviewed_by_app_member_id ? [row.reviewed_by_app_member_id] : []),
+      ...(row.voided_by_app_member_id ? [row.voided_by_app_member_id] : []),
+    ]),
+    // An admin override is acted on by somebody who is not the receiver, so the
+    // log has to be able to name them.
+    ...(receiptsResult.data ?? []).map((row) => row.reviewed_by_app_member_id as string),
+  ])];
   const appMembers = appMemberIds.length
     ? await loadAppMembers(appMemberIds)
     : [];
@@ -108,6 +113,7 @@ export async function loadPaymentLog(): Promise<PaymentLogResponse> {
       amountPennies: row.amount_pennies,
       reason: row.reason,
       source: row.source,
+      actedByName: namesByAppMemberId.get(row.reviewed_by_app_member_id) ?? "Unknown member (record link missing)",
       reviewerName: namesByContributorId.get(row.reviewer_contributor_id) ?? "Unknown contributor (record link missing)",
       createdAt: row.created_at,
     };

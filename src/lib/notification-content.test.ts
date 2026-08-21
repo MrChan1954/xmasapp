@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { giftIdeaAddedNotification, giftStatusNotification, owedToYouNotification, paymentAwaitingConfirmationNotification, paymentClaimedNotification, paymentRecordedNotification, paymentReviewNotification, personUrl, purchaseAddedNotification, shortName, youOweNotification } from "./notification-content.ts";
+import { giftIdeaAddedNotification, giftStatusNotification, owedToYouNotification, paymentAdminOverrideNotification, paymentAwaitingConfirmationNotification, paymentClaimedNotification, paymentRecordedNotification, paymentReviewNotification, personUrl, purchaseAddedNotification, shortName, youOweNotification } from "./notification-content.ts";
 
 /**
  * These read like copy tests, and partly they are — but the assertions that
@@ -159,4 +159,30 @@ test("a rejection reason is kept off the lock screen and inside the app", () => 
     receiptId: "r3",
   });
   assert.ok((long.inAppBody ?? "").length <= 300, "the notifications table caps a body at 300 characters");
+});
+
+test("an admin override says who did it, and does not put words in anybody's mouth", () => {
+  const toPayer = paymentAdminOverrideNotification({
+    adminName: "Taylor", payerName: "Jade", payeeName: "Paige",
+    amountPennies: 2000, audience: "payer", settlementId: "s1",
+  });
+  const toPayee = paymentAdminOverrideNotification({
+    adminName: "Taylor", payerName: "Jade", payeeName: "Paige",
+    amountPennies: 2000, audience: "payee", settlementId: "s1",
+  });
+
+  assert.equal(toPayer.title, "\u{1F4B7} Payment recorded by an admin");
+  assert.equal(toPayer.body, "Taylor recorded a confirmed £20 payment from you to Paige.");
+  assert.equal(toPayer.category, "money_i_owe");
+  assert.equal(toPayee.body, "Taylor recorded a confirmed £20 payment from Jade to you.");
+  assert.equal(toPayee.category, "money_owed_to_me");
+
+  // The reason an admin gave is never part of the message: it is free text,
+  // and this renders on a lock screen.
+  for (const payload of [toPayer, toPayee]) {
+    assert.doesNotMatch(payload.body, /says they paid/);
+    assert.equal(payload.inAppBody, undefined);
+    assert.equal(payload.url, "/owed");
+    assert.ok(payload.title.length <= 60 && payload.body.length <= 120);
+  }
 });

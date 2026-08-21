@@ -199,3 +199,50 @@ test("9: voiding a confirmed payment returns its confirmed amount to the balance
   ]);
   assert.equal(balances[0].amountPennies, 5_000);
 });
+
+/*
+ * The admin override, as balances.
+ *
+ * The engine is deliberately blind to who recorded a payment and to what role
+ * they hold: it reads `confirmedAmountPennies` and nothing else. That is the
+ * property these two tests pin, because it is what makes both halves of the
+ * feature true at once -- an admin's own claim moves nothing, and an admin's
+ * override moves the balance the moment it is written.
+ */
+
+test("10: a Global Admin's own claim is a claim, and moves no balance", () => {
+  // Taylor is the Global Admin and the person being paid; Jade is the payer.
+  // Reversed, Taylor as admin says he paid Jade: still zero confirmed, so the
+  // balance does not budge. Being an admin is not an input to this function.
+  const adminAsPayer = calculateNetOwedBalances(
+    [{ debtorContributorId: "taylor", creditorContributorId: "jade", amountPennies: 2_000 }],
+    [{ payerContributorId: "taylor", payeeContributorId: "jade", amountPennies: 2_000, confirmedAmountPennies: 0 }],
+  );
+  assert.equal(adminAsPayer[0].amountPennies, 2_000, "an admin's claim is still only a claim");
+  assert.equal(adminAsPayer[0].debtorContributorId, "taylor");
+});
+
+test("11: an admin override reduces the balance immediately, by its confirmed amount", () => {
+  // `admin_record_confirmed_payment` writes confirmed = claimed at creation,
+  // so the very first read after it lands is already reduced -- no review step
+  // stands between the override and the balance.
+  const override = calculateNetOwedBalances(JADE_OWES_TAYLOR_50, [
+    { payerContributorId: "jade", payeeContributorId: "taylor", amountPennies: 2_000, confirmedAmountPennies: 2_000 },
+  ]);
+  assert.equal(override[0].amountPennies, 3_000);
+
+  // And it nets against ordinary money in the same pair without any special
+  // handling, because the ledger has no notion of where a confirmation came
+  // from: £20 by override plus £12 confirmed of a £20 claim clears £32.
+  const alongsideOrdinary = calculateNetOwedBalances(JADE_OWES_TAYLOR_50, [
+    { payerContributorId: "jade", payeeContributorId: "taylor", amountPennies: 2_000, confirmedAmountPennies: 2_000 },
+    { payerContributorId: "jade", payeeContributorId: "taylor", amountPennies: 2_000, confirmedAmountPennies: 1_200 },
+  ]);
+  assert.equal(alongsideOrdinary[0].amountPennies, 5_000 - 3_200);
+
+  // Voiding an override returns the money, exactly as for any other payment.
+  const voided = calculateNetOwedBalances(JADE_OWES_TAYLOR_50, [
+    { payerContributorId: "jade", payeeContributorId: "taylor", amountPennies: 2_000, confirmedAmountPennies: 2_000, voidedAt: "2026-08-21T09:00:00Z" },
+  ]);
+  assert.equal(voided[0].amountPennies, 5_000);
+});

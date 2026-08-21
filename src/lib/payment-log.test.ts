@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { emptyPaymentFilters, filterPaymentRecords, isAwaitingConfirmation, sortPaymentRecords, summarizePaymentRecords, unconfirmedAmountPennies, type PaymentLogRecord } from "./payment-log.ts";
+import { adminOverrideReason, emptyPaymentFilters, filterPaymentRecords, isAdminConfirmedPayment, isAwaitingConfirmation, sortPaymentRecords, summarizePaymentRecords, unconfirmedAmountPennies, type PaymentLogRecord } from "./payment-log.ts";
 
 /**
  * A record with sensible defaults, so each fixture below states only the thing
@@ -88,7 +88,7 @@ const partlyConfirmed = record({
   confirmedAt: null,
   lastReviewedAt: "2026-08-10T19:00:00Z",
   receipts: [
-    { id: "r-1", action: "confirm", amountPennies: 1_200, reason: null, source: "review", reviewerName: "Taylor", createdAt: "2026-08-10T19:00:00Z" },
+    { id: "r-1", action: "confirm", amountPennies: 1_200, reason: null, source: "review", actedByName: "Taylor", reviewerName: "Taylor", createdAt: "2026-08-10T19:00:00Z" },
   ],
 });
 
@@ -125,7 +125,7 @@ const rejected = record({
   rejectedAt: "2026-08-10T22:00:00Z",
   rejectionReason: "Nothing has arrived in my bank yet.",
   receipts: [
-    { id: "r-2", action: "reject", amountPennies: 2_000, reason: "Nothing has arrived in my bank yet.", source: "review", reviewerName: "Taylor", createdAt: "2026-08-10T22:00:00Z" },
+    { id: "r-2", action: "reject", amountPennies: 2_000, reason: "Nothing has arrived in my bank yet.", source: "review", actedByName: "Taylor", reviewerName: "Taylor", createdAt: "2026-08-10T22:00:00Z" },
   ],
 });
 
@@ -242,4 +242,62 @@ test("the full audit trail survives on the record itself", () => {
   assert.equal(partlyConfirmed.receipts[0].reviewerName, "Taylor");
   assert.equal(rejected.rejectionReason, "Nothing has arrived in my bank yet.");
   assert.equal(rejected.receipts[0].action, "reject");
+});
+
+/** Kirsten (Global Admin) reconciled £20 Jade paid Paige outside the app. */
+const adminConfirmed = record({
+  id: "admin-confirmed",
+  payerContributorId: "jade",
+  payerName: "Jade",
+  payeeContributorId: "paige",
+  payeeName: "Paige",
+  amountPennies: 2_000,
+  confirmedAmountPennies: 2_000,
+  recordedByAppMemberId: "kirsten-member",
+  recordedByName: "Kirsten",
+  recordedAt: "2026-08-10T23:00:00Z",
+  reviewedByAppMemberId: "kirsten-member",
+  reviewedByName: "Kirsten",
+  receipts: [
+    {
+      id: "r-3",
+      action: "confirm",
+      amountPennies: 2_000,
+      reason: "Payment confirmed outside the app",
+      source: "admin_override",
+      actedByName: "Kirsten",
+      reviewerName: "Paige",
+      createdAt: "2026-08-10T23:00:00Z",
+    },
+  ],
+});
+
+test("an admin override is never indistinguishable from an ordinary confirmation", () => {
+  assert.equal(isAdminConfirmedPayment(adminConfirmed), true);
+  assert.equal(adminOverrideReason(adminConfirmed), "Payment confirmed outside the app");
+
+  // Everything the audit trail has to keep.
+  assert.equal(adminConfirmed.payerName, "Jade");
+  assert.equal(adminConfirmed.payeeName, "Paige");
+  assert.equal(adminConfirmed.amountPennies, 2_000);
+  assert.equal(adminConfirmed.paymentDate, "2026-08-10");
+  assert.equal(adminConfirmed.receipts[0].actedByName, "Kirsten", "the admin who did it");
+  assert.equal(adminConfirmed.receipts[0].reviewerName, "Paige", "whose acknowledgement was stood in for");
+  assert.ok(adminConfirmed.receipts[0].createdAt);
+
+  // Ordinary payments are not mislabelled by it.
+  for (const ordinary of [...records, pending, partlyConfirmed, rejected]) {
+    assert.equal(isAdminConfirmedPayment(ordinary), false, ordinary.id);
+    assert.equal(adminOverrideReason(ordinary), null, ordinary.id);
+  }
+});
+
+test("an admin override still counts as confirmed money in the totals", () => {
+  // It settled a real debt, so it belongs in the confirmed figure -- the badge
+  // is what tells the reader how it got there, not a separate column of money.
+  const summary = summarizePaymentRecords([adminConfirmed]);
+  assert.equal(summary.confirmedAmountPennies, 2_000);
+  assert.equal(summary.awaitingAmountPennies, 0);
+  assert.equal(summary.recordCount, 1);
+  assert.equal(isAwaitingConfirmation(adminConfirmed), false);
 });

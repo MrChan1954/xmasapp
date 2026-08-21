@@ -25,7 +25,7 @@
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { contributorOwedSummary, pairKey, type NetOwedBalance } from "./owed.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { giftIdeaAddedNotification, giftStatusNotification, owedToYouNotification, paymentAwaitingConfirmationNotification, paymentClaimedNotification, paymentRecordedNotification, paymentReviewNotification, purchaseAddedNotification, shortName, youOweNotification, type NotificationPayload } from "./notification-content.ts";
+import { giftIdeaAddedNotification, giftStatusNotification, owedToYouNotification, paymentAdminOverrideNotification, paymentAwaitingConfirmationNotification, paymentClaimedNotification, paymentRecordedNotification, paymentReviewNotification, purchaseAddedNotification, shortName, youOweNotification, type NotificationPayload } from "./notification-content.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { formatPennies } from "./currency.ts";
 
@@ -175,6 +175,12 @@ export type PaymentEvent = {
    * acknowledgement in one step.
    */
   confirmedAmountPennies: number;
+  /**
+   * True when a Global Admin created this already confirmed through the
+   * override, rather than either side recording it. Both people are told, in
+   * wording that does not put words in anybody's mouth.
+   */
+  adminOverride?: boolean;
 };
 
 /**
@@ -189,6 +195,9 @@ export type PaymentEvent = {
  *                          imply otherwise.
  *   ALREADY CONFIRMED      the receiver recorded it themselves, so the payer is
  *                          the one who has not heard. Unchanged from before.
+ *   ADMIN OVERRIDE         a Global Admin put money in the ledger that moved
+ *                          outside the app. Both people are told, and told that
+ *                          is what happened.
  *
  * The claim is always named after the PAYER, never after whoever pressed Save.
  */
@@ -199,6 +208,15 @@ export function planPaymentNotifications(
   const planned: PlannedNotification[] = [];
   const awaitingConfirmation = event.confirmedAmountPennies < event.amountPennies;
 
+  const overridePayload = (audience: "payer" | "payee") => paymentAdminOverrideNotification({
+    adminName: shortName(event.actorName),
+    payerName: shortName(event.payerName),
+    payeeName: shortName(event.payeeName),
+    amountPennies: event.amountPennies,
+    audience,
+    settlementId: event.settlementId,
+  });
+
   for (const member of members) {
     if (member.appMemberId === event.actorAppMemberId) continue;
     if (!member.contributorId) continue;
@@ -206,36 +224,45 @@ export function planPaymentNotifications(
     if (member.contributorId === event.payerContributorId && member.preferences.money_i_owe) {
       planned.push({
         appMemberId: member.appMemberId,
-        payload: awaitingConfirmation
-          ? paymentAwaitingConfirmationNotification({
-            payeeName: shortName(event.payeeName),
-            amountPennies: event.amountPennies,
-            settlementId: event.settlementId,
-          })
-          : paymentRecordedNotification({
-            actorName: shortName(event.actorName),
-            amountPennies: event.amountPennies,
-            audience: "payer",
-            settlementId: event.settlementId,
-          }),
+        payload: event.adminOverride
+          ? overridePayload("payer")
+          : awaitingConfirmation
+            // Reachable only if the rules ever widen again: today the database
+            // lets nobody but the payer or the payee record a payment, so a
+            // pending claim always has the payer as its actor. Kept because the
+            // sentence is the correct one for any claim the payer did not
+            // record, and losing it would leave them silently uninformed.
+            ? paymentAwaitingConfirmationNotification({
+              payeeName: shortName(event.payeeName),
+              amountPennies: event.amountPennies,
+              settlementId: event.settlementId,
+            })
+            : paymentRecordedNotification({
+              actorName: shortName(event.actorName),
+              amountPennies: event.amountPennies,
+              audience: "payer",
+              settlementId: event.settlementId,
+            }),
       });
     }
 
     if (member.contributorId === event.payeeContributorId && member.preferences.money_owed_to_me) {
       planned.push({
         appMemberId: member.appMemberId,
-        payload: awaitingConfirmation
-          ? paymentClaimedNotification({
-            payerName: shortName(event.payerName),
-            amountPennies: event.amountPennies,
-            settlementId: event.settlementId,
-          })
-          : paymentRecordedNotification({
-            actorName: shortName(event.actorName),
-            amountPennies: event.amountPennies,
-            audience: "payee",
-            settlementId: event.settlementId,
-          }),
+        payload: event.adminOverride
+          ? overridePayload("payee")
+          : awaitingConfirmation
+            ? paymentClaimedNotification({
+              payerName: shortName(event.payerName),
+              amountPennies: event.amountPennies,
+              settlementId: event.settlementId,
+            })
+            : paymentRecordedNotification({
+              actorName: shortName(event.actorName),
+              amountPennies: event.amountPennies,
+              audience: "payee",
+              settlementId: event.settlementId,
+            }),
       });
     }
   }
