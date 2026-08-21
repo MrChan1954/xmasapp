@@ -24,9 +24,18 @@ single point of failure.
 `COPY <table> (...) FROM stdin;` blocks rather than per-row `INSERT`s. That
 restores far faster, and it gives verification something structural to count.
 
+The manifest records `copy_blocks`, `public_copy_blocks`, `data_rows` and
+`core_tables`.
+
 > `copy_blocks` is not the number to look at — `pg_dump` writes a COPY header
 > for every table including empty ones. **`data_rows` is the one that tells you
-> the backup has content.**
+> the backup has content**, and `core_tables` tells you it is *this* app's data.
+
+Note that the Supabase CLI dumps with `--quote-all-identifiers`, so real headers
+look like `COPY "public"."people" ("id", "name") FROM stdin;`. Verification uses
+`scripts/verify-backup-dump.awk`, which parses the header rather than matching a
+fixed string — two early backup runs were wrongly rejected by a `grep` that
+assumed unquoted identifiers.
 
 ## What is **not** backed up
 

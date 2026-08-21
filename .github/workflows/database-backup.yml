@@ -63,6 +63,14 @@ jobs:
           echo "Trigger: ${{ github.event_name }}"
           echo "Reason:  ${{ github.event.inputs.reason || 'Scheduled daily backup' }}"
 
+      # The dump verifier lives in scripts/verify-backup-dump.awk, so the
+      # workspace is needed. Nothing else in this job reads the checkout, and
+      # the dumps are still written to RUNNER_TEMP, never here.
+      - name: Check out the verification script
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Check the connection string secret is present and usable
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
@@ -190,38 +198,49 @@ jobs:
             fi
           done
 
-          # The data dump must be in COPY format. If this fails, --use-copy was
-          # dropped from the dump command or the CLI ignored it.
-          COPY_BLOCKS=$(grep -cE "^COPY public\." "${DIR}/data.sql" || true)
+          # The data dump is summarised by scripts/verify-backup-dump.awk, which
+          # parses COPY headers properly instead of assuming their exact text.
+          #
+          # This is the second time this step has rejected a perfectly good
+          # backup. The greps that used to live here looked for
+          # `^COPY public\.`, but the Supabase CLI runs pg_dump with
+          # --quote-all-identifiers, so the real header is
+          # `COPY "public"."people" ("id", ...) FROM stdin;`. The parser matches
+          # on the two ends of the line -- starts with COPY, finishes with
+          # FROM stdin; -- and unquotes whatever identifier is in between, so
+          # quoted, unquoted and mixed forms are all read correctly.
+          #
+          # It prints aggregates only. Row contents never reach the log.
+          SUMMARY=$(awk \
+            -v CORE='^(people|contributors|christmas_recipients|app_members|purchases|settlements)$' \
+            -f scripts/verify-backup-dump.awk \
+            "${DIR}/data.sql")
+          read -r COPY_BLOCKS PUBLIC_BLOCKS DATA_ROWS CORE_COUNT CORE_TABLES <<< "$SUMMARY"
+          echo "data.sql: ${COPY_BLOCKS} COPY blocks (${PUBLIC_BLOCKS} in public), ${DATA_ROWS} rows, core tables present: ${CORE_TABLES}"
+
+          # 1. It must be in COPY format at all. If this fails, --use-copy was
+          #    dropped from the dump command or the CLI ignored it.
           if [ "$COPY_BLOCKS" -eq 0 ]; then
             echo "::error::data.sql contains no COPY statements. The dump command must pass --use-copy."
             FAILED=1
           fi
 
-          # ...and it must carry actual ROWS. This is the check that matters:
-          # pg_dump writes a COPY header for every table it dumps INCLUDING
-          # empty ones, so counting headers proves only that tables exist. A
-          # dump that ran against the wrong database, or lost its permissions
-          # part-way, produces a file full of empty COPY blocks and a zero exit
-          # code -- indistinguishable from a good backup until the day it is
-          # needed.
-          #
-          # Rows are the lines between a COPY header and its `\.` terminator.
-          DATA_ROWS=$(awk '
-            /^COPY [^ ]+ .*FROM stdin;$/ { inblock = 1; next }
-            inblock && /^\\\.$/          { inblock = 0; next }
-            inblock && NF                { rows++ }
-            END                          { print rows + 0 }
-          ' "${DIR}/data.sql")
+          # 2. It must carry actual ROWS. This is the check that matters:
+          #    pg_dump writes a COPY header for every table it dumps INCLUDING
+          #    empty ones, so counting headers proves only that tables exist. A
+          #    dump that ran against the wrong database, or lost its permissions
+          #    part-way, produces a file full of empty COPY blocks and a zero
+          #    exit code -- indistinguishable from a good backup until the day
+          #    it is needed.
           if [ "$DATA_ROWS" -eq 0 ]; then
             echo "::error::data.sql has ${COPY_BLOCKS} COPY blocks but not a single row of data. Treating this backup as invalid."
             FAILED=1
           fi
 
-          # And the rows must include application data, not just bookkeeping
-          # tables. At least one of the tables the Christmas app is actually
-          # about has to be present.
-          if ! grep -qE "^COPY public\.(people|contributors|christmas_recipients|app_members|purchases|settlements)\b" "${DIR}/data.sql"; then
+          # 3. Those rows must include application data, not just bookkeeping
+          #    tables. At least one of the tables the Christmas app is actually
+          #    about has to be present, in the public schema.
+          if [ "$CORE_COUNT" -eq 0 ]; then
             echo "::error::data.sql contains no COPY block for any core application table. Treating this backup as invalid."
             FAILED=1
           fi
@@ -236,7 +255,9 @@ jobs:
             echo "schema_bytes: $(wc -c < "${DIR}/schema.sql")"
             echo "data_bytes: $(wc -c < "${DIR}/data.sql")"
             echo "copy_blocks: ${COPY_BLOCKS}"
+            echo "public_copy_blocks: ${PUBLIC_BLOCKS}"
             echo "data_rows: ${DATA_ROWS}"
+            echo "core_tables: ${CORE_TABLES}"
           } > "${DIR}/MANIFEST.txt"
 
           echo "Verified backup contents:"

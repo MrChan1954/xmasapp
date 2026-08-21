@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync, existsSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -22,6 +25,7 @@ const root = process.cwd();
 const workflowPath = join(root, ".github", "workflows", "database-backup.yml");
 const docsPath = join(root, "docs", "database-backups.md");
 const workflow = existsSync(workflowPath) ? readFileSync(workflowPath, "utf8") : "";
+const parserPath = join(root, "scripts", "verify-backup-dump.awk");
 
 test("the backup workflow exists", () => {
   assert.ok(existsSync(workflowPath), "the daily database backup workflow must exist");
@@ -98,8 +102,9 @@ test("a failed dump cannot be mistaken for a successful backup", () => {
   ]) {
     assert.ok(verify.includes(table), `the schema check must require ${table}`);
   }
-  // A data dump with no rows in it fails.
-  assert.match(verify, /COPY public\\\./, "the data dump must be required to contain rows");
+  // A data dump with no rows in it fails. (The COPY parsing itself is covered
+  // by the fixture-driven tests further down, which run the real parser.)
+  assert.match(verify, /DATA_ROWS/, "the data dump must be required to contain rows");
   assert.match(verify, /exit 1/, "a failed check must fail the run");
   assert.match(verify, /::error::/, "failures must be annotated so they are visible in the run summary");
 
@@ -161,37 +166,56 @@ test("the data dump is written in COPY format", () => {
   }
 });
 
-test("a hollow data dump is rejected even though its COPY headers look right", () => {
+test("the data dump is summarised by a real parser, not a fragile grep", () => {
   const verifyAt = workflow.indexOf("- name: Verify the dump is real");
   const verify = workflow.slice(verifyAt, workflow.indexOf("uses: actions/upload-artifact"));
 
-  // pg_dump writes a COPY header for EVERY table it dumps, including empty
-  // ones. Counting headers therefore proves only that tables exist -- a dump
-  // that ran against the wrong database produces a file full of empty COPY
-  // blocks and exits zero. Rows are what has to be counted.
-  assert.match(verify, /COPY_BLOCKS=/, "COPY blocks must be counted");
-  assert.match(verify, /DATA_ROWS=/, "and actual rows must be counted separately");
-  assert.match(verify, /awk '/, "row counting needs to walk the COPY blocks");
-  assert.match(verify, /inblock && NF\s+\{ rows\+\+ \}/, "a row is a non-empty line inside a COPY block");
-  assert.match(verify, /inblock && \/\^\\\\\\.\$\//, "the block ends at the \\. terminator");
+  // Two runs were rejected by greps that assumed the exact text of a COPY
+  // header. The parser is now a file the tests below actually execute.
+  assert.ok(existsSync(parserPath), "the dump parser must exist");
+  assert.match(verify, /-f scripts\/verify-backup-dump\.awk/, "verification must use the parser");
+  assert.match(verify, /read -r COPY_BLOCKS PUBLIC_BLOCKS DATA_ROWS CORE_COUNT CORE_TABLES/);
+  // The parser needs the repository on disk.
+  assert.match(workflow, /uses: actions\/checkout@v\d/, "the workspace must be checked out");
 
-  // Both counts must be able to fail the run independently.
-  assert.match(verify, /if \[ "\$COPY_BLOCKS" -eq 0 \]/);
-  assert.match(verify, /if \[ "\$DATA_ROWS" -eq 0 \]/);
-  assert.match(verify, /::error::[^\n]*--use-copy/, "a format failure must name its cause");
-  assert.match(verify, /::error::[^\n]*not a single row of data/, "a hollow dump must say so");
-
-  // At least one table the app is actually about must be present.
-  assert.match(
+  // No `^COPY public\.`-style assumption may survive anywhere in the workflow.
+  assert.doesNotMatch(
     verify,
-    /\^COPY public\\\.\(people\|contributors\|christmas_recipients\|app_members\|purchases\|settlements\)/,
-    "a core application table must appear in the data dump",
+    /grep[^\n]*\^COPY/,
+    "COPY headers must not be matched by grep against an assumed exact form",
   );
 
-  // The manifest records both figures, so a backup can be spot-checked without
+  // Three independent failure conditions, each able to fail the run.
+  assert.match(verify, /if \[ "\$COPY_BLOCKS" -eq 0 \]/);
+  assert.match(verify, /if \[ "\$DATA_ROWS" -eq 0 \]/);
+  assert.match(verify, /if \[ "\$CORE_COUNT" -eq 0 \]/);
+  assert.match(verify, /::error::[^\n]*--use-copy/, "a format failure must name its cause");
+  assert.match(verify, /::error::[^\n]*not a single row of data/, "a hollow dump must say so");
+  assert.match(verify, /::error::[^\n]*core application table/, "a scope failure must say so");
+
+  // The core-table list is passed to the parser, not embedded in a grep.
+  assert.match(
+    verify,
+    /-v CORE='\^\(people\|contributors\|christmas_recipients\|app_members\|purchases\|settlements\)\$'/,
+  );
+
+  // The manifest records the figures, so a backup can be spot-checked without
   // being unpacked.
-  assert.match(verify, /copy_blocks: \$\{COPY_BLOCKS\}/);
-  assert.match(verify, /data_rows: \$\{DATA_ROWS\}/);
+  for (const field of ["copy_blocks", "public_copy_blocks", "data_rows", "core_tables"]) {
+    assert.match(verify, new RegExp(`${field}: \\$\\{`), `MANIFEST must record ${field}`);
+  }
+});
+
+test("the parser never prints row contents", () => {
+  const parser = readFileSync(parserPath, "utf8");
+  // Rows are the family's purchases and payments, and this runs in a public
+  // CI log. Only aggregates and table names may be emitted.
+  const prints = parser.match(/^\s*(print|printf)[^\n]*/gm) ?? [];
+  assert.equal(prints.length, 1, "exactly one output statement, in END");
+  assert.match(prints[0], /printf "%d %d %d %d %s\\n"/, "counts and table names only");
+  assert.doesNotMatch(parser, /print\s+\$0/, "a row must never be echoed");
+  // Row lines are counted, never captured.
+  assert.match(parser, /in_block && NF\s*\{\s*\n?\s*rows\+\+/);
 });
 
 test("the connection string is checked for the failure modes that cannot dump", () => {
@@ -297,4 +321,210 @@ test("the backup is documented, including what it does not cover", () => {
   // sound, not just the commands that load it.
   assert.ok(docs.includes("responsibility_pennies"), "restore verification must check allocations");
   assert.ok(docs.includes("confirmed_amount_pennies"), "restore verification must check payments");
+});
+
+// ---------------------------------------------------------------------------
+// The dump parser, run for real
+// ---------------------------------------------------------------------------
+// Everything above asserts what the workflow SAYS. These run the actual parser
+// the workflow runs, against dumps in every shape pg_dump can produce.
+//
+// This is the part that was missing when two good backups were rejected: the
+// checks were greps asserting an exact header string, and no test ever fed a
+// real COPY header through them. The specific break was
+// --quote-all-identifiers, which the Supabase CLI passes, so the header is
+// `COPY "public"."people" (...) FROM stdin;` and `^COPY public\.` matched none.
+
+const CORE_PATTERN = "^(people|contributors|christmas_recipients|app_members|purchases|settlements)$";
+
+/** The exact policy the workflow applies to the parser's output. */
+function verdictFor(source) {
+  if (source.length === 0) return { accepted: false, reasons: ["empty file"] };
+
+  const fixture = join(tmpdir(), `dump-fixture-${createHash("sha256").update(source).digest("hex").slice(0, 16)}.sql`);
+  writeFileSync(fixture, source);
+  let summary;
+  try {
+    summary = execFileSync("awk", ["-v", `CORE=${CORE_PATTERN}`, "-f", parserPath, fixture], {
+      encoding: "utf8",
+    }).trim();
+  } finally {
+    rmSync(fixture, { force: true });
+  }
+
+  const [blocks, publicBlocks, rows, coreCount, coreTables] = summary.split(" ");
+  const reasons = [];
+  if (Number(blocks) === 0) reasons.push("no COPY statements");
+  if (Number(rows) === 0) reasons.push("no rows");
+  if (Number(coreCount) === 0) reasons.push("no core table");
+  return {
+    accepted: reasons.length === 0,
+    reasons,
+    blocks: Number(blocks),
+    publicBlocks: Number(publicBlocks),
+    rows: Number(rows),
+    coreTables,
+  };
+}
+
+/** gawk/mawk ships with Git Bash and with every ubuntu runner. */
+const awkAvailable = (() => {
+  try {
+    execFileSync("awk", ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    try {
+      execFileSync("awk", ["BEGIN{}"], { stdio: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+})();
+
+test("the parser accepts unquoted COPY identifiers", (t) => {
+  if (!awkAvailable) return t.skip("awk is not available on this machine");
+  const verdict = verdictFor(
+    'COPY public.people (id, name) FROM stdin;\n1\tTaylor\n2\tJade\n\\.\n',
+  );
+  assert.equal(verdict.accepted, true, verdict.reasons.join(", "));
+  assert.equal(verdict.rows, 2);
+  assert.equal(verdict.coreTables, "people");
+});
+
+test("the parser accepts fully quoted COPY identifiers", (t) => {
+  if (!awkAvailable) return t.skip("awk is not available on this machine");
+  // THE FORM THAT BROKE TWO BACKUP RUNS. The Supabase CLI runs pg_dump with
+  // --quote-all-identifiers, so this is what production actually produces.
+  const verdict = verdictFor(
+    'COPY "public"."people" ("id", "name") FROM stdin;\n1\tTaylor\n2\tJade\n3\tPaige\n\\.\n',
+  );
+  assert.equal(verdict.accepted, true, verdict.reasons.join(", "));
+  assert.equal(verdict.blocks, 1);
+  assert.equal(verdict.rows, 3);
+  assert.equal(verdict.coreTables, "people");
+});
+
+test("the parser accepts mixed quoted and unquoted identifiers", (t) => {
+  if (!awkAvailable) return t.skip("awk is not available on this machine");
+  // Both mixtures, plus a header with no column list at all.
+  const verdict = verdictFor([
+    'COPY public."people" (id) FROM stdin;',
+    "1",
+    "\\.",
+    "",
+    'COPY "public".settlements ("id") FROM stdin;',
+    "aaa",
+    "\\.",
+    "",
+    'COPY "public"."purchases" FROM stdin;',
+    "bbb",
+    "\\.",
+    "",
+  ].join("\n"));
+  assert.equal(verdict.accepted, true, verdict.reasons.join(", "));
+  assert.equal(verdict.blocks, 3);
+  assert.equal(verdict.rows, 3);
+  assert.deepEqual(verdict.coreTables.split(",").sort(), ["people", "purchases", "settlements"]);
+});
+
+test("the parser rejects a hollow dump of empty COPY blocks", (t) => {
+  if (!awkAvailable) return t.skip("awk is not available on this machine");
+  // The failure mode the row count exists for: every table present, no data.
+  // A header-counting check would call this a healthy backup.
+  const verdict = verdictFor([
+    'COPY "public"."people" ("id") FROM stdin;',
+    "\\.",
+    'COPY "public"."purchases" ("id") FROM stdin;',
+    "\\.",
+    "",
+  ].join("\n"));
+  assert.equal(verdict.accepted, false);
+  assert.equal(verdict.blocks, 2, "the headers are there...");
+  assert.equal(verdict.rows, 0, "...but there is no data behind them");
+  assert.ok(verdict.reasons.includes("no rows"));
+});
+
+test("the parser rejects an INSERT-only dump", (t) => {
+  if (!awkAvailable) return t.skip("awk is not available on this machine");
+  // What `--data-only` produces WITHOUT `--use-copy`.
+  const verdict = verdictFor([
+    "--",
+    "-- Data for Name: people; Type: TABLE DATA; Schema: public",
+    "--",
+    "",
+    "INSERT INTO \"public\".\"people\" (\"id\", \"name\") VALUES (1, 'Taylor');",
+    "INSERT INTO \"public\".\"people\" (\"id\", \"name\") VALUES (2, 'Jade');",
+    "",
+  ].join("\n"));
+  assert.equal(verdict.accepted, false);
+  assert.equal(verdict.blocks, 0);
+  assert.ok(verdict.reasons.includes("no COPY statements"));
+});
+
+test("the parser rejects an empty file", (t) => {
+  if (!awkAvailable) return t.skip("awk is not available on this machine");
+  assert.equal(verdictFor("").accepted, false);
+});
+
+test("the parser rejects a dump of unrelated tables only", (t) => {
+  if (!awkAvailable) return t.skip("awk is not available on this machine");
+  // Real COPY blocks with real rows, but nothing the Christmas app is about.
+  // A dump scoped to the wrong tables is not a backup of this application.
+  const verdict = verdictFor([
+    'COPY "public"."notification_outbox" ("id") FROM stdin;',
+    "x",
+    "\\.",
+    "",
+  ].join("\n"));
+  assert.equal(verdict.accepted, false);
+  assert.equal(verdict.rows, 1, "there is data...");
+  assert.equal(verdict.coreTables, "-", "...but none of it is application data");
+  assert.ok(verdict.reasons.includes("no core table"));
+});
+
+test("the parser does not count another schema as application data", (t) => {
+  if (!awkAvailable) return t.skip("awk is not available on this machine");
+  const verdict = verdictFor('COPY "auth"."users" ("id") FROM stdin;\nx\n\\.\n');
+  assert.equal(verdict.accepted, false);
+  assert.equal(verdict.blocks, 1, "it is a COPY block...");
+  assert.equal(verdict.publicBlocks, 0, "...but not in public");
+  assert.ok(verdict.reasons.includes("no core table"));
+});
+
+test("a realistic production dump is accepted", (t) => {
+  if (!awkAvailable) return t.skip("awk is not available on this machine");
+  // Quoted identifiers throughout, one legitimately empty table, comment
+  // banners and blank lines between blocks — the shape pg_dump really emits.
+  const verdict = verdictFor([
+    "--",
+    "-- Data for Name: people; Type: TABLE DATA; Schema: public; Owner: postgres",
+    "--",
+    "",
+    'COPY "public"."people" ("id", "name") FROM stdin;',
+    "1\tTaylor",
+    "2\tJade",
+    "\\.",
+    "",
+    "",
+    'COPY "public"."purchase_allocations" ("purchase_id", "contributor_id", "responsibility_pennies") FROM stdin;',
+    "p1\tc1\t2359",
+    "p1\tc2\t2359",
+    "p1\tc3\t2358",
+    "\\.",
+    "",
+    "",
+    'COPY "public"."settlements" ("id", "amount_pennies") FROM stdin;',
+    "s1\t2359",
+    "\\.",
+    "",
+    "",
+    'COPY "public"."notification_outbox" ("id") FROM stdin;',
+    "\\.",
+    "",
+  ].join("\n"));
+  assert.equal(verdict.accepted, true, verdict.reasons.join(", "));
+  assert.equal(verdict.blocks, 4, "four tables dumped");
+  assert.equal(verdict.rows, 6, "the empty table contributes no rows");
+  assert.deepEqual(verdict.coreTables.split(",").sort(), ["people", "settlements"]);
 });
