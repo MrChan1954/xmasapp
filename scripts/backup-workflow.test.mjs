@@ -102,6 +102,10 @@ test("a failed dump cannot be mistaken for a successful backup", () => {
   assert.match(verify, /COPY public\\\./, "the data dump must be required to contain rows");
   assert.match(verify, /exit 1/, "a failed check must fail the run");
   assert.match(verify, /::error::/, "failures must be annotated so they are visible in the run summary");
+
+  // roles.sql and schema.sql validation must survive every change to the data
+  // checks -- all three files are needed to restore.
+  assert.match(verify, /for FILE in roles\.sql schema\.sql data\.sql/, "all three dumps must be size-checked");
 });
 
 test("credentials are never echoed and dumps never enter the repository", () => {
@@ -126,6 +130,68 @@ test("credentials are never echoed and dumps never enter the repository", () => 
   assert.doesNotMatch(workflow, /psql[^\n]*-f /, "restoring is a documented manual procedure, never a workflow");
   assert.doesNotMatch(workflow, /supabase db (reset|push)/, "this workflow must not write to any database");
   assert.doesNotMatch(workflow, /--data-only[^\n]*--clean/, "no destructive dump flags");
+});
+
+test("the data dump is written in COPY format", () => {
+  // The first manual run failed verification because it was not. Without
+  // `--use-copy` the Supabase CLI writes per-row INSERT statements, and the
+  // verification below looks for COPY blocks. The dump was good; the command
+  // and the check disagreed about format.
+  const dataStep = workflow
+    .split(/^ {6}- name: /m)
+    .find((step) => step.startsWith("Dump application data"));
+  assert.ok(dataStep, "there must be a data dump step");
+  assert.match(dataStep, /--data-only/, "it must dump data, not schema");
+  assert.match(dataStep, /--use-copy/, "without --use-copy the CLI emits INSERTs and verification fails");
+
+  // Only the data dump takes --use-copy; roles and schema are DDL and would
+  // reject it. Counted over dump INVOCATIONS, since the flag is also named in
+  // the surrounding comment and in the verification's error message.
+  const invocations = workflow
+    .split("\n")
+    .filter((line) => line.includes("supabase db dump --db-url"));
+  assert.equal(invocations.length, 3, "roles, schema, data");
+  assert.equal(
+    invocations.filter((line) => line.includes("--use-copy")).length,
+    1,
+    "--use-copy belongs on the data dump alone",
+  );
+  for (const line of invocations) {
+    if (line.includes("--use-copy")) assert.match(line, /--data-only/, "only the data dump may use it");
+  }
+});
+
+test("a hollow data dump is rejected even though its COPY headers look right", () => {
+  const verifyAt = workflow.indexOf("- name: Verify the dump is real");
+  const verify = workflow.slice(verifyAt, workflow.indexOf("uses: actions/upload-artifact"));
+
+  // pg_dump writes a COPY header for EVERY table it dumps, including empty
+  // ones. Counting headers therefore proves only that tables exist -- a dump
+  // that ran against the wrong database produces a file full of empty COPY
+  // blocks and exits zero. Rows are what has to be counted.
+  assert.match(verify, /COPY_BLOCKS=/, "COPY blocks must be counted");
+  assert.match(verify, /DATA_ROWS=/, "and actual rows must be counted separately");
+  assert.match(verify, /awk '/, "row counting needs to walk the COPY blocks");
+  assert.match(verify, /inblock && NF\s+\{ rows\+\+ \}/, "a row is a non-empty line inside a COPY block");
+  assert.match(verify, /inblock && \/\^\\\\\\.\$\//, "the block ends at the \\. terminator");
+
+  // Both counts must be able to fail the run independently.
+  assert.match(verify, /if \[ "\$COPY_BLOCKS" -eq 0 \]/);
+  assert.match(verify, /if \[ "\$DATA_ROWS" -eq 0 \]/);
+  assert.match(verify, /::error::[^\n]*--use-copy/, "a format failure must name its cause");
+  assert.match(verify, /::error::[^\n]*not a single row of data/, "a hollow dump must say so");
+
+  // At least one table the app is actually about must be present.
+  assert.match(
+    verify,
+    /\^COPY public\\\.\(people\|contributors\|christmas_recipients\|app_members\|purchases\|settlements\)/,
+    "a core application table must appear in the data dump",
+  );
+
+  // The manifest records both figures, so a backup can be spot-checked without
+  // being unpacked.
+  assert.match(verify, /copy_blocks: \$\{COPY_BLOCKS\}/);
+  assert.match(verify, /data_rows: \$\{DATA_ROWS\}/);
 });
 
 test("the connection string is checked for the failure modes that cannot dump", () => {

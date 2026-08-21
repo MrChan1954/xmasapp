@@ -18,7 +18,15 @@ single point of failure.
 | `roles.sql` | Database roles and their grants |
 | `schema.sql` | Every table, index, constraint, RLS policy, function and trigger |
 | `data.sql` | Every row in every table — purchases, allocations, settlements, payment receipts, contributors, contribution plans, recipients, memberships, gift ideas, audit log, notification tables |
-| `MANIFEST.txt` | Date, trigger, commit SHA, file sizes and `COPY` block count, for spot-checking a backup without unpacking it |
+| `MANIFEST.txt` | Date, trigger, commit SHA, file sizes, `COPY` block count and **row count**, for spot-checking a backup without unpacking it |
+
+`data.sql` is dumped with `--use-copy`, so rows are written as
+`COPY <table> (...) FROM stdin;` blocks rather than per-row `INSERT`s. That
+restores far faster, and it gives verification something structural to count.
+
+> `copy_blocks` is not the number to look at — `pg_dump` writes a COPY header
+> for every table including empty ones. **`data_rows` is the one that tells you
+> the backup has content.**
 
 ## What is **not** backed up
 

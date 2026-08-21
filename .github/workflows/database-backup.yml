@@ -143,12 +143,24 @@ jobs:
           supabase db dump --db-url "$SUPABASE_DB_URL" \
             -f "${{ steps.name.outputs.dir }}/schema.sql"
 
+      # `--use-copy` is required, not cosmetic. Without it the CLI writes the
+      # rows as individual INSERT statements; with it they are written as
+      # `COPY <table> (...) FROM stdin;` blocks terminated by a line of `\.`.
+      #
+      # COPY is what we want for a backup of this size and shape: it restores
+      # an order of magnitude faster than per-row INSERTs, and it is the format
+      # Supabase's own backup guidance recommends. It also gives verification
+      # something structural to check, which INSERT text does not.
+      #
+      # The first manual run failed here for exactly this reason: the dump was
+      # perfectly good, but it was INSERTs, and the verification below was
+      # looking for COPY.
       - name: Dump application data
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
-          supabase db dump --db-url "$SUPABASE_DB_URL" --data-only \
+          supabase db dump --db-url "$SUPABASE_DB_URL" --data-only --use-copy \
             -f "${{ steps.name.outputs.dir }}/data.sql"
 
       # The point of this step: a dump that "succeeded" but produced an empty or
@@ -178,11 +190,39 @@ jobs:
             fi
           done
 
-          # The data dump must carry rows. An empty COPY block for every table
-          # means the dump ran against the wrong database or lost its
-          # permissions -- both look like success at the exit-code level.
-          if ! grep -qE "^COPY public\." "${DIR}/data.sql"; then
-            echo "::error::data.sql contains no COPY statements. Treating this backup as invalid."
+          # The data dump must be in COPY format. If this fails, --use-copy was
+          # dropped from the dump command or the CLI ignored it.
+          COPY_BLOCKS=$(grep -cE "^COPY public\." "${DIR}/data.sql" || true)
+          if [ "$COPY_BLOCKS" -eq 0 ]; then
+            echo "::error::data.sql contains no COPY statements. The dump command must pass --use-copy."
+            FAILED=1
+          fi
+
+          # ...and it must carry actual ROWS. This is the check that matters:
+          # pg_dump writes a COPY header for every table it dumps INCLUDING
+          # empty ones, so counting headers proves only that tables exist. A
+          # dump that ran against the wrong database, or lost its permissions
+          # part-way, produces a file full of empty COPY blocks and a zero exit
+          # code -- indistinguishable from a good backup until the day it is
+          # needed.
+          #
+          # Rows are the lines between a COPY header and its `\.` terminator.
+          DATA_ROWS=$(awk '
+            /^COPY [^ ]+ .*FROM stdin;$/ { inblock = 1; next }
+            inblock && /^\\\.$/          { inblock = 0; next }
+            inblock && NF                { rows++ }
+            END                          { print rows + 0 }
+          ' "${DIR}/data.sql")
+          if [ "$DATA_ROWS" -eq 0 ]; then
+            echo "::error::data.sql has ${COPY_BLOCKS} COPY blocks but not a single row of data. Treating this backup as invalid."
+            FAILED=1
+          fi
+
+          # And the rows must include application data, not just bookkeeping
+          # tables. At least one of the tables the Christmas app is actually
+          # about has to be present.
+          if ! grep -qE "^COPY public\.(people|contributors|christmas_recipients|app_members|purchases|settlements)\b" "${DIR}/data.sql"; then
+            echo "::error::data.sql contains no COPY block for any core application table. Treating this backup as invalid."
             FAILED=1
           fi
 
@@ -195,7 +235,8 @@ jobs:
             echo "roles_bytes: $(wc -c < "${DIR}/roles.sql")"
             echo "schema_bytes: $(wc -c < "${DIR}/schema.sql")"
             echo "data_bytes: $(wc -c < "${DIR}/data.sql")"
-            echo "copy_blocks: $(grep -cE '^COPY public\.' "${DIR}/data.sql")"
+            echo "copy_blocks: ${COPY_BLOCKS}"
+            echo "data_rows: ${DATA_ROWS}"
           } > "${DIR}/MANIFEST.txt"
 
           echo "Verified backup contents:"
