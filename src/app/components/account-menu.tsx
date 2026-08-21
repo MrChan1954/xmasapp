@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { LogOut, Settings, ShieldCheck, Snowflake, User } from "lucide-react";
 import { useEffect, useState } from "react";
-import { createClient } from "../../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 import { useFamily } from "../family-context";
 import { useFestive } from "./festive/festive-context";
 import { Popover, PopoverItem, PopoverSection } from "./popover";
@@ -33,7 +33,7 @@ export function AccountMenu() {
       trigger={({ open }) => (
         <span
           className={
-            "flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface-2 text-xs font-semibold text-ink-700 " +
+            "flex h-11 w-11 items-center justify-center rounded-full border border-line bg-surface-2 text-xs font-semibold text-ink-700 " +
             (open ? "ring-2 ring-accent/30" : "hover:border-line-strong")
           }
         >
@@ -62,7 +62,7 @@ export function AccountMenu() {
               aria-checked={snow}
               disabled={reducedMotion}
               onClick={() => setSnow(!snow)}
-              className="flex min-h-10 w-full items-center gap-2.5 rounded-xl px-3 text-left text-sm font-semibold text-ink-700 hover:bg-hover-veil hover:text-ink-900 disabled:opacity-50"
+              className="flex min-h-11 w-full items-center gap-2.5 rounded-xl px-3 text-left text-sm font-semibold text-ink-700 hover:bg-hover-veil hover:text-ink-900 disabled:opacity-50"
             >
               <Snowflake aria-hidden size={16} strokeWidth={1.8} />
               <span className="flex-1">Falling snow</span>

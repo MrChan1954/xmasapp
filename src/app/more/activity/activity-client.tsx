@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createClient } from "../../../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 import { formatPennies } from "@/lib/currency";
 import { PageHeader } from "../../components/app-shell";
 import { Badge, ChipRow, EmptyState, FilterChip, Input, Notice, Segmented, Skeleton, Toolbar } from "../../components/ui";

@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Camera, ImagePlus, Trash2 } from "lucide-react";
-import { createClient } from "../../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 import { photoIntake } from "@/lib/photo-limits";
 import { cx } from "./cx";
 import {
@@ -150,7 +150,7 @@ export function PhotoGallery({ parent, label }: { parent: Parent; label: string 
             type="button"
             disabled={busy}
             onClick={() => cameraInput.current?.click()}
-            className="flex h-10 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-ink-700 hover:border-line-strong disabled:opacity-50 sm:hidden"
+            className="flex h-11 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-ink-700 hover:border-line-strong disabled:opacity-50 sm:hidden"
           >
             <Camera aria-hidden size={17} strokeWidth={1.8} />
             Camera
@@ -159,7 +159,7 @@ export function PhotoGallery({ parent, label }: { parent: Parent; label: string 
             type="button"
             disabled={busy}
             onClick={() => libraryInput.current?.click()}
-            className="flex h-10 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-ink-700 hover:border-line-strong disabled:opacity-50"
+            className="flex h-11 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-ink-700 hover:border-line-strong disabled:opacity-50"
           >
             <ImagePlus aria-hidden size={17} strokeWidth={1.8} />
             {busy ? "Adding..." : "Add photo"}
@@ -217,7 +217,7 @@ export function PhotoGallery({ parent, label }: { parent: Parent; label: string 
               type="button"
               disabled={busy}
               onClick={() => setConfirmingDelete(viewing)}
-              className="flex h-10 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-berry hover:border-line-strong disabled:opacity-50"
+              className="flex h-11 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-berry hover:border-line-strong disabled:opacity-50"
             >
               <Trash2 aria-hidden size={17} strokeWidth={1.8} />
               Remove

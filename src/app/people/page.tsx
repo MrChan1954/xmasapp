@@ -8,7 +8,7 @@ import {
   validateRecipientAllocationSnapshot,
   type RecipientAllocation,
 } from "../../lib/recipient-allocations";
-import { createClient } from "../../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 import {
   purchaseProgressStatus,
   type PurchaseProgressStatus,

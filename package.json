@@ -24,6 +24,7 @@
     "test:images": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/image-resize.test.ts",
     "test:pwa": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/pwa-assets.test.mjs",
     "test:security": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/rls-security.test.mjs",
+    "test:backup": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/backup-workflow.test.mjs",
     "vapid": "node scripts/generate-vapid-keys.mjs",
     "test:web-push": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/web-push.test.ts",
     "test:notification-content": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/notification-content.test.ts",

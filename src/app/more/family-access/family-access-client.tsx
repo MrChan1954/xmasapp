@@ -320,7 +320,7 @@ export function FamilyAccessClient() {
               onClick={() => setFilter(item.value)}
               aria-pressed={filter === item.value}
               className={cx(
-                "min-h-10 shrink-0 rounded-full border px-4 text-xs font-semibold transition",
+                "min-h-11 shrink-0 rounded-full border px-4 text-xs font-semibold transition",
                 filter === item.value
                   ? "border-accent-soft-border bg-accent-soft text-accent"
                   : "border-line bg-surface text-ink-600 hover:border-accent/40",

@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { INPUT_LIMITS, validateRequiredText } from "@/lib/input-validation";
-import { createClient } from "../../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 import { AuthHeading, AuthScreen } from "../components/auth-card";
 import { Button, ButtonLink, Field, Input, Notice } from "../components/ui";
 

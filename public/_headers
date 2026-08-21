@@ -1,3 +1,12 @@
+# HSTS on every asset response too, not just the documents the Next worker
+# serves. Cloudflare answers everything under `public/` directly, so without a
+# rule here an install that only ever fetched an icon would never see the
+# header. Matches `next.config.ts` exactly, preload deliberately omitted — see
+# the reasoning there. Rules in this file merge, so this adds the header to the
+# more specific blocks below rather than replacing them.
+/*
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+
 /_next/static/*
   Cache-Control: public,max-age=31536000,immutable
 

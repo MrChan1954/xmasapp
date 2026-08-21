@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useState } from "react";
 import { INPUT_LIMITS, validateEmail } from "@/lib/input-validation";
-import { createClient } from "../../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 import { AuthHeading, AuthScreen } from "../components/auth-card";
 import { Button, Field, Input, Notice } from "../components/ui";
 

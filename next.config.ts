@@ -50,6 +50,34 @@ const nextConfig: NextConfig = {
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+          /**
+           * HSTS, production only.
+           *
+           * `upgrade-insecure-requests` in the CSP above only rewrites
+           * subresource URLs on a page already loaded over HTTPS. It does
+           * nothing for the FIRST request, which is the one that matters: a
+           * family member typing the bare domain, or following an old http://
+           * link, still makes one plaintext round trip that can be intercepted.
+           * This header removes that trip for every subsequent visit.
+           *
+           * Deliberately NOT `preload`. Preloading hard-codes the domain into
+           * browser binaries, takes months to undo, and would make the domain
+           * permanently unusable over plain HTTP — too heavy a commitment for a
+           * family app, and effectively irreversible if the domain is ever
+           * repointed.
+           *
+           * `includeSubDomains` is safe here because Cloudflare terminates TLS
+           * for the whole zone. Drop it if a subdomain ever has to serve plain
+           * HTTP; a one-year max-age means existing browsers would honour the
+           * old directive until it expires.
+           *
+           * Omitted in development on purpose: pinning `localhost` to HTTPS for
+           * a year would break `next dev` for every other project on this
+           * machine, and it is not a per-port setting.
+           */
+          ...(!isDevelopment
+            ? [{ key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" }]
+            : []),
         ],
       },
       {

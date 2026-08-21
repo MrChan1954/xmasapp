@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { createClient } from "../../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 import { formatPennies } from "../../lib/currency";
 import { INPUT_LIMITS, parseMoneyToPennies, validateRequiredText } from "../../lib/input-validation";
 import { validateRecipientAllocationSnapshot, type RecipientAllocation } from "../../lib/recipient-allocations";

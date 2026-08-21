@@ -3,7 +3,7 @@ import "server-only";
 import { createClient as createAdminSupabaseClient } from "@supabase/supabase-js";
 import type { PaymentLogReceipt, PaymentLogRecord, PaymentLogResponse } from "@/lib/payment-log";
 import { paymentStatusOf, type PaymentStatus } from "@/lib/payment-confirmation";
-import { createClient as createSessionClient } from "../../../utils/supabase/server";
+import { createClient as createSessionClient } from "@/utils/supabase/server";
 
 const CHRISTMAS_YEAR = 2026;
 

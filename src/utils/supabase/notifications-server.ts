@@ -19,7 +19,7 @@ import {
   type DispatchReport,
   type NotificationEventKind,
 } from "@/lib/notification-dispatch";
-import { createClient as createSessionClient } from "../../../utils/supabase/server";
+import { createClient as createSessionClient } from "@/utils/supabase/server";
 
 export { NotificationError };
 export type { NotificationEventKind, DispatchReport };

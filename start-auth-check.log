@@ -1,9 +1,0 @@
-
-> christmas-budget-setup@0.1.0 start
-> next start --port 3001
-
-▲ Next.js 16.3.0
-- Local:         http://localhost:3001
-- Network:       http://10.5.0.2:3001
-✓ Ready in 123ms
-✓ Running next.config.ts took 23ms

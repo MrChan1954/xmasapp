@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createClient } from "../../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 import { formatPennies } from "../../lib/currency";
 import { INPUT_LIMITS, validateEnum, validateUuid } from "../../lib/input-validation";
 import { paymentStatusLabel, type PaymentStatus } from "../../lib/payment-confirmation";
@@ -225,7 +225,7 @@ export default function PaymentLogPage() {
                 panelClassName="w-[46rem] p-4"
                 trigger={({ open }) => (
                   <span className={cx(
-                    "flex min-h-10 items-center gap-2 rounded-xl border px-3.5 text-sm font-semibold",
+                    "flex min-h-11 items-center gap-2 rounded-xl border px-3.5 text-sm font-semibold",
                     open || filterCount ? "border-accent-soft-border bg-accent-soft text-accent" : "border-line bg-surface text-ink-600 hover:border-line-strong",
                   )}>
                     <IconFilter size={17} />
@@ -365,11 +365,11 @@ function ActiveFilterChips({ filters, data, onChange }: { filters: PaymentLogFil
     <div className="mt-4 flex flex-wrap items-center gap-2">
       <span className="text-xs font-semibold text-ink-600">Active filters:</span>
       {chips.map((chip) => (
-        <button key={chip.key} type="button" onClick={() => onChange({ ...filters, [chip.key]: chip.key === "status" || chip.key === "quick" ? "all" : "" })} className="min-h-9 rounded-full border border-accent-soft-border bg-accent-soft px-3 text-xs font-semibold text-accent hover:border-accent/40">
+        <button key={chip.key} type="button" onClick={() => onChange({ ...filters, [chip.key]: chip.key === "status" || chip.key === "quick" ? "all" : "" })} className="min-h-11 rounded-full border border-accent-soft-border bg-accent-soft px-3 text-xs font-semibold text-accent hover:border-accent/40">
           {chip.label} <span aria-hidden>×</span><span className="sr-only"> remove</span>
         </button>
       ))}
-      <button type="button" onClick={() => onChange(emptyPaymentFilters)} className="min-h-9 px-2 text-xs font-semibold text-berry">Clear all</button>
+      <button type="button" onClick={() => onChange(emptyPaymentFilters)} className="min-h-11 px-2 text-xs font-semibold text-berry">Clear all</button>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { createClient } from "../../../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 import { AppShell, PageHeader } from "../../components/app-shell";
 import { Button, Notice, Skeleton, cx } from "../../components/ui";
 import { useIsIosSafari, usePwaInstall } from "../../components/use-pwa-install";

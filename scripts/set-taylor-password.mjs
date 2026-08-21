@@ -1,8 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
+import { resolveAdminEmail } from "./admin-account-target.mjs";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const secretKey = process.env.SUPABASE_SECRET_KEY;
-const taylorEmail = "tstward10@hotmail.co.uk";
+const targetEmail = resolveAdminEmail();
 
 if (!supabaseUrl || !secretKey) {
   throw new Error("NEXT_PUBLIC_SUPABASE_URL and server-only SUPABASE_SECRET_KEY are required.");
@@ -20,12 +21,12 @@ const { data: userPage, error: listError } = await admin.auth.admin.listUsers({ 
 if (listError) throw listError;
 
 const matchingUsers = userPage.users.filter(
-  (user) => user.email?.toLowerCase() === taylorEmail,
+  (user) => user.email?.toLowerCase() === targetEmail,
 );
 
 if (matchingUsers.length !== 1) {
   throw new Error(
-    `Expected exactly one Auth account for Taylor, found ${matchingUsers.length}. No password was changed.`,
+    `Expected exactly one Auth account for that address, found ${matchingUsers.length}. No password was changed.`,
   );
 }
 
@@ -38,22 +39,22 @@ const { data: memberships, error: membershipError } = await admin
 if (membershipError) throw membershipError;
 if (memberships.length !== 1) {
   throw new Error(
-    `Expected exactly one app_members record linked to Taylor's Auth account, found ${memberships.length}. No password was changed.`,
+    `Expected exactly one app_members record linked to that Auth account, found ${memberships.length}. No password was changed.`,
   );
 }
 
 const membership = memberships[0];
 if (
-  membership.email?.toLowerCase() !== taylorEmail ||
+  membership.email?.toLowerCase() !== targetEmail ||
   membership.role !== "admin" ||
   membership.active !== true ||
   !membership.person_id ||
   !membership.contributor_id
 ) {
-  throw new Error("Taylor's linked membership is not active, admin, and fully linked. No password was changed.");
+  throw new Error("The linked membership is not active, admin, and fully linked. No password was changed.");
 }
 
-console.log("Verified one existing Taylor Auth account and one linked active admin membership.");
+console.log("Verified one existing Auth account and one linked active admin membership.");
 
 let password = await readHidden("New password: ");
 let confirmation = await readHidden("Confirm password: ");
@@ -82,7 +83,7 @@ password = "";
 confirmation = "";
 
 if (updateError) throw updateError;
-if (updated.user.email?.toLowerCase() !== taylorEmail) {
+if (updated.user.email?.toLowerCase() !== targetEmail) {
   throw new Error("Auth verification failed after the password update.");
 }
 
@@ -94,7 +95,7 @@ const { data: verifiedMemberships, error: verifyError } = await admin
 if (verifyError) throw verifyError;
 if (
   verifiedMemberships.length !== 1 ||
-  verifiedMemberships[0].email?.toLowerCase() !== taylorEmail ||
+  verifiedMemberships[0].email?.toLowerCase() !== targetEmail ||
   verifiedMemberships[0].role !== "admin" ||
   verifiedMemberships[0].active !== true ||
   !verifiedMemberships[0].person_id ||
@@ -103,7 +104,7 @@ if (
   throw new Error("Membership verification failed after the password update.");
 }
 
-console.log("Taylor's password was updated successfully.");
+console.log("Password updated successfully.");
 console.log("The existing Auth account is confirmed and remains linked to one active admin membership.");
 
 function readHidden(prompt) {

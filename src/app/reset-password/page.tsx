@@ -1,7 +1,7 @@
 "use client";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "../../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 import { AuthHeading, AuthScreen } from "../components/auth-card";
 import { Button, Field, Input, Notice } from "../components/ui";
 

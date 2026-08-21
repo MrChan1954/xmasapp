@@ -10,7 +10,7 @@ import {
   validateOptionalText,
   validateRequiredText,
 } from "@/lib/input-validation";
-import { createClient } from "../../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 import { IconPlus } from "../components/icons";
 import { notifyFamily } from "../components/notify-family";
 import { PhotoGallery } from "../components/photo-gallery";

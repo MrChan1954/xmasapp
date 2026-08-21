@@ -18,7 +18,7 @@ import {
   splitPurchaseByWeights,
   type PurchaseStatus,
 } from "@/lib/purchases";
-import { createClient } from "../../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 import { PageHeader } from "../components/app-shell";
 import { notifyFamily } from "../components/notify-family";
 import { GarlandRule } from "../components/festive/garland";

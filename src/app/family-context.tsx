@@ -7,7 +7,7 @@ import {
   validateRecipientAllocationSnapshot,
   type RecipientAllocation,
 } from "@/lib/recipient-allocations";
-import { createClient } from "../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 import { isAuthRoute } from "./components/nav-items";
 import { useRealtimeRefresh } from "./components/use-realtime-refresh";
 

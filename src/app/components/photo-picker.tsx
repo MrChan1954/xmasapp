@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Camera, ImagePlus, X } from "lucide-react";
-import { createClient } from "../../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 import { resizeImage } from "@/lib/image-resize";
 import { photoIntake } from "@/lib/photo-limits";
 import { MAX_PHOTOS, uploadPhoto, type PhotoParent } from "./photo-storage";
@@ -182,7 +182,7 @@ export function PhotoPicker({
             type="button"
             disabled={disabled || preparing}
             onClick={() => cameraInput.current?.click()}
-            className="flex h-10 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-ink-700 hover:border-line-strong disabled:opacity-50 sm:hidden"
+            className="flex h-11 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-ink-700 hover:border-line-strong disabled:opacity-50 sm:hidden"
           >
             <Camera aria-hidden size={17} strokeWidth={1.8} />
             Camera
@@ -191,7 +191,7 @@ export function PhotoPicker({
             type="button"
             disabled={disabled || preparing}
             onClick={() => libraryInput.current?.click()}
-            className="flex h-10 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-ink-700 hover:border-line-strong disabled:opacity-50"
+            className="flex h-11 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-ink-700 hover:border-line-strong disabled:opacity-50"
           >
             <ImagePlus aria-hidden size={17} strokeWidth={1.8} />
             {preparing ? "Adding..." : "Add photo"}

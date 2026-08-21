@@ -26,7 +26,7 @@ const buttonVariants: Record<ButtonVariant, string> = {
 };
 
 const buttonSizes: Record<ButtonSize, string> = {
-  sm: "min-h-10 rounded-lg px-3.5 text-sm",
+  sm: "min-h-11 rounded-lg px-3.5 text-sm",
   md: "min-h-11 rounded-xl px-4 text-sm",
   lg: "min-h-12 rounded-xl px-5 text-sm sm:text-base",
 };
@@ -334,7 +334,7 @@ export function FilterChip({
       onClick={onClick}
       aria-pressed={active}
       className={cx(
-        "flex min-h-10 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm font-semibold whitespace-nowrap transition",
+        "flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm font-semibold whitespace-nowrap transition",
         active
           ? "border-accent-soft-border bg-accent-soft text-accent"
           : "border-line bg-surface text-ink-600 hover:border-line-strong hover:text-ink-900",
@@ -861,7 +861,7 @@ export function SheetHeader({
         type="button"
         onClick={onClose}
         aria-label="Close"
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-ink-600 hover:border-line-strong hover:text-ink-900"
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-ink-600 hover:border-line-strong hover:text-ink-900"
       >
         <IconClose size={18} />
       </button>

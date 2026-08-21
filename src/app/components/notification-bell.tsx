@@ -77,7 +77,7 @@ export function NotificationBell() {
         aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : "Notifications"}
         onClick={() => setOpen((value) => !value)}
         className={cx(
-          "relative flex h-10 w-10 items-center justify-center rounded-full border transition",
+          "relative flex h-11 w-11 items-center justify-center rounded-full border transition",
           open ? "border-accent bg-accent-soft text-accent" : "border-line bg-surface-2 text-ink-700 hover:border-line-strong",
         )}
       >

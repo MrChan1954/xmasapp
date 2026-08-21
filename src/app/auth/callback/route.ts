@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getRequestOrigin } from "@/utils/request-origin";
-import { createClient } from "../../../../utils/supabase/server";
+import { createClient } from "@/utils/supabase/server";
 
 const loginError = (requestOrigin: string, message: string) => NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(message)}`, requestOrigin));
 

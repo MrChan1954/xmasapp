@@ -4,7 +4,7 @@ import { createClient as createAdminSupabaseClient } from "@supabase/supabase-js
 import type { User } from "@supabase/supabase-js";
 import { validateEmail, validateUuid } from "@/lib/input-validation";
 
-import { createClient as createSessionClient } from "../../../utils/supabase/server";
+import { createClient as createSessionClient } from "@/utils/supabase/server";
 
 export class FamilyAccessError extends Error {
   constructor(

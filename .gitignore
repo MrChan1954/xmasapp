@@ -30,6 +30,21 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# Local dev/server capture logs. Eight of these (dev-server.log, dev-host.log,
+# start-auth-check.log and friends) were committed by accident and removed in
+# the post-audit cleanup; this stops the next `next dev > something.log` run
+# putting them back. Nothing in the app reads a .log file.
+*.log
+logs/
+
+# Database dumps must never enter the repository. Backups are GitHub Actions
+# artifacts (see docs/database-backups.md); a dump committed here would put
+# every family purchase and payment into git history permanently.
+*.dump
+*.sql.gz
+/backup/
+/backups/
+
 # env files (can opt-in for committing if needed)
 .env*
 

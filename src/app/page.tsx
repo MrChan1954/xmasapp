@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createClient } from "../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 import { formatPennies } from "../lib/currency";
 import { contributorOwedSummary } from "../lib/owed";
 import { AppShell } from "./components/app-shell";

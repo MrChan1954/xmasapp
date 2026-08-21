@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
-import { createClient } from "../../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 import { AppShell, PageHeader } from "../components/app-shell";
 import { Button, Field, Input, Notice } from "../components/ui";
 

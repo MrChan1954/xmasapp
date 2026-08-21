@@ -104,7 +104,7 @@ export function PopoverItem({
   children: ReactNode;
 }) {
   const className = cx(
-    "flex w-full min-h-10 items-center gap-2.5 rounded-xl px-3 text-left text-sm font-semibold",
+    "flex w-full min-h-11 items-center gap-2.5 rounded-xl px-3 text-left text-sm font-semibold",
     tone === "danger" ? "text-berry hover:bg-berry-soft" : "text-ink-700 hover:bg-hover-veil hover:text-ink-900",
   );
 

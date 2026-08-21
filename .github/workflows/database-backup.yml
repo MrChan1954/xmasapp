@@ -1,0 +1,215 @@
+name: Database backup
+
+# Why this exists
+#   Git holds the schema (supabase/migrations) and the code. It holds no
+#   purchases, payments, contributors or contribution plans -- those live only
+#   in hosted Supabase. A production audit found no backup of any kind, which
+#   made the live financial data a single point of failure.
+#
+# What this does NOT do
+#   There is deliberately no restore workflow. Restoring is a rare, destructive,
+#   think-first operation and must never be one mis-click in the Actions tab.
+#   The procedure is written up in docs/database-backups.md instead.
+#
+# Which connection string SUPABASE_DB_URL must hold
+#   The Supavisor SESSION POOLER URI, port 5432:
+#     postgresql://postgres.<ref>:<password>@aws-N-<region>.pooler.supabase.com:5432/postgres
+#
+#   GitHub-hosted runners are IPv4-only. Supabase's direct endpoint
+#   db.<ref>.supabase.co:5432 is IPv6-only unless the project buys the IPv4
+#   add-on, so pointing this workflow at it simply cannot connect. The session
+#   pooler is reachable over IPv4 and gives pg_dump the real, non-multiplexed
+#   session it needs.
+#
+#   Port 6543 (transaction mode) must NOT be used -- it holds no session and
+#   pg_dump cannot take a consistent snapshot. The first step rejects it.
+#
+#   The direct connection remains fine if this project has the IPv4 add-on, or
+#   on a self-hosted runner with IPv6. Nothing else here changes.
+
+on:
+  schedule:
+    # 03:17 UTC daily. Off the hour on purpose: the top of the hour is when
+    # GitHub's shared scheduler is busiest and runs are most likely to be
+    # delayed or dropped.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why this manual backup is being taken (recorded in the run log)"
+        required: false
+        default: "Manual backup"
+
+# Read-only against the repository. This job never writes to the repo, never
+# commits, and never pushes -- dumps go to the runner's temp directory and leave
+# only as an artifact.
+permissions:
+  contents: read
+
+concurrency:
+  # Never let a scheduled run and a manual run dump at the same time.
+  group: database-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Dump schema and data
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Record why this run happened
+        run: |
+          echo "Trigger: ${{ github.event_name }}"
+          echo "Reason:  ${{ github.event.inputs.reason || 'Scheduled daily backup' }}"
+
+      - name: Check the connection string secret is present and usable
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          # Presence and SHAPE only. The value is never printed, interpolated
+          # into a command line, or written to a file -- every check below is a
+          # pattern match whose output is a fixed message.
+          if [ -z "${SUPABASE_DB_URL:-}" ]; then
+            echo "::error::SUPABASE_DB_URL is not set. Add it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+          # Port 6543 is Supavisor TRANSACTION mode. It multiplexes statements
+          # across backends and holds no session, so pg_dump cannot take a
+          # consistent snapshot. Caught here rather than as a confusing failure
+          # part-way through a dump.
+          case "$SUPABASE_DB_URL" in
+            *:6543/*|*:6543)
+              echo "::error::SUPABASE_DB_URL points at port 6543 (transaction mode), which cannot run pg_dump. Use the Session pooler URI on port 5432 -- see docs/database-backups.md."
+              exit 1
+              ;;
+          esac
+
+          # This runner is IPv4-only, and the direct endpoint
+          # db.<ref>.supabase.co is IPv6-only without the Supabase IPv4 add-on.
+          # That is a warning, not a failure: a project WITH the add-on is
+          # perfectly entitled to use the direct connection.
+          case "$SUPABASE_DB_URL" in
+            *db.*.supabase.co*)
+              echo "::warning::SUPABASE_DB_URL looks like the direct connection. GitHub-hosted runners are IPv4-only and that endpoint is IPv6-only unless this project has the Supabase IPv4 add-on. If this step's dump fails to connect, switch the secret to the Session pooler URI (port 5432)."
+              ;;
+          esac
+
+          case "$SUPABASE_DB_URL" in
+            postgres://*|postgresql://*) ;;
+            *)
+              echo "::error::SUPABASE_DB_URL is not a postgres:// or postgresql:// URI."
+              exit 1
+              ;;
+          esac
+
+          echo "SUPABASE_DB_URL is present and is a session-capable URI."
+
+      - name: Install the Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Compute backup name
+        id: name
+        run: |
+          set -euo pipefail
+          STAMP="$(date -u +'%Y-%m-%d')"
+          echo "stamp=${STAMP}" >> "$GITHUB_OUTPUT"
+          echo "dir=${RUNNER_TEMP}/backup" >> "$GITHUB_OUTPUT"
+          mkdir -p "${RUNNER_TEMP}/backup"
+
+      # Three dumps, because they restore in this order and are useful
+      # separately: roles, then the schema that owns them, then the rows.
+      #
+      # `supabase db dump` runs a version-matched pg_dump in a container, which
+      # is why this does not use the runner's own pg_dump -- a client older than
+      # the server refuses to dump at all, and that failure is easy to miss.
+      - name: Dump roles
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          supabase db dump --db-url "$SUPABASE_DB_URL" --role-only \
+            -f "${{ steps.name.outputs.dir }}/roles.sql"
+
+      - name: Dump schema
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          supabase db dump --db-url "$SUPABASE_DB_URL" \
+            -f "${{ steps.name.outputs.dir }}/schema.sql"
+
+      - name: Dump application data
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          supabase db dump --db-url "$SUPABASE_DB_URL" --data-only \
+            -f "${{ steps.name.outputs.dir }}/data.sql"
+
+      # The point of this step: a dump that "succeeded" but produced an empty or
+      # truncated file is worse than a dump that failed loudly, because it looks
+      # like a backup until the day it is needed. Every check below must pass
+      # before anything is uploaded.
+      - name: Verify the dump is real
+        run: |
+          set -euo pipefail
+          DIR="${{ steps.name.outputs.dir }}"
+          FAILED=0
+
+          for FILE in roles.sql schema.sql data.sql; do
+            if [ ! -s "${DIR}/${FILE}" ]; then
+              echo "::error::${FILE} is missing or empty."
+              FAILED=1
+            fi
+          done
+          [ "$FAILED" -eq 0 ] || exit 1
+
+          # The schema must contain the tables the app cannot run without.
+          for TABLE in purchases purchase_allocations settlements payment_receipts \
+                       contributors recipient_contributions christmas_recipients app_members; do
+            if ! grep -q "CREATE TABLE.*\<${TABLE}\>" "${DIR}/schema.sql"; then
+              echo "::error::schema.sql does not define ${TABLE}. Treating this backup as invalid."
+              FAILED=1
+            fi
+          done
+
+          # The data dump must carry rows. An empty COPY block for every table
+          # means the dump ran against the wrong database or lost its
+          # permissions -- both look like success at the exit-code level.
+          if ! grep -qE "^COPY public\." "${DIR}/data.sql"; then
+            echo "::error::data.sql contains no COPY statements. Treating this backup as invalid."
+            FAILED=1
+          fi
+
+          [ "$FAILED" -eq 0 ] || exit 1
+
+          {
+            echo "backup_date_utc: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "trigger: ${{ github.event_name }}"
+            echo "commit: ${{ github.sha }}"
+            echo "roles_bytes: $(wc -c < "${DIR}/roles.sql")"
+            echo "schema_bytes: $(wc -c < "${DIR}/schema.sql")"
+            echo "data_bytes: $(wc -c < "${DIR}/data.sql")"
+            echo "copy_blocks: $(grep -cE '^COPY public\.' "${DIR}/data.sql")"
+          } > "${DIR}/MANIFEST.txt"
+
+          echo "Verified backup contents:"
+          cat "${DIR}/MANIFEST.txt"
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-backup-${{ steps.name.outputs.stamp }}
+          path: ${{ steps.name.outputs.dir }}
+          retention-days: 30
+          if-no-files-found: error
+          compression-level: 9
+
+      - name: Confirm
+        run: |
+          echo "Backup supabase-backup-${{ steps.name.outputs.stamp }} uploaded, retained 30 days."

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { createClient } from "../../../utils/supabase/client";
+import { createClient } from "@/utils/supabase/client";
 
 // One edit usually lands as several row events across several tables: saving a
 // purchase writes `purchases` and `purchase_allocations` in one transaction.

@@ -18,7 +18,7 @@ export function SearchTrigger({ className = "", onOpen }: { className?: string; 
       type="button"
       onClick={onOpen}
       className={cx(
-        "flex h-10 items-center gap-2 rounded-xl border border-line bg-surface-2 px-3 text-sm text-ink-400 hover:border-line-strong hover:text-ink-600",
+        "flex h-11 items-center gap-2 rounded-xl border border-line bg-surface-2 px-3 text-sm text-ink-400 hover:border-line-strong hover:text-ink-600",
         className,
       )}
     >

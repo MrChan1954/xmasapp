@@ -43,6 +43,8 @@ const paymentConfirmationsMigrationName = "202608100021_add_payment_confirmation
 const adminOverrideMigrationName = "202608100022_separate_admin_payment_override.sql";
 const paymentConfirmationsMigration = readFileSync(join(migrationsDirectory, paymentConfirmationsMigrationName), "utf8");
 const adminOverrideMigration = readFileSync(join(migrationsDirectory, adminOverrideMigrationName), "utf8");
+const notificationRepairMigrationName = "202608100023_repair_notification_centre_and_outbox.sql";
+const notificationRepairMigration = readFileSync(join(migrationsDirectory, notificationRepairMigrationName), "utf8");
 
 const applicationTables = [
   "christmas_events",
@@ -61,7 +63,7 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  assert.equal(migrationFiles.at(-1), adminOverrideMigrationName);
+  assert.equal(migrationFiles.at(-1), notificationRepairMigrationName);
 
   for (const table of applicationTables) {
     assert.match(
@@ -1226,4 +1228,374 @@ test("the Owed screen offers the ordinary payment action to the two people only"
   const paymentLogPage = readFileSync(join(root, "src", "app", "payment-log", "page.tsx"), "utf8");
   assert.match(paymentLogPage, /isAdminConfirmedPayment\(record\) && <Badge tone="gold">Admin confirmed<\/Badge>/);
   assert.match(paymentLogPage, /adminOverrideReason\(record\)/);
+});
+
+// ---------------------------------------------------------------------------
+// The final intended notification schema (migration 023)
+// ---------------------------------------------------------------------------
+// These tests exist because of a specific production failure. Migrations 019
+// and 020 were never applied to the hosted database, and every test in this
+// file passed anyway: each one asserted the TEXT of a migration file, and the
+// files were perfect. Nothing asserted what the schema had to end up being once
+// all of them had run.
+//
+// So these are written the other way round. They describe the end state the
+// application requires, and the catch-up migration has to satisfy it.
+
+test("the catch-up migration creates every notification object production was missing", () => {
+  // The three objects the audit proved absent: PGRST205 for both tables and
+  // PGRST202 for the function.
+  assert.match(notificationRepairMigration, /create table if not exists public\.notifications \(/);
+  assert.match(notificationRepairMigration, /create table if not exists public\.notification_outbox \(/);
+  assert.match(
+    notificationRepairMigration,
+    /create or replace function public\.enqueue_notification_event\(\s*p_kind text,\s*p_subject_id uuid,\s*p_fingerprint text,\s*p_actor_app_member_id uuid\s*\)/,
+  );
+
+  // 019's columns on 018's ledger. Without these the retry accounting silently
+  // does nothing, because the dispatcher selects columns that do not exist.
+  for (const column of ["delivered_count", "attempt_count", "last_attempt_at"]) {
+    assert.match(
+      notificationRepairMigration,
+      new RegExp(`add column if not exists ${column}`),
+      `${column} must be added to notification_events`,
+    );
+  }
+
+  // 020's four enqueue triggers, and 020's idempotence key for the in-app rows.
+  for (const trigger of [
+    "enqueue_purchase_notification",
+    "enqueue_gift_status_notification",
+    "enqueue_gift_idea_notification",
+    "enqueue_payment_notification",
+  ]) {
+    assert.match(notificationRepairMigration, new RegExp(`create trigger ${trigger}`), trigger);
+  }
+  assert.match(notificationRepairMigration, /create unique index if not exists notifications_event_recipient_key/);
+});
+
+test("every notification kind the app can dispatch is accepted by all three CHECK constraints", () => {
+  // Derived from the application, not hand-listed. `payment_review` was added
+  // to this union and to 021, but 021's widening block ran against tables that
+  // did not exist and took its `raise notice` branch -- and nothing ever
+  // widened `notification_events.kind` at all. A kind the app can send that a
+  // constraint rejects is exactly the bug that shipped, so the source of truth
+  // for this test is the union itself.
+  const notifyFamily = readFileSync(join(root, "src", "app", "components", "notify-family.ts"), "utf8");
+  const union = notifyFamily.match(/export type NotifiableEvent =([^;]+);/);
+  assert.ok(union, "NotifiableEvent union must be readable from notify-family.ts");
+  const kinds = [...union[1].matchAll(/"([a-z_]+)"/g)].map((match) => match[1]);
+  assert.ok(kinds.includes("payment_review"), "the union must still carry the kind that caused the outage");
+  assert.ok(kinds.length >= 5, "expected at least five dispatchable kinds");
+
+  const constraints = {
+    notification_events_kind_check: /add constraint notification_events_kind_check\s*check \(kind in \(([^)]*)\)\)/,
+    notification_outbox_kind_check: /add constraint notification_outbox_kind_check\s*check \(kind in \(([^)]*)\)\)/,
+    notifications_event_kind_check: /add constraint notifications_event_kind_check\s*check \(event_kind is null or event_kind in \(([\s\S]*?)\)\)/,
+  };
+
+  for (const [name, pattern] of Object.entries(constraints)) {
+    const found = notificationRepairMigration.match(pattern);
+    assert.ok(found, `${name} must be declared in the catch-up migration`);
+    for (const kind of kinds) {
+      assert.match(found[1], new RegExp(`'${kind}'`), `${name} must accept '${kind}'`);
+    }
+  }
+
+  // And the tables are CREATED with the wide list too, not narrowed first and
+  // widened after -- so a database that stops half way is still correct.
+  assert.match(
+    notificationRepairMigration,
+    /create table if not exists public\.notification_outbox[\s\S]*?check \(kind in \([^)]*'payment_review'\)\)/,
+  );
+  assert.match(
+    notificationRepairMigration,
+    /create table if not exists public\.notifications[\s\S]*?event_kind text check \(event_kind in \([\s\S]*?'payment_review'\s*\)\)/,
+  );
+});
+
+test("the catch-up migration refuses to finish quietly if it did not take", () => {
+  // The whole reason it exists is that a migration once did less than it looked
+  // like it did and nothing noticed for weeks.
+  const guard = notificationRepairMigration.slice(notificationRepairMigration.indexOf("8. Assert the end state"));
+  assert.match(guard, /raise exception 'Notification catch-up did not complete\. Missing: %'/);
+  for (const required of [
+    "table notifications",
+    "table notification_outbox",
+    "function enqueue_notification_event",
+    "row level security on notifications",
+    "row level security on notification_outbox",
+  ]) {
+    assert.ok(guard.includes(required), `the end-state assertion must check for: ${required}`);
+  }
+  // It also re-checks each kind against each constraint at apply time.
+  assert.match(guard, /kind_target text\[\] := array\['purchase', 'payment', 'gift_idea', 'gift_status', 'payment_review'\]/);
+});
+
+test("notification centre RLS keeps every inbox private, including from Global Admin", () => {
+  assert.match(notificationRepairMigration, /alter table public\.notifications enable row level security;/);
+  assert.match(
+    notificationRepairMigration,
+    /create policy "members read their own notifications"[\s\S]*?for select[\s\S]*?using \(app_member_id = public\.current_app_member_id\(\)\)/,
+  );
+  // `with check` as well as `using`, or marking read could move a row onto
+  // somebody else's membership.
+  assert.match(
+    notificationRepairMigration,
+    /create policy "members update their own notifications"[\s\S]*?for update[\s\S]*?using \(app_member_id = public\.current_app_member_id\(\)\)\s*with check \(app_member_id = public\.current_app_member_id\(\)\)/,
+  );
+
+  // A member may read and mark read. They may not create a notification in
+  // anybody's inbox, and may not delete their own history.
+  assert.match(notificationRepairMigration, /revoke all privileges on table public\.notifications from public, anon, authenticated;/);
+  assert.match(notificationRepairMigration, /grant select, update on table public\.notifications to authenticated;/);
+  assert.doesNotMatch(
+    notificationRepairMigration,
+    /grant[^;]*(?:insert|delete)[^;]*on table public\.notifications/i,
+    "a member must never be able to write or erase notifications",
+  );
+
+  // Deliberately no admin policy: an admin reading the family's inboxes is a
+  // privacy regression, not a feature.
+  // `.slice(1)` because split() returns the file's preamble as element 0, and
+  // that preamble contains the `drop policy ... on public.notifications` lines.
+  const notificationPolicies = notificationRepairMigration
+    .split("create policy")
+    .slice(1)
+    .filter((chunk) => chunk.includes("on public.notifications"));
+  assert.equal(notificationPolicies.length, 2, "exactly two policies: read own, update own");
+  for (const policy of notificationPolicies) {
+    assert.doesNotMatch(policy, /is_app_admin/, "no admin bypass may exist on the Notification Centre");
+  }
+
+  // And the read state is the only thing an update may change.
+  assert.match(
+    notificationRepairMigration,
+    /create or replace function public\.protect_notification_content[\s\S]*?raise exception 'Only the read state of a notification can be changed'/,
+  );
+  assert.match(notificationRepairMigration, /create trigger protect_notification_content\s*before update on public\.notifications/);
+});
+
+test("the outbox is server-controlled and never reaches a browser", () => {
+  assert.match(notificationRepairMigration, /alter table public\.notification_outbox enable row level security;/);
+  assert.match(notificationRepairMigration, /revoke all privileges on table public\.notification_outbox from public, anon, authenticated;/);
+  // No grant of any kind, and no policy: with RLS on and no policy, a browser
+  // session reaches nothing even if a grant were added by mistake later.
+  assert.doesNotMatch(notificationRepairMigration, /grant [a-z, ]+ on table public\.notification_outbox/i);
+  assert.doesNotMatch(
+    notificationRepairMigration,
+    /create policy[^;]*on public\.notification_outbox/i,
+    "the outbox must have no policies at all",
+  );
+
+  // Realtime publishes the bell's table and must never publish the outbox.
+  assert.match(notificationRepairMigration, /alter publication supabase_realtime add table public\.notifications;/);
+  assert.doesNotMatch(notificationRepairMigration, /add table public\.notification_outbox/);
+
+  // Every enqueue helper is revoked from callers: only the triggers use them.
+  for (const helper of [
+    "enqueue_notification_event\\(text, uuid, text, uuid\\)",
+    "enqueue_purchase_notification\\(\\)",
+    "enqueue_gift_status_notification\\(\\)",
+    "enqueue_gift_idea_notification\\(\\)",
+    "enqueue_payment_notification\\(\\)",
+    "protect_notification_content\\(\\)",
+  ]) {
+    assert.match(
+      notificationRepairMigration,
+      // The longer signatures wrap onto a second line in the migration.
+      new RegExp(`revoke all on function public\\.${helper}\\s*from public, anon, authenticated`, "i"),
+      helper,
+    );
+    assert.doesNotMatch(
+      notificationRepairMigration,
+      new RegExp(`grant execute on function public\\.${helper}`, "i"),
+      `${helper} must not be callable directly`,
+    );
+  }
+});
+
+test("a notification failure still cannot roll back a financial write", () => {
+  // The single most important property in the whole notification stack: the
+  // enqueue helper swallows everything, so a queue problem can never abort the
+  // transaction that saved a purchase or a payment.
+  const enqueue = notificationRepairMigration.match(
+    /create or replace function public\.enqueue_notification_event[\s\S]*?\n\$\$;/,
+  )[0];
+  assert.match(enqueue, /exception\s*\n\s*when others then/);
+  assert.match(enqueue, /on conflict \(kind, subject_id, fingerprint\) do nothing/);
+  assert.doesNotMatch(enqueue, /raise exception/, "it must never propagate");
+
+  // Every trigger is AFTER, so it cannot pre-empt the write it observes.
+  const triggerStatements = notificationRepairMigration.match(/^create trigger [\s\S]*?;$/gm) ?? [];
+  assert.ok(triggerStatements.length >= 5, "four enqueue triggers plus the content guard");
+  for (const statement of triggerStatements) {
+    if (statement.includes("protect_notification_content")) continue;
+    assert.match(statement, /after (insert|update)/i, `must be an AFTER trigger: ${statement.slice(0, 60)}`);
+  }
+
+  // And nothing in this file writes to a financial table.
+  const statements = notificationRepairMigration.replace(/--[^\n]*/g, "");
+  for (const table of [
+    "purchases", "purchase_allocations", "settlements", "payment_receipts",
+    "recipient_contributions", "christmas_recipients", "contributors", "people",
+  ]) {
+    assert.doesNotMatch(
+      statements,
+      new RegExp(`(update|delete from|insert into)\\s+public\\.${table}\\b`, "i"),
+      `${table} must not be written by the notification repair`,
+    );
+  }
+  assert.doesNotMatch(statements, /drop table|truncate/i);
+});
+
+test("the catch-up migration leaves 021 and 022 alone and is safe to re-run", () => {
+  const statements = notificationRepairMigration.replace(/--[^\n]*/g, "");
+
+  // It must not redefine anything 021 or 022 owns.
+  for (const owned of [
+    "record_settlement",
+    "review_payment",
+    "void_settlement",
+    "admin_record_confirmed_payment",
+    "enqueue_payment_review_notification",
+    "payment_receipts_are_append_only",
+  ]) {
+    assert.doesNotMatch(
+      statements,
+      new RegExp(`create or replace function public\\.${owned}`, "i"),
+      `${owned} belongs to an already-applied migration and must not be redefined`,
+    );
+  }
+  // 021's payment-review trigger is checked for, not rewritten.
+  assert.match(notificationRepairMigration, /tgname = 'enqueue_payment_review_notification'/);
+  assert.doesNotMatch(statements, /drop trigger if exists enqueue_payment_review_notification/);
+
+  // Re-runnable on a database that already has 019 and 020, so applying every
+  // migration in order on a fresh database reaches the same place.
+  assert.match(statements, /create table if not exists public\.notifications/);
+  assert.match(statements, /create table if not exists public\.notification_outbox/);
+  assert.match(statements, /add column if not exists/);
+  assert.equal((statements.match(/create index if not exists|create unique index if not exists/g) ?? []).length, 4);
+  for (const policy of ["members read their own notifications", "members update their own notifications"]) {
+    assert.match(statements, new RegExp(`drop policy if exists "${policy}" on public\\.notifications;`));
+  }
+  // Constraints are matched by definition, not by generated name.
+  assert.match(statements, /pg_catalog\.pg_get_constraintdef\(oid\) ilike '%gift_status%'/);
+
+  // Every SECURITY DEFINER function it adds pins its search path. Counted over
+  // CODE only: the file also discusses `security definer` in prose, and a
+  // comment is not a function.
+  const code = notificationRepairMigration.replace(/--[^\n]*/g, "");
+  const definers = (code.match(/security definer/g) ?? []).length;
+  const pinned = (code.match(/security definer\s*\nset search_path = ''/g) ?? []).length;
+  assert.equal(definers, 6, "the content guard, the enqueue helper, and four enqueue triggers");
+  assert.equal(definers, pinned, "a definer without a fixed search_path is a privilege escalation");
+});
+
+// ---------------------------------------------------------------------------
+// Contribution planning: who may change what
+// ---------------------------------------------------------------------------
+// The audit flagged `save_recipient_contributions` as requiring only membership
+// rather than Global Admin. Reading the grants rather than the function body
+// shows why that is not a hole: migration 012 revoked it from `authenticated`
+// and never granted it back, so no browser session can call it at all.
+//
+// What members CAN do is the deliberate part, and these tests pin it.
+
+test("both deprecated recipient RPCs are unreachable from any browser session", () => {
+  for (const signature of [
+    "save_recipient_contributions\\(uuid, jsonb\\)",
+    "save_christmas_recipient\\(uuid, uuid, text, integer\\)",
+  ]) {
+    assert.match(
+      atomicRecipientMigration,
+      new RegExp(`revoke all on function public\\.${signature}[\\s\\S]*?from public, anon, authenticated;`, "i"),
+    );
+  }
+  // Revoked in 012 and never re-granted by anything after it. Scanning every
+  // later migration is the assertion -- a future grant would revive a path that
+  // bypasses the admin gate on recipient details.
+  const laterMigrations = migrationFiles
+    .filter((name) => name > atomicRecipientMigrationName)
+    .map((name) => readFileSync(join(migrationsDirectory, name), "utf8"))
+    .join("\n");
+  for (const name of ["save_recipient_contributions", "save_christmas_recipient\\("]) {
+    assert.doesNotMatch(
+      laterMigrations,
+      new RegExp(`grant execute on function public\\.${name}`, "i"),
+      `${name} must stay revoked`,
+    );
+  }
+});
+
+test("members may plan together, but only Global Admin may change a budget or add a person", () => {
+  const canonical = atomicRecipientMigration.match(
+    /create or replace function public\.save_christmas_recipient_with_contributions[\s\S]*?\n\$\$;/,
+  )[0];
+
+  // Creating a recipient is admin-only.
+  assert.match(
+    canonical,
+    /if p_christmas_recipient_id is null then\s*if not public\.is_app_admin\(\) then\s*raise exception 'Global Admin access required'/,
+  );
+  // Changing the NAME or the BUDGET of an existing recipient is admin-only.
+  assert.match(
+    canonical,
+    /details_changed := trim\(p_name\) is distinct from existing_name\s*or p_budget_pennies is distinct from existing_budget_pennies;\s*if details_changed and not public\.is_app_admin\(\) then\s*raise exception 'Global Admin access required to change recipient details'/,
+  );
+  // Everything else -- redistributing the SAME budget between contributors --
+  // is open to any active member. This is intended: planning is a family
+  // activity. Asserted so a future change to it has to be deliberate.
+  assert.match(canonical, /if not public\.is_active_app_member\(\) then\s*raise exception 'Active app membership required'/);
+  // Archiving a person stays admin-only through its own function.
+  assert.match(
+    atomicRecipientMigration,
+    /create or replace function public\.set_christmas_recipient_active[\s\S]*?is_app_admin\(\)/,
+  );
+});
+
+test("changing a contribution plan can never rewrite historical purchase responsibility", () => {
+  // The protection is structural: the planning writer touches exactly one
+  // table, and purchase_allocations is not it. A purchase's split is a snapshot
+  // taken when the purchase was saved, and only `save_purchase*` writes it.
+  const canonical = atomicRecipientMigration.match(
+    /create or replace function public\.save_christmas_recipient_with_contributions[\s\S]*?\n\$\$;/,
+  )[0];
+  assert.doesNotMatch(canonical, /purchase_allocations/i, "planning must never touch a purchase split");
+  assert.doesNotMatch(canonical, /\bpublic\.purchases\b/i, "planning must never touch a purchase");
+  assert.match(canonical, /insert into public\.recipient_contributions/i);
+
+  // And the reverse: the purchase writers snapshot the split they are given and
+  // never read a contribution plan at write time.
+  //
+  // `save_purchase_with_location` is a thin wrapper that validates the gift
+  // location and delegates, so the snapshot itself lives in `save_purchase`
+  // from migration 008. Both halves are checked.
+  const purchaseWrapper = purchaseTrackingMigration.match(
+    /create or replace function public\.save_purchase_with_location[\s\S]*?\n\$\$;/,
+  )[0];
+  assert.doesNotMatch(purchaseWrapper, /recipient_contributions/i, "a saved split must not be re-derived from today's plan");
+  assert.match(purchaseWrapper, /saved_purchase := public\.save_purchase\(/, "the wrapper must delegate the split");
+
+  const purchasesMigration = readFileSync(
+    join(migrationsDirectory, "202608100008_add_purchases.sql"),
+    "utf8",
+  );
+  const purchaseWriter = purchasesMigration.match(
+    /create or replace function public\.save_purchase\([\s\S]*?\n\$\$;/,
+  )[0];
+  assert.doesNotMatch(purchaseWriter, /recipient_contributions/i, "the split comes from the caller, never from today's plan");
+  assert.match(purchaseWriter, /insert into public\.purchase_allocations/i);
+  // The invariant that makes a snapshot trustworthy: it must equal the price.
+  assert.match(purchaseWriter, /allocation_total <> p_actual_price_pennies/);
+});
+
+test("the UI keeps recipient creation and removal behind Global Admin", () => {
+  const peoplePage = readFileSync(join(root, "src", "app", "people", "page.tsx"), "utf8");
+  const personModal = readFileSync(join(root, "src", "app", "people", "person-modal.tsx"), "utf8");
+  // Adding a person.
+  assert.match(peoplePage, /\{isAdmin && adding && <AddForm/);
+  // Editing details and removing from Christmas.
+  assert.match(personModal, /\{isAdmin && \(\s*<section[\s\S]*?Edit person[\s\S]*?Remove from Christmas/);
 });
