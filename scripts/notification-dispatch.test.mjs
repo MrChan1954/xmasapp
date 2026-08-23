@@ -157,7 +157,9 @@ const MEMBERS = [
 
 function familyStore(overrides = {}) {
   const store = {
-    christmas_events: [{ id: "evt", year: 2026 }],
+    // The generalised event table from migration 025. The dispatcher reads it
+    // to name the event in the copy and to build the deep link.
+    events: [{ id: "evt", name: "Christmas 2026", event_type: "christmas", year: 2026 }],
     people: [
       ...MEMBERS.map((member) => ({ id: `p-${member.key}`, name: member.name })),
       { id: "p-mum", name: "Mum" },
@@ -619,7 +621,7 @@ test("a claim the payer records asks the receiver to confirm it, and tells nobod
   assert.equal(report.inAppCreated, 1);
   assert.equal(report.delivered, 1);
   assert.deepEqual(sender.sent.map((row) => row.endpoint), ["https://push.example/taylor"]);
-  assert.equal(sender.sent[0].payload.body, "Jade says they paid you £20.");
+  assert.equal(sender.sent[0].payload.body, "Christmas 2026 · Jade says they paid you £20.");
   assert.equal(sender.sent[0].payload.category, "money_owed_to_me");
   assert.deepEqual(store.notifications.map((row) => row.app_member_id), ["m-taylor"]);
 });
@@ -635,8 +637,12 @@ test("confirming a claim in full tells the payer, and only the payer", async () 
   assert.equal(report.preferencesAllowed, 1);
   assert.equal(report.delivered, 1);
   assert.deepEqual(sender.sent.map((row) => row.endpoint), ["https://push.example/jade"]);
+  // The TITLE still says what happened — that is the line a phone shows first.
+  // The BODY names the event, as context for the sentence.
   assert.equal(sender.sent[0].payload.title, "✅ Payment confirmed");
-  assert.equal(sender.sent[0].payload.body, "Taylor confirmed your £20 payment.");
+  assert.equal(sender.sent[0].payload.body, "Christmas 2026 · Taylor confirmed your £20 payment.");
+  // And the link goes inside that event, not to the legacy path.
+  assert.equal(sender.sent[0].payload.url, "/events/evt/owed");
   assert.equal(store.notifications.length, 1);
   assert.equal(store.notifications[0].app_member_id, "m-jade");
   assert.equal(store.notifications[0].event_kind, "payment_review");
@@ -650,8 +656,8 @@ test("a partial confirmation quotes both figures", async () => {
 
   await run(store, { sender, kind: "payment_review", subjectId: "rec-1", caller: "m-taylor" });
 
-  assert.equal(sender.sent[0].payload.body, "Taylor confirmed £12 of your £20 payment.");
-  assert.equal(store.notifications[0].body, "Taylor confirmed £12 of your £20 payment.");
+  assert.equal(sender.sent[0].payload.body, "Christmas 2026 · Taylor confirmed £12 of your £20 payment.");
+  assert.equal(store.notifications[0].body, "Christmas 2026 · Taylor confirmed £12 of your £20 payment.");
 });
 
 test("every partial confirmation of one payment is its own notification", async () => {
@@ -671,7 +677,7 @@ test("every partial confirmation of one payment is its own notification", async 
   assert.equal(report.deduplicated, false);
   assert.equal(second.sent.length, 1, "the second confirmation is its own event");
   assert.equal(store.notifications.length, 2, "and its own inbox entry");
-  assert.equal(second.sent[0].payload.body, "Taylor confirmed your £20 payment.");
+  assert.equal(second.sent[0].payload.body, "Christmas 2026 · Taylor confirmed your £20 payment.");
 });
 
 test("a rejection reaches the payer, with its reason in the app and not on the lock screen", async () => {
@@ -683,12 +689,14 @@ test("a rejection reaches the payer, with its reason in the app and not on the l
   await run(store, { sender, kind: "payment_review", subjectId: "rec-1", caller: "m-taylor" });
 
   assert.deepEqual(sender.sent.map((row) => row.endpoint), ["https://push.example/jade"]);
-  assert.equal(sender.sent[0].payload.body, "Taylor rejected your £20 payment.");
+  assert.equal(sender.sent[0].payload.body, "Christmas 2026 · Taylor rejected your £20 payment.");
   assert.equal(sender.sent[0].payload.inAppBody, undefined, "the push payload must not carry it at all");
   assert.doesNotMatch(JSON.stringify(sender.sent[0].payload), /bank/);
+  // The longer in-app body is stamped with the event too, so the Notification
+  // Centre says which occasion the refused payment belonged to.
   assert.equal(
     store.notifications[0].body,
-    "Taylor rejected your £20 payment. Reason: Nothing has arrived in my bank yet.",
+    "Christmas 2026 · Taylor rejected your £20 payment. Reason: Nothing has arrived in my bank yet.",
   );
 });
 
@@ -830,8 +838,8 @@ test("a Global Admin recording their own payment notifies exactly like a member"
   assert.deepEqual(adminSender.sent.map((row) => row.endpoint), ["https://push.example/jade"]);
   assert.deepEqual(memberSender.sent.map((row) => row.endpoint), ["https://push.example/jade"]);
   assert.equal(adminSender.sent[0].payload.title, memberSender.sent[0].payload.title);
-  assert.equal(adminSender.sent[0].payload.body, "Taylor says they paid you £20.");
-  assert.equal(memberSender.sent[0].payload.body, "Paige says they paid you £20.");
+  assert.equal(adminSender.sent[0].payload.body, "Christmas 2026 · Taylor says they paid you £20.");
+  assert.equal(memberSender.sent[0].payload.body, "Christmas 2026 · Paige says they paid you £20.");
   assert.equal(adminSender.sent[0].payload.category, "money_owed_to_me");
 });
 
@@ -855,7 +863,7 @@ test("a Global Admin recording a payment they received confirms it, like any rec
   // The payer hears that it was acknowledged -- the receiver's own record IS
   // the acknowledgement, whether or not that receiver happens to be an admin.
   assert.deepEqual(sender.sent.map((row) => row.endpoint), ["https://push.example/jade"]);
-  assert.equal(sender.sent[0].payload.body, "Taylor recorded your £20 payment.");
+  assert.equal(sender.sent[0].payload.body, "Christmas 2026 · Taylor recorded your £20 payment.");
   assert.equal(sender.sent[0].payload.category, "money_i_owe");
 });
 
@@ -897,8 +905,8 @@ test("an admin override is announced as an admin override, to both people", asyn
   );
 
   const byEndpoint = new Map(sender.sent.map((row) => [row.endpoint, row.payload]));
-  assert.equal(byEndpoint.get("https://push.example/jade").body, "Taylor recorded a confirmed £20 payment from you to Paige.");
-  assert.equal(byEndpoint.get("https://push.example/paige").body, "Taylor recorded a confirmed £20 payment from Jade to you.");
+  assert.equal(byEndpoint.get("https://push.example/jade").body, "Christmas 2026 · Taylor recorded a confirmed £20 payment from you to Paige.");
+  assert.equal(byEndpoint.get("https://push.example/paige").body, "Christmas 2026 · Taylor recorded a confirmed £20 payment from Jade to you.");
 
   // The one wording that would be a lie: nobody said they paid anything.
   for (const payload of sender.sent.map((row) => row.payload)) {
@@ -938,7 +946,7 @@ test("an ordinary confirmed payment is never mistaken for an admin override", as
   const sender = recordingSender();
   await run(store, { sender, kind: "payment", subjectId: "set-1", caller: "m-taylor" });
 
-  assert.equal(sender.sent[0].payload.body, "Taylor recorded your £20 payment.");
+  assert.equal(sender.sent[0].payload.body, "Christmas 2026 · Taylor recorded your £20 payment.");
   assert.doesNotMatch(sender.sent[0].payload.title, /admin/i);
 });
 
@@ -963,5 +971,5 @@ test("a database without the override table still notifies about ordinary paymen
   const report = await run(store, { sender, kind: "payment", subjectId: "set-1", caller: "m-taylor" });
 
   assert.equal(report.delivered, 1);
-  assert.equal(sender.sent[0].payload.body, "Taylor says they paid you £20.");
+  assert.equal(sender.sent[0].payload.body, "Christmas 2026 · Taylor says they paid you £20.");
 });

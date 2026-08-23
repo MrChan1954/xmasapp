@@ -42,7 +42,7 @@ import {
   Textarea,
   cx,
 } from "../components/ui";
-import { useRealtimeRefresh } from "../components/use-realtime-refresh";
+import { eventRealtimeSources, useRealtimeRefresh } from "../components/use-realtime-refresh";
 import { loadOwedData, type OwedData, type OwedSettlementDetail } from "./owed-data";
 
 type ViewMode = "mine" | "all";
@@ -93,14 +93,17 @@ export function OwedScreen({ eventId, eventName }: { eventId: string; eventName:
   // writes the receipt, so this existing subscription is what makes a pending
   // payment, its review and the Owed figure all move without a refresh.
   useRealtimeRefresh(
-    [
-      "settlements",
-      "purchases",
-      "purchase_allocations",
-      "contributors",
-      "christmas_recipients",
-      "people",
-    ],
+    eventRealtimeSources(
+      [
+        "settlements",
+        "purchases",
+        "purchase_allocations",
+        "contributors",
+        "christmas_recipients",
+        "people",
+      ],
+      eventId,
+    ),
     refresh,
   );
 

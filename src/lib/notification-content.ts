@@ -49,7 +49,20 @@ export type NotificationPayload = {
   category: NotificationCategory;
 };
 
-/** Where each category sends the reader. Mirrors the real route table. */
+/**
+ * Where each category sends the reader, as a SECTION rather than a finished
+ * path.
+ *
+ * These two constants are an intermediate form. Every builder below emits one
+ * of them, and `withEvent` — applied once, at the dispatcher's boundary — turns
+ * it into the real `/events/<eventId>/...` route before anything is stored or
+ * sent. No notification created from Checkpoint 3 onwards is ever persisted
+ * with one of these bare paths.
+ *
+ * They keep the legacy shape on purpose: it is exactly what the compatibility
+ * redirects still accept, so a payload that somehow escapes `withEvent` lands
+ * somewhere real rather than on a 404.
+ */
 export const OWED_URL = "/owed";
 
 export function personUrl(christmasRecipientId: string): string {
@@ -57,6 +70,110 @@ export function personUrl(christmasRecipientId: string): string {
   // links already use, so a notification tap lands on the person modal.
   return `/people?person=${encodeURIComponent(christmasRecipientId)}`;
 }
+
+/** The event a notification belongs to, as the dispatcher resolved it. */
+export type NotificationEvent = {
+  id: string;
+  name: string;
+  /** `events.event_type`. Carried for callers that present the event; the
+   *  copy below deliberately names the event rather than drawing its icon. */
+  type: string;
+};
+
+/** Matches the `body` CHECK on `public.notifications` (migration 019/023). */
+const BODY_LIMIT = 300;
+
+/** Separates the event from the sentence. Matches the app's own house style. */
+const EVENT_SEPARATOR = " · ";
+
+/**
+ * Stamp an event onto a finished payload.
+ *
+ * THREE THINGS CHANGE, AND THEY ALL MATTER
+ *
+ *   title  is LEFT ALONE. It is the one line a phone shows before anything
+ *          else, and it has to say what happened — "💷 You owe Taylor",
+ *          "🎁 New gift idea for Paige". Replacing it with the event name
+ *          would make every notification from one occasion look identical in
+ *          the tray and bury the thing the reader actually needs to know.
+ *
+ *   body   gains the event at the front: "Christmas 2026 · A new purchase
+ *          means you now owe Taylor £20." The occasion is context for the
+ *          sentence, so it reads as context rather than as the headline.
+ *
+ *   url    is rewritten from the legacy section path to the event's own route,
+ *          so tapping it lands inside the right event rather than inside
+ *          whichever event the compatibility redirect happens to choose.
+ *
+ *   tag    is prefixed with the event id. This is the subtle one: `tag` is the
+ *          collapse key, so without it a birthday "you owe Taylor" would
+ *          REPLACE a Christmas "you owe Taylor" on the device, and the reader
+ *          would silently lose one of two true statements about different
+ *          money.
+ *
+ * A payload that is never stamped — a family-wide notification belonging to no
+ * event — stays exactly as its builder wrote it, and remains valid.
+ */
+export function withEvent(payload: NotificationPayload, event: NotificationEvent): NotificationPayload {
+  return {
+    ...payload,
+    body: withEventPrefix(payload.body, event.name),
+    inAppBody: payload.inAppBody === undefined
+      ? undefined
+      : withEventPrefix(payload.inAppBody, event.name),
+    url: eventUrlFor(payload.url, event.id),
+    tag: `${event.id}:${payload.tag}`,
+  };
+}
+
+/**
+ * "Christmas 2026 · <sentence>", inside the column that has to store it.
+ *
+ * When there is not enough room, the EVENT NAME is what shrinks: the sentence
+ * is the actionable half, and a reader who loses the end of it has lost the
+ * notification. An event name so long that nothing fits is dropped entirely
+ * rather than reduced to an ellipsis that says nothing.
+ */
+function withEventPrefix(body: string, eventName: string): string {
+  const name = eventName.trim();
+  if (!name) return body;
+  const room = BODY_LIMIT - body.length - EVENT_SEPARATOR.length;
+  // Below this there is no room for a name worth reading.
+  if (room < 4) return body;
+  return `${truncate(name, room)}${EVENT_SEPARATOR}${body}`;
+}
+
+/**
+ * The section paths above, rewritten into the event's routes.
+ *
+ * Deliberately a closed translation of the two forms this module produces. An
+ * unrecognised path is returned untouched rather than guessed at, so a future
+ * builder that invents a third destination degrades to the legacy redirect
+ * instead of producing a path that does not exist.
+ */
+export function eventUrlFor(url: string, eventId: string): string {
+  if (!url.startsWith("/")) return url;
+  const [path, query] = splitQuery(url);
+  const section = path === "/owed" ? "owed" : path === "/people" ? "people" : null;
+  if (!section) return url;
+  return `/events/${eventId}/${section}${query}`;
+}
+
+function splitQuery(url: string): [string, string] {
+  const index = url.indexOf("?");
+  return index === -1 ? [url, ""] : [url.slice(0, index), url.slice(index)];
+}
+
+/*
+ * There is deliberately NO event-icon table in this module.
+ *
+ * Notification copy names the event in words — "Christmas 2026 · …" — and each
+ * builder keeps its own action emoji in the title, so nothing here needs to map
+ * an event type to a glyph. `eventTypeMeta` in src/lib/events.ts remains the
+ * single registry for that, used by the dashboard and the navigation rail; a
+ * second copy living here would be one more place to forget when a type is
+ * added.
+ */
 
 /**
  * "Another contributor added a purchase." Deliberately says how much was spent

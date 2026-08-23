@@ -12,7 +12,7 @@ import { GarlandRule } from "./components/festive/garland";
 import { FinancialProgressBar } from "./components/financial-progress";
 import { IconArrowRight, IconTree } from "./components/icons";
 import { Badge, Notice, Skeleton, Stat, cx } from "./components/ui";
-import { useRealtimeRefresh } from "./components/use-realtime-refresh";
+import { eventRealtimeSources, useRealtimeRefresh } from "./components/use-realtime-refresh";
 import { useFamily, useTotals } from "./family-context";
 import { loadOwedData } from "./owed/owed-data";
 import { OwedSummary } from "./owed/owed-summary";
@@ -153,7 +153,10 @@ export function EventHome({ eventId, eventName, eventType, eventDate }: {
   // `christmas_recipients` drive the family context instead, which refreshes
   // itself.
   useRealtimeRefresh(
-    ["contributors", "recipient_contributions", "purchases", "purchase_allocations", "settlements"],
+    eventRealtimeSources(
+      ["contributors", "recipient_contributions", "purchases", "purchase_allocations", "settlements"],
+      eventId,
+    ),
     () => load(true),
   );
 

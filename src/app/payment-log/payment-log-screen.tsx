@@ -49,7 +49,7 @@ import {
   cx,
   type Column,
 } from "../components/ui";
-import { useRealtimeRefresh } from "../components/use-realtime-refresh";
+import { eventRealtimeSources, useRealtimeRefresh } from "../components/use-realtime-refresh";
 
 type SortState = { key: PaymentSortKey; direction: PaymentSortDirection };
 
@@ -105,7 +105,10 @@ export function PaymentLogScreen({ eventId, eventName }: { eventId: string; even
   // The log lists settlements, and each record's context comes from the purchases
   // and people behind it. `refresh` leaves `loading` alone, so this updates the
   // list without replacing it with a spinner.
-  useRealtimeRefresh(["settlements", "purchases", "purchase_allocations", "people"], refresh);
+  useRealtimeRefresh(
+    eventRealtimeSources(["settlements", "purchases", "purchase_allocations", "people"], eventId),
+    refresh,
+  );
 
   const filtered = useMemo(() => {
     if (!data) return [];

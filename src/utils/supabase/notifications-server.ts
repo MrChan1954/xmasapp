@@ -8,8 +8,8 @@ import {
   alreadyEstablished,
   callerMustBeActor,
   drainNotificationOutbox,
-  loadChristmasEventId,
   loadFamilyContext,
+  resolveSubjectEventId,
   NotificationError,
   notificationSetupError,
   runNotificationEvent,
@@ -249,7 +249,10 @@ export async function dispatchNotificationEvent(
   const admin = createAdminClient();
   const reader = session as unknown as DataClient;
 
-  const eventId = await loadChristmasEventId(reader);
+  // The event comes from the record being notified about, never from a
+  // default. A subject whose event cannot be resolved is not notifiable.
+  const eventId = await resolveSubjectEventId(kind, id.value, reader);
+  if (!eventId) throw new NotificationError(404, "That record could not be found.");
   const context = await loadFamilyContext(reader, admin as unknown as DataClient, eventId);
 
   const report = await runNotificationEvent({
@@ -309,7 +312,8 @@ export async function flushNotificationOutbox(): Promise<DispatchReport[]> {
  */
 export async function dispatchOutboxEvent(kind: NotificationEventKind, subjectId: string) {
   const admin = createAdminClient() as unknown as DataClient;
-  const eventId = await loadChristmasEventId(admin);
+  const eventId = await resolveSubjectEventId(kind, subjectId, admin);
+  if (!eventId) throw new NotificationError(404, "That record could not be found.");
   const context = await loadFamilyContext(admin, admin, eventId);
   return runNotificationEvent({
     admin,

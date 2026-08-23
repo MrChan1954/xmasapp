@@ -42,11 +42,9 @@ import {
   // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 } from "./notification-audience.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { shortName } from "./notification-content.ts";
+import { shortName, withEvent, type NotificationEvent } from "./notification-content.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { logNotification, pushServiceHost } from "./notification-log.ts";
-
-export const CHRISTMAS_YEAR = 2026;
 
 /**
  * How old a row may be and still justify a notification RAISED BY A CLIENT.
@@ -193,6 +191,8 @@ function emptyReport(
 
 export type FamilyContext = {
   eventId: string;
+  /** Identity for the copy and the deep link. */
+  event: NotificationEvent;
   members: NotifiableMember[];
   membersById: Map<string, NotifiableMember>;
   contributorNames: Map<string, string>;
@@ -201,23 +201,93 @@ export type FamilyContext = {
 };
 
 /**
- * COMPATIBILITY, until Checkpoint 3.
+ * WHICH EVENT IS THIS NOTIFICATION ABOUT?
  *
- * The dispatcher still assumes one event, because every notification link
- * written so far points at a legacy path (`/owed`, `/people?person=`) which the
- * compatibility redirects forward into Christmas 2026. Checkpoint 3
- * makes notifications event-explicit and this function goes with it. Nothing
- * else in the application resolves an event by year -- see
- * `scripts/event-routing.test.mjs`, which enumerates the exceptions.
+ * Answered by the record being notified about, never by a default. Every
+ * notifiable row reaches its event through a relationship the database already
+ * guarantees is immutable (migration 025's `protect_event_scope_identity`):
+ *
+ *   purchase / gift_status  ->  purchases -> christmas_recipients.christmas_event_id
+ *   gift_idea               ->  gift_ideas -> christmas_recipients.christmas_event_id
+ *   payment                 ->  settlements.christmas_event_id
+ *   payment_review          ->  payment_receipts.christmas_event_id
+ *
+ * That is what replaced the Christmas-by-year lookup this module used to carry.
+ * There is deliberately no fallback: a subject whose event cannot be resolved
+ * produces no notification rather than a notification attributed to the wrong
+ * event.
  */
-export async function loadChristmasEventId(reader: DataClient): Promise<string> {
-  const event = await reader
-    .from("christmas_events")
-    .select("id")
-    .eq("year", CHRISTMAS_YEAR)
+export async function resolveSubjectEventId(
+  kind: NotificationEventKind,
+  subjectId: string,
+  reader: DataClient,
+): Promise<string | null> {
+  const viaRecipient = async (recipientId: string | null | undefined) => {
+    if (!recipientId) return null;
+    const recipient = await reader
+      .from("christmas_recipients")
+      .select("christmas_event_id")
+      .eq("id", recipientId)
+      .maybeSingle();
+    if (recipient.error || !recipient.data) return null;
+    return (recipient.data.christmas_event_id as string) ?? null;
+  };
+
+  if (kind === "purchase" || kind === "gift_status") {
+    const purchase = await reader
+      .from("purchases")
+      .select("christmas_recipient_id")
+      .eq("id", subjectId)
+      .maybeSingle();
+    if (purchase.error || !purchase.data) return null;
+    return viaRecipient(purchase.data.christmas_recipient_id as string);
+  }
+
+  if (kind === "gift_idea") {
+    const idea = await reader
+      .from("gift_ideas")
+      .select("christmas_recipient_id")
+      .eq("id", subjectId)
+      .maybeSingle();
+    if (idea.error || !idea.data) return null;
+    return viaRecipient(idea.data.christmas_recipient_id as string);
+  }
+
+  if (kind === "payment") {
+    const settlement = await reader
+      .from("settlements")
+      .select("christmas_event_id")
+      .eq("id", subjectId)
+      .maybeSingle();
+    if (settlement.error || !settlement.data) return null;
+    return (settlement.data.christmas_event_id as string) ?? null;
+  }
+
+  const receipt = await reader
+    .from("payment_receipts")
+    .select("christmas_event_id")
+    .eq("id", subjectId)
     .maybeSingle();
-  if (event.error || !event.data) throw new NotificationError(503, "Christmas 2026 could not be loaded.");
-  return event.data.id as string;
+  if (receipt.error || !receipt.data) return null;
+  return (receipt.data.christmas_event_id as string) ?? null;
+}
+
+/** The event's own row, for the notification's copy and its deep link. */
+export async function loadNotificationEvent(
+  reader: DataClient,
+  eventId: string,
+): Promise<NotificationEvent> {
+  const event = await reader
+    .from("events")
+    .select("id,name,event_type")
+    .eq("id", eventId)
+    .maybeSingle();
+  if (event.error || !event.data) throw new NotificationError(503, "That event could not be loaded.");
+  return {
+    id: event.data.id as string,
+    name: event.data.name as string,
+    type: event.data.event_type as string,
+  };
 }
 
 /**
@@ -233,6 +303,7 @@ export async function loadFamilyContext(
   reader: DataClient,
   admin: DataClient,
   eventId: string,
+  event?: NotificationEvent,
 ): Promise<FamilyContext> {
   const [contributors, recipients, memberships, preferences] = await Promise.all([
     reader.from("contributors").select("id,person_id,active").eq("christmas_event_id", eventId),
@@ -290,6 +361,7 @@ export async function loadFamilyContext(
 
   return {
     eventId,
+    event: event ?? await loadNotificationEvent(reader, eventId),
     members,
     membersById: new Map(members.map((row) => [row.appMemberId, row])),
     contributorNames,
@@ -640,11 +712,28 @@ export type RunEventInput = {
 export async function runNotificationEvent(input: RunEventInput): Promise<DispatchReport> {
   const { admin, reader, kind, subjectId, context, authorize, createPushSender, source } = input;
 
-  const built = await buildPlan(kind, subjectId, reader, context, authorize);
-  if (!built) {
+  const unstamped = await buildPlan(kind, subjectId, reader, context, authorize);
+  if (!unstamped) {
     logNotification({ stage: "not-applicable", kind, source });
     return emptyReport(kind, subjectId, source, "not-applicable");
   }
+
+  /**
+   * Stamp the event onto every payload, in ONE place.
+   *
+   * The builders stay pure and event-agnostic — they know about people and
+   * pennies — and this is the single line that makes a notification belong to
+   * an occasion: its title names the event, its link points inside the event,
+   * and its collapse key is scoped to the event so two events' messages cannot
+   * replace one another on the device.
+   */
+  const built: BuiltPlan = {
+    ...unstamped,
+    planned: unstamped.planned.map((notification) => ({
+      ...notification,
+      payload: withEvent(notification.payload, context.event),
+    })),
+  };
 
   const actor = shortName(nameOf(context, built.actorAppMemberId));
   const audience = context.members.filter((member) => member.appMemberId !== built.actorAppMemberId).length;
@@ -987,20 +1076,39 @@ export async function drainNotificationOutbox(input: DrainInput): Promise<Dispat
   const rows: OutboxRow[] = pending.data ?? [];
   if (rows.length === 0) return [];
 
-  let context: FamilyContext;
-  try {
-    context = input.loadContext
-      ? await input.loadContext(admin)
-      : await loadFamilyContext(admin, admin, await loadChristmasEventId(admin));
-  } catch (error) {
-    logNotification({ stage: "outbox-context-failed", reason: errorName(error) });
-    return [];
-  }
+  /**
+   * One context per EVENT, not one per drain.
+   *
+   * A batch can hold rows from several events at once — a Christmas purchase
+   * and a birthday payment can be queued seconds apart — so the context is
+   * resolved from each row's own subject and cached by event id. The cache is
+   * what stops a batch of ten Christmas rows loading the same family ten times;
+   * it is per-drain and never outlives the call.
+   */
+  const contextByEvent = new Map<string, FamilyContext>();
+  const contextFor = async (kind: NotificationEventKind, subjectId: string): Promise<FamilyContext | null> => {
+    if (input.loadContext) return input.loadContext(admin);
+    const eventId = await resolveSubjectEventId(kind, subjectId, admin);
+    if (!eventId) return null;
+    const cached = contextByEvent.get(eventId);
+    if (cached) return cached;
+    const loaded = await loadFamilyContext(admin, admin, eventId);
+    contextByEvent.set(eventId, loaded);
+    return loaded;
+  };
 
   const reports: DispatchReport[] = [];
   for (const row of rows) {
     let report: DispatchReport;
     try {
+      const context = await contextFor(row.kind, row.subject_id);
+      if (!context) {
+        // The subject is gone, or its event cannot be resolved. Retire the row
+        // rather than retrying forever: there is nothing left to describe.
+        logNotification({ stage: "outbox-event-unresolved", kind: row.kind, source: "outbox" });
+        await settleOutboxRow(admin, row.kind, row.subject_id, null, row.id);
+        continue;
+      }
       report = await runNotificationEvent({
         admin,
         reader: admin,
@@ -1050,15 +1158,23 @@ export async function settleOutboxRow(
   admin: DataClient,
   kind: NotificationEventKind,
   subjectId: string,
-  fingerprint: string,
+  fingerprint: string | null,
+  /**
+   * Retire one specific row when its fingerprint is unknown — the case where
+   * the subject, and therefore its event, can no longer be resolved at all.
+   */
+  outboxRowId?: string,
 ): Promise<void> {
-  const result = await admin
+  const query = admin
     .from("notification_outbox")
-    .update({ processed_at: new Date().toISOString() })
-    .eq("kind", kind)
-    .eq("subject_id", subjectId)
-    .eq("fingerprint", fingerprint)
-    .is("processed_at", null);
+    .update({ processed_at: new Date().toISOString() });
+  const result = outboxRowId
+    ? await query.eq("id", outboxRowId).is("processed_at", null)
+    : await query
+      .eq("kind", kind)
+      .eq("subject_id", subjectId)
+      .eq("fingerprint", fingerprint)
+      .is("processed_at", null);
   if (result?.error) {
     logNotification({ stage: "outbox-settle-failed", kind, reason: result.error.code ?? "unknown" });
   }

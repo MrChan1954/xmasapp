@@ -304,14 +304,23 @@ test("14. no event-scoped screen or loader resolves its event by year", () => {
   };
   walk(["src"]);
   assert.deepEqual(
-    yearLookups.sort(),
+    yearLookups,
     [
-      // The legacy redirect resolver, labelled as compatibility.
+      // The legacy redirect resolver, and nothing else. Checkpoint 3 removed
+      // the notification dispatcher's copy: it now derives each notification's
+      // event from the record being notified about.
       "src/utils/supabase/events-server.ts",
-      // Notification dispatch, which Checkpoint 3 makes event-explicit.
-      "src/lib/notification-dispatch.ts",
-    ].sort(),
-    "only the compatibility layer and the notification dispatcher may resolve Christmas by year",
+    ],
+    "only the legacy redirect resolver may find Christmas by year",
+  );
+
+  // The dispatcher's year lookup is gone, and so is the constant behind it.
+  const dispatch = read("src", "lib", "notification-dispatch.ts");
+  assert.doesNotMatch(dispatch, /CHRISTMAS_YEAR/, "the dispatcher's Christmas year constant is retired");
+  assert.doesNotMatch(dispatch, /loadChristmasEventId/, "the dispatcher's Christmas lookup is retired");
+  assert.ok(
+    dispatch.includes("export async function resolveSubjectEventId("),
+    "the dispatcher derives each notification's event from its subject",
   );
 });
 
@@ -335,10 +344,8 @@ test("every runtime read of the Christmas compatibility view is enumerated and l
   const EXPECTED = {
     // Old bookmarks and pre-Checkpoint-2 notification links.
     "src/utils/supabase/events-server.ts": "legacyChristmasEventId",
-    // Notification dispatch. Checkpoint 3.
-    "src/lib/notification-dispatch.ts": "loadChristmasEventId",
     // Family Access still edits contributors without naming an event.
-    // Checkpoint 4.
+    // Checkpoint 4 gives it one.
     "src/app/api/admin/family-access/route.ts": "loadCurrentChristmasEvent",
   };
 

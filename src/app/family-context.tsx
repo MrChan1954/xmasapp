@@ -11,7 +11,7 @@ import {
 } from "@/lib/recipient-allocations";
 import { createClient } from "@/utils/supabase/client";
 import { isAuthRoute } from "./components/nav-items";
-import { useRealtimeRefresh } from "./components/use-realtime-refresh";
+import { eventRealtimeSources, useRealtimeRefresh } from "./components/use-realtime-refresh";
 
 export type Person = { id: string; name: string; budgetPennies: number; active: boolean; spentPennies: number | null; giftCount: number | null; ideaCount: number | null };
 export type SaveRecipientInput = {
@@ -128,7 +128,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
   // these tables. Refreshing quietly keeps the grid on screen while it updates.
   // Skipped on auth routes, where there is no session to authorize a stream.
   useRealtimeRefresh(
-    ["people", "christmas_recipients", "gift_ideas", "purchases"],
+    eventRealtimeSources(["people", "christmas_recipients", "gift_ideas", "purchases"], eventId),
     () => load(true),
     { enabled: !authRoute },
   );

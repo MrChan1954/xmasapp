@@ -37,7 +37,9 @@
     "test:event-model": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/event-model.test.mjs",
     "test:event-scoping": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/event-scoping.test.mjs",
     "test:event-routing": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/event-routing.test.mjs",
-    "test:event-dashboard": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/event-dashboard-consistency.test.mjs"
+    "test:event-dashboard": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/event-dashboard-consistency.test.mjs",
+    "test:event-isolation": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/event-isolation.test.mjs",
+    "test:event-realtime": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/event-realtime.test.mjs"
   },
   "dependencies": {
     "@opennextjs/cloudflare": "^1.20.2",
