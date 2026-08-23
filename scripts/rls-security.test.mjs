@@ -50,6 +50,9 @@ const balanceVisibilityMigration = readFileSync(join(migrationsDirectory, balanc
 const eventLayerMigrationName = "202608100025_generalise_christmas_into_events.sql";
 const eventLayerMigration = readFileSync(join(migrationsDirectory, eventLayerMigrationName), "utf8");
 
+const birthdayMigrationName = "202608100026_add_birthdays_and_event_administration.sql";
+const birthdayMigration = readFileSync(join(migrationsDirectory, birthdayMigrationName), "utf8");
+
 const applicationTables = [
   "christmas_events",
   "people",
@@ -67,7 +70,29 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  assert.equal(migrationFiles.at(-1), eventLayerMigrationName);
+  assert.equal(migrationFiles.at(-1), birthdayMigrationName);
+  assert.ok(migrationFiles.includes(eventLayerMigrationName), "the Event layer migration is still present");
+
+  // What 026 introduces, security-wise: one table nobody may read, and six
+  // write functions that check Global Admin in the database.
+  //
+  // birthday_reminders has RLS ON and NO POLICY, which is stronger than a
+  // restrictive policy: with no policy at all, every row is invisible to every
+  // browser role regardless of what it asks for. It is written only by the
+  // service-role sweep.
+  assert.match(birthdayMigration, /alter table public\.birthday_reminders enable row level security;/);
+  assert.doesNotMatch(birthdayMigration, /create policy[^;]*on public\.birthday_reminders/i);
+  assert.doesNotMatch(birthdayMigration, /grant [^;]*on table public\.birthday_reminders to (authenticated|anon)/i);
+  for (const guarded of [
+    "set_person_birthday", "create_event", "update_event",
+    "set_event_status", "set_event_contributor", "add_event_recipient",
+  ]) {
+    const start = birthdayMigration.indexOf(`function public.${guarded}(`);
+    assert.ok(start > 0, `${guarded} must exist`);
+    const body = birthdayMigration.slice(start, birthdayMigration.indexOf("$;", start));
+    assert.match(body, /is_app_admin\(\)/, `${guarded} must check Global Admin in the database`);
+    assert.match(body, /set search_path = ''/, `${guarded} must pin search_path`);
+  }
 
   for (const table of applicationTables) {
     assert.match(
@@ -334,8 +359,10 @@ test("secondary Payment Log navigation remains under More", () => {
   assert.ok(primaryNav);
   assert.doesNotMatch(primaryNav, /payment-log/);
   assert.match(primaryNav, /section: "more"/);
-  // Payment Log still counts as being "under More" for active highlighting.
-  assert.match(navItems, /activeNavSection[\s\S]*?section === "payment-log"\) return "more"/);
+  // Payment Log and Event settings both count as being "under More" for active
+  // highlighting, so the tab bar does not go blank on either of them.
+  assert.match(navItems, /activeNavSection[\s\S]*?section === "payment-log" \|\| section === "settings"\) return "more"/);
+  assert.doesNotMatch(primaryNav, /settings/, "Event settings is an admin screen, not a tab");
 
   const morePage = readFileSync(join(root, "src", "app", "more", "more-screen.tsx"), "utf8");
   assert.match(morePage, /eventPath\(eventId, "payment-log"\)[\s\S]*?Payment log/i);

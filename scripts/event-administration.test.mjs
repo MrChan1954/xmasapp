@@ -1,0 +1,354 @@
+import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { test } from "node:test";
+
+// ---------------------------------------------------------------------------
+// Checkpoint 4: creating, editing and archiving events, and recording
+// birthdays -- proved at the boundary that actually enforces them.
+//
+// The rule this whole file exists to hold: UI HIDING IS NOT AUTHORISATION.
+// Every screen Checkpoint 4 adds is admin-only in the browser, and every one of
+// those screens is a courtesy. The refusals asserted below are in the database,
+// where a hand-made request lands too.
+// ---------------------------------------------------------------------------
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
+
+const MIGRATION = "202608100026_add_birthdays_and_event_administration.sql";
+const sql = read("supabase", "migrations", MIGRATION);
+
+/** The body of one `create ... function public.<name>(` block. */
+function functionBody(name) {
+  const start = sql.indexOf(`function public.${name}(`);
+  assert.ok(start > 0, `${name} must exist in ${MIGRATION}`);
+  const end = sql.indexOf("$$;", start);
+  assert.ok(end > start, `${name} must be terminated`);
+  return sql.slice(start, end);
+}
+
+const ADMIN_WRITES = [
+  "set_person_birthday",
+  "create_event",
+  "update_event",
+  "set_event_status",
+  "set_event_contributor",
+  "add_event_recipient",
+];
+
+// ---------------------------------------------------------------------------
+// 1. Migration hygiene -- the same invariants every applied migration holds
+// ---------------------------------------------------------------------------
+
+test("026 is the next migration number and nothing before it was touched", () => {
+  const files = readdirSync(join(root, "supabase", "migrations")).filter((name) => name.endsWith(".sql")).sort();
+  assert.equal(files.at(-1), MIGRATION, "026 must be the newest migration");
+  assert.equal(
+    files.filter((name) => name.startsWith("202608100026")).length,
+    1,
+    "there must be exactly one migration 026",
+  );
+});
+
+test("every function it defines is search_path-pinned and explicitly granted", () => {
+  // An unpinned search_path on a SECURITY DEFINER function is a privilege
+  // escalation: the caller chooses which schema the function's own table
+  // references resolve to.
+  const defined = [...sql.matchAll(/create or replace function public\.(\w+)\(/gu)].map((match) => match[1]);
+  assert.ok(defined.length >= ADMIN_WRITES.length, "the admin write functions must all be defined here");
+
+  for (const name of defined) {
+    const body = functionBody(name);
+    assert.match(body, /set search_path = ''/u, `${name} must pin an empty search_path`);
+    assert.match(
+      sql,
+      new RegExp(`revoke all on function public\\.${name}\\(`, "u"),
+      `${name} must revoke the default grant before granting anything`,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 2. Authorisation is in the database
+// ---------------------------------------------------------------------------
+
+test("every write Checkpoint 4 adds refuses a non-admin in the database itself", () => {
+  for (const name of ADMIN_WRITES) {
+    const body = functionBody(name);
+    assert.match(
+      body,
+      /is_app_admin\(\)/u,
+      `${name} must check Global Admin itself, not trust the screen that called it`,
+    );
+    assert.match(body, /raise exception/iu, `${name} must refuse rather than return quietly`);
+    assert.match(body, /security definer/u, `${name} runs as definer, which is why it must check`);
+  }
+});
+
+test("the browser roles can execute the admin writes but cannot touch the tables behind them", () => {
+  // The functions are the ONLY door. `events` in particular has no write grant
+  // and no write policy for any browser session, so a hand-made PostgREST call
+  // cannot insert an event even with a valid login.
+  for (const name of ADMIN_WRITES) {
+    assert.match(
+      sql,
+      new RegExp(`grant execute on function public\\.${name}\\([^)]*\\) to authenticated`, "u"),
+      `${name} must be callable by a signed-in session`,
+    );
+  }
+  assert.doesNotMatch(
+    sql,
+    /grant (insert|update|delete)[^;]*on table public\.events to (authenticated|anon)/iu,
+    "no browser role may write events directly",
+  );
+});
+
+test("the reminder machinery is invisible to the browser entirely", () => {
+  // `birthday_reminders` is bookkeeping for a background job. A member has no
+  // reason to read it and no reason to be able to forge one, so it has RLS on,
+  // no policy, and no grant -- which is a closed door rather than a locked one.
+  assert.match(sql, /alter table public\.birthday_reminders enable row level security/u);
+  assert.doesNotMatch(
+    sql,
+    /create policy[^;]*on public\.birthday_reminders/iu,
+    "birthday_reminders must have no policy at all",
+  );
+  assert.doesNotMatch(
+    sql,
+    /grant [^;]*on table public\.birthday_reminders to (authenticated|anon)/iu,
+    "birthday_reminders must not be granted to a browser role",
+  );
+
+  for (const name of ["due_birthday_reminders", "claim_birthday_reminder"]) {
+    assert.match(
+      sql,
+      new RegExp(`revoke all on function public\\.${name}\\([^)]*\\)\\s*from public, anon, authenticated`, "su"),
+      `${name} must be revoked from every browser role`,
+    );
+    assert.doesNotMatch(
+      sql,
+      new RegExp(`grant execute on function public\\.${name}\\([^)]*\\) to (authenticated|anon)`, "u"),
+      `${name} must not be re-granted to a browser role`,
+    );
+  }
+});
+
+test("a birthday cannot be stored as a date that does not exist", () => {
+  // Checked by the database, so a direct PostgREST update is refused the same
+  // way the form is. The clamp for 29 February is a DISPLAY rule; storage is
+  // exact.
+  assert.match(sql, /check \([^)]*birthday_month[^)]*between 1 and 12/su);
+  assert.match(sql, /birthday_day/u);
+  assert.match(sql, /birthday_year/u);
+  // Month and day travel together: half a birthday is not a birthday.
+  assert.match(
+    sql,
+    /\(birthday_month is null and birthday_day is null\)\s*\n?\s*or \(birthday_month is not null and birthday_day is not null\)/u,
+    "month and day must be set or cleared together",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 3. Annual renewal, and the absence of a destructive reset
+// ---------------------------------------------------------------------------
+
+test("nothing in the migration deletes or resets birthday data on a date boundary", () => {
+  // THE CHECKPOINT 4 PROHIBITION, ASSERTED.
+  //
+  // "Renews logically with no destructive January reset" means the renewal is
+  // arithmetic, not a maintenance job. There must therefore be no statement
+  // anywhere that clears birthdays or reminders on a schedule.
+  assert.doesNotMatch(sql, /delete from public\.birthday_reminders/iu, "reminders are never bulk-deleted");
+  assert.doesNotMatch(sql, /truncate\s+(table\s+)?(if exists\s+)?public\./iu, "nothing is truncated");
+  assert.doesNotMatch(
+    sql,
+    /update public\.people set birthday_/iu,
+    "no statement rewrites stored birthdays",
+  );
+
+  // The uniqueness that makes renewal automatic: the occurrence YEAR is part of
+  // the key, so next year's reminder is a different row and no cleanup is
+  // needed for it to be allowed to send.
+  assert.match(
+    sql,
+    /unique \(person_id, occurrence_year, stage\)/u,
+    "a reminder is unique per person, per occurrence year, per stage",
+  );
+});
+
+test("a birthday event is created deliberately, once per person per year at most", () => {
+  // Checkpoint 4 forbids creating birthday events automatically. The database
+  // does not create them; it only refuses a SECOND active one for the same
+  // person and year, so a double submit cannot produce two.
+  assert.match(
+    sql,
+    /create unique index[^;]*events_one_birthday_per_person_per_year_idx[^;]*celebrant_person_id[^;]*event_type = 'birthday'[^;]*status = 'active'/su,
+    "one active birthday event per person per year",
+  );
+  // Nothing schedules or loops over people to make events.
+  assert.doesNotMatch(sql, /insert into public\.events[^;]*from public\.people/isu, "no bulk event creation");
+});
+
+// ---------------------------------------------------------------------------
+// 4. The screens
+// ---------------------------------------------------------------------------
+
+test("every Checkpoint 4 screen gates on the server before it renders", () => {
+  const createPage = read("src", "app", "events", "new", "page.tsx");
+  assert.match(createPage, /member\.role !== "admin"\) redirect\("\/"\)/u);
+  assert.ok(
+    createPage.indexOf('redirect("/")') < createPage.indexOf("<CreateEventForm"),
+    "the redirect must come before the form is rendered",
+  );
+
+  const settingsPage = read("src", "app", "events", "[eventId]", "settings", "page.tsx");
+  assert.match(settingsPage, /await requireEvent\(eventId\)/u, "settings must validate the event in the URL");
+  assert.doesNotMatch(settingsPage, /eq\("year"/u, "settings must not resolve an event by year");
+
+  // Birthdays is family-wide and readable by everyone; only the EDITING is
+  // admin-only, and the flag it passes is a courtesy over the RPC's own check.
+  const birthdaysPage = read("src", "app", "birthdays", "page.tsx");
+  assert.match(birthdaysPage, /isAdmin=\{|isAdmin:/u, "the screen is told whether to offer editing");
+  assert.doesNotMatch(birthdaysPage, /redirect\("\/"\)/u, "reading birthdays is not admin-only");
+});
+
+test("no screen writes to an event, a recipient or a contributor except through the RPCs", () => {
+  const screens = [
+    ["src", "app", "events", "new", "create-event-form.tsx"],
+    ["src", "app", "events", "[eventId]", "settings", "settings-screen.tsx"],
+    ["src", "app", "birthdays", "birthdays-screen.tsx"],
+  ];
+  for (const parts of screens) {
+    const source = read(...parts);
+    assert.doesNotMatch(
+      source,
+      /from\("(events|christmas_events|christmas_recipients|contributors|people)"\)\s*\n?\s*\.(insert|update|delete|upsert)\(/u,
+      `${parts.at(-1)} must not write a table directly`,
+    );
+    assert.match(source, /\.rpc\(/u, `${parts.at(-1)} writes through a guarded function`);
+  }
+});
+
+test("editing a birthday event's date does not edit the person's birthday", () => {
+  // Two different facts. The event's date is when the family is celebrating;
+  // the person's birthday is when they were born. Conflating them would rewrite
+  // a permanent record every time somebody moved a party to the weekend.
+  const settings = read("src", "app", "events", "[eventId]", "settings", "settings-screen.tsx");
+  assert.match(settings, /rpc\("update_event"/u);
+  assert.doesNotMatch(settings, /set_person_birthday/u, "event settings must not touch a stored birthday");
+  assert.match(settings, /saved birthday is edited on the Birthdays page/u, "and it must say so");
+
+  const updateEvent = functionBody("update_event");
+  assert.doesNotMatch(updateEvent, /birthday_month|birthday_day|birthday_year/u, "update_event never writes a birthday");
+});
+
+test("creating a birthday event never invents the birthday it is for", () => {
+  // The date comes from the person's stored birthday or from the admin typing
+  // it. Checkpoint 4's instruction is that no real birthday is hard-coded, so
+  // the creation path must contain no month/day literal at all.
+  const form = read("src", "app", "events", "new", "create-event-form.tsx");
+  assert.doesNotMatch(form, /Paige/iu, "no family member is named in source");
+  assert.doesNotMatch(
+    form,
+    /(month|day)\s*[:=]\s*\d+\s*,\s*(month|day)\s*[:=]\s*\d+/u,
+    "no month/day pair is baked in as a default",
+  );
+  const createEvent = functionBody("create_event");
+  assert.doesNotMatch(createEvent, /interval|current_date \+/u, "create_event does not guess a date");
+});
+
+test("no real family birthday appears anywhere in the repository's source or SQL", () => {
+  // The standing Checkpoint 4 instruction, enforced across the whole tree
+  // rather than one file: the real dates are entered through the app by an
+  // authorised person and live only in the database.
+  //
+  // The check is per LINE, not per file. The family's names appear legitimately
+  // in comments and in assertions like this one; what must never be committed
+  // is a name sitting next to a date. Both halves are assembled here from
+  // pieces so that this guard cannot trip over its own source.
+  const NAMES = ["P" + "aige"];
+  const DATE = /\b(?:6\s+Nov|Nov\w*\s+6\b|1{2}-0?6\b)/iu;
+
+  const offenders = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(join(root, ...dir), { withFileTypes: true })) {
+      if (entry.name === "node_modules" || entry.name === ".next" || entry.name === ".git") continue;
+      if (entry.isDirectory()) { walk([...dir, entry.name]); continue; }
+      if (!/\.(ts|tsx|mjs|sql)$/u.test(entry.name)) continue;
+      const lines = read(...dir, entry.name).split("\n");
+      for (const [index, line] of lines.entries()) {
+        const named = NAMES.some((name) => line.toLowerCase().includes(name.toLowerCase()));
+        if (named && DATE.test(line)) offenders.push(`${[...dir, entry.name].join("/")}:${index + 1}`);
+      }
+    }
+  };
+  walk(["src"]);
+  walk(["scripts"]);
+  walk(["supabase"]);
+  assert.deepEqual(offenders, [], "a real family birthday was committed to source");
+});
+
+// ---------------------------------------------------------------------------
+// 5. Christmas is untouched
+// ---------------------------------------------------------------------------
+
+test("026 changes no financial table, function or amount", () => {
+  // Checkpoint 4 adds birthdays and administration. It must not go near the
+  // money, which is what makes "Christmas 2026 is identical to the penny" a
+  // property of the migration rather than something to re-measure.
+  // recipient_contributions is deliberately NOT on this list: a new event, a
+  // new contributor and a new recipient each have to appear in the plan at
+  // ZERO, or migration 012's budget invariant rejects the first real edit. The
+  // separate assertion below proves every amount it writes is zero.
+  const FINANCIAL = [
+    "purchases", "purchase_allocations", "settlements", "payment_receipts",
+    "payment_confirmations",
+  ];
+  for (const table of FINANCIAL) {
+    assert.doesNotMatch(
+      sql,
+      new RegExp(`(alter table|drop table|truncate)\\s+(if exists\\s+)?public\\.${table}\\b`, "iu"),
+      `026 must not alter ${table}`,
+    );
+    assert.doesNotMatch(
+      sql,
+      new RegExp(`(insert into|update|delete from)\\s+public\\.${table}\\b`, "iu"),
+      `026 must not write ${table}`,
+    );
+  }
+  for (const fn of ["record_settlement", "record_purchase", "confirm_settlement", "owed"]) {
+    assert.doesNotMatch(
+      sql,
+      new RegExp(`create or replace function public\\.${fn}\\b`, "iu"),
+      `026 must not redefine ${fn}`,
+    );
+  }
+});
+
+test("every planned amount 026 writes is zero, so no money is invented", () => {
+  // The one financial table Checkpoint 4 touches, and the reason it is safe.
+  // Each insert selects a literal 0 into planned_amount_pennies; none of them
+  // copies, sums or scales an existing amount.
+  const inserts = [...sql.matchAll(
+    /insert into public\.recipient_contributions \(\s*christmas_recipient_id, contributor_id, planned_amount_pennies\s*\)([\s\S]*?);/gu,
+  )];
+  assert.ok(inserts.length >= 3, "the three creation paths must each seed a plan");
+  for (const [, body] of inserts) {
+    assert.match(body, /,\s*0\s*\n/u, "the planned amount must be a literal zero");
+    assert.doesNotMatch(body, /planned_amount_pennies\s*[+*-]/u, "no arithmetic on an existing amount");
+  }
+
+  // And nothing anywhere in 026 updates an amount that already exists.
+  assert.doesNotMatch(
+    sql,
+    /update public\.recipient_contributions[\s\S]{0,200}?planned_amount_pennies/iu,
+    "026 must never rewrite a planned amount",
+  );
+});
+
+test("the Christmas compatibility view is left exactly as migration 025 left it", () => {
+  assert.doesNotMatch(sql, /create or replace view public\.christmas_events/iu);
+  assert.doesNotMatch(sql, /drop view[^;]*christmas_events/iu);
+});

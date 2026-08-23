@@ -25,7 +25,7 @@
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { contributorOwedSummary, pairKey, type NetOwedBalance } from "./owed.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { giftIdeaAddedNotification, giftStatusNotification, owedToYouNotification, paymentAdminOverrideNotification, paymentAwaitingConfirmationNotification, paymentClaimedNotification, paymentRecordedNotification, paymentReviewNotification, purchaseAddedNotification, shortName, youOweNotification, type NotificationPayload } from "./notification-content.ts";
+import { birthdayReminderNotification, giftIdeaAddedNotification, giftStatusNotification, owedToYouNotification, paymentAdminOverrideNotification, paymentAwaitingConfirmationNotification, paymentClaimedNotification, paymentRecordedNotification, paymentReviewNotification, purchaseAddedNotification, shortName, youOweNotification, type NotificationPayload } from "./notification-content.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { formatPennies } from "./currency.ts";
 
@@ -36,6 +36,7 @@ export type NotificationPreferences = {
   money_owed_to_me: boolean;
   gift_ideas: boolean;
   gift_status: boolean;
+  birthdays: boolean;
 };
 
 /** A member who could be notified: identity, money identity, and their choices. */
@@ -43,6 +44,12 @@ export type NotifiableMember = {
   appMemberId: string;
   /** Null when a member is not linked to an active contributor for this event. */
   contributorId: string | null;
+  /**
+   * The family person behind the account, or null for a membership with no
+   * person linked. A birthday reminder needs this to leave the birthday person
+   * out of their own audience.
+   */
+  personId: string | null;
   name: string;
   preferences: NotificationPreferences;
 };
@@ -59,6 +66,7 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
   money_owed_to_me: true,
   gift_ideas: true,
   gift_status: true,
+  birthdays: true,
 };
 
 export type PurchaseEvent = {
@@ -323,6 +331,48 @@ export type GiftIdeaEvent = {
   recipientName: string;
   christmasRecipientId: string;
 };
+
+export type BirthdayReminderEvent = {
+  /** The birthday person. They are the one member who must NOT be told. */
+  celebrantAppMemberId: string | null;
+  personId: string;
+  personName: string;
+  whenLabel: string;
+  birthdayLabel: string;
+  advice: string;
+  occurrenceYear: number;
+  stage: string;
+  eventId: string | null;
+};
+
+/**
+ * Everyone active except the birthday person.
+ *
+ * Nobody should be reminded to buy their own present, and a member who has
+ * turned birthday reminders off is left out like any other preference. Global
+ * Admin is treated as an ordinary family member here: they get reminded because
+ * they also buy presents, not because of their role.
+ */
+export function planBirthdayReminderNotifications(
+  event: BirthdayReminderEvent,
+  members: NotifiableMember[],
+): PlannedNotification[] {
+  return members
+    .filter((member) => member.appMemberId !== event.celebrantAppMemberId && member.preferences.birthdays)
+    .map((member) => ({
+      appMemberId: member.appMemberId,
+      payload: birthdayReminderNotification({
+        personName: shortName(event.personName),
+        whenLabel: event.whenLabel,
+        birthdayLabel: event.birthdayLabel,
+        advice: event.advice,
+        personId: event.personId,
+        occurrenceYear: event.occurrenceYear,
+        stage: event.stage,
+        eventId: event.eventId,
+      }),
+    }));
+}
 
 export function planGiftIdeaNotifications(
   event: GiftIdeaEvent,

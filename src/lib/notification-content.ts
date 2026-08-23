@@ -22,7 +22,8 @@ export type NotificationCategory =
   | "money_i_owe"
   | "money_owed_to_me"
   | "gift_ideas"
-  | "gift_status";
+  | "gift_status"
+  | "birthdays";
 
 export type NotificationPayload = {
   title: string;
@@ -69,6 +70,44 @@ export function personUrl(christmasRecipientId: string): string {
   // `/people/[id]` redirects here, and this is the form the app's own deep
   // links already use, so a notification tap lands on the person modal.
   return `/people?person=${encodeURIComponent(christmasRecipientId)}`;
+}
+
+/** Where the Birthdays calendar lives, for a reminder with no event yet. */
+export const BIRTHDAYS_URL = "/birthdays";
+
+/**
+ * "Paige's birthday is in 1 month."
+ *
+ * The TITLE says what is happening, as every notification does since
+ * Checkpoint 3. The BODY leads with the date, so somebody glancing at a lock
+ * screen knows when without opening anything.
+ *
+ * Where a Birthday Event already exists the link goes straight to it and
+ * `withEvent` prefixes the body with the event's name. Where one does not, the
+ * link goes to the Birthdays page — never to an event URL that does not exist.
+ */
+export function birthdayReminderNotification(input: {
+  personName: string;
+  /** "in 1 month", "next week", "tomorrow". */
+  whenLabel: string;
+  /** "6 November". */
+  birthdayLabel: string;
+  advice: string;
+  personId: string;
+  occurrenceYear: number;
+  stage: string;
+  eventId: string | null;
+}): NotificationPayload {
+  return {
+    title: `🎂 ${input.personName}'s birthday is ${input.whenLabel}`,
+    body: `${input.birthdayLabel} · ${input.advice}`,
+    url: input.eventId ? `/events/${input.eventId}` : BIRTHDAYS_URL,
+    // Person, occurrence year and stage all take part, so the one-month,
+    // one-week and one-day reminders never replace one another on the device,
+    // and next year's never replaces this year's.
+    tag: `birthday:${input.personId}:${input.occurrenceYear}:${input.stage}`,
+    category: "birthdays",
+  };
 }
 
 /** The event a notification belongs to, as the dispatcher resolved it. */
@@ -153,6 +192,8 @@ function withEventPrefix(body: string, eventName: string): string {
  */
 export function eventUrlFor(url: string, eventId: string): string {
   if (!url.startsWith("/")) return url;
+  // Already an event route — a birthday reminder builds its own.
+  if (url.startsWith("/events/")) return url;
   const [path, query] = splitQuery(url);
   const section = path === "/owed" ? "owed" : path === "/people" ? "people" : null;
   if (!section) return url;

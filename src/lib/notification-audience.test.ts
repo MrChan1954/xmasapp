@@ -23,6 +23,9 @@ function member(
   return {
     appMemberId: person.member,
     contributorId: person.contributor,
+    // Derived from the membership id so every fixture member has a distinct
+    // person, which is what the birthday audience filter keys on.
+    personId: person.member.replace(/^m-/u, "p-"),
     name: person.name,
     preferences: { ...DEFAULT_NOTIFICATION_PREFERENCES, ...preferences },
   };
@@ -380,12 +383,17 @@ test("gift status reaches only the contributors carrying part of that gift", () 
 });
 
 test("members with no stored preferences are treated as opted in", () => {
+  // Every category defaults ON, including the one Checkpoint 4 added. A
+  // birthday reminder that arrived only for people who had already been into
+  // Settings would be worse than no reminder at all: the family would believe
+  // it was covered.
   assert.deepEqual(DEFAULT_NOTIFICATION_PREFERENCES, {
     purchases: true,
     money_i_owe: true,
     money_owed_to_me: true,
     gift_ideas: true,
     gift_status: true,
+    birthdays: true,
   });
 });
 

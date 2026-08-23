@@ -342,11 +342,14 @@ test("every runtime read of the Christmas compatibility view is enumerated and l
   walk(["src"]);
 
   const EXPECTED = {
-    // Old bookmarks and pre-Checkpoint-2 notification links.
+    // Old bookmarks and pre-Checkpoint-2 notification links. THE ONLY ONE LEFT.
+    //
+    // Family Access used to be on this list: it edited contributors against
+    // whichever Christmas was newest, because contributor membership had no
+    // event to belong to. Checkpoint 4 moved that editing to Event Settings,
+    // where the event is named in the URL, and Family Access became what its
+    // name says — accounts, family-wide, no event resolved at all.
     "src/utils/supabase/events-server.ts": "legacyChristmasEventId",
-    // Family Access still edits contributors without naming an event.
-    // Checkpoint 4 gives it one.
-    "src/app/api/admin/family-access/route.ts": "loadCurrentChristmasEvent",
   };
 
   assert.deepEqual(
@@ -475,12 +478,27 @@ test("15. this checkpoint changed navigation, not money", () => {
   }
 });
 
-test("creating an event is not possible yet, and the shell says so", () => {
+test("creating an event is admin-only on the server, and writes only through the RPC", () => {
+  // Checkpoint 2 asserted a "Coming next" placeholder here. Checkpoint 4
+  // replaced the placeholder with the real form, so this now asserts the
+  // property that actually matters: the page gates on the server, and the only
+  // write is the SECURITY DEFINER function that gates again in the database.
   const page = read(...APP, "events", "new", "page.tsx");
   assert.match(page, /member\.role !== "admin"\) redirect\("\/"\)/, "admin only");
-  assert.match(page, /Coming next/);
-  // Checkpoint 4 owns the mutation. Nothing here may write an event.
-  assert.doesNotMatch(page, /\.insert\(|\.rpc\(|from\("events"\)/);
+  assert.doesNotMatch(page, /Coming next/, "the placeholder is gone");
+  assert.doesNotMatch(
+    page,
+    /\.insert\(|from\("events"\)/u,
+    "the page must not write to events directly",
+  );
+
+  const form = read(...APP, "events", "new", "create-event-form.tsx");
+  assert.match(form, /rpc\("create_event"/, "the form creates through create_event");
+  assert.doesNotMatch(
+    form,
+    /from\("events"\)|from\("christmas_recipients"\)|from\("contributors"\)/u,
+    "the form must not reach past the RPC into the tables it guards",
+  );
 
   // The dashboard offers it to Global Admin only.
   const dashboard = read(...APP, "events-dashboard.tsx");

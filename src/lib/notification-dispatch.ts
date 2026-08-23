@@ -32,6 +32,7 @@
 import { calculateNetOwedBalances, type NetOwedBalance, type PurchaseObligation, type SettlementLedgerEntry } from "./owed.ts";
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
+  planBirthdayReminderNotifications,
   planGiftIdeaNotifications,
   planGiftStatusNotifications,
   planPaymentNotifications,
@@ -45,6 +46,18 @@ import {
 import { shortName, withEvent, type NotificationEvent } from "./notification-content.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { logNotification, pushServiceHost } from "./notification-log.ts";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { formatBirthday } from "./birthdays.ts";
+
+/**
+ * What each reminder stage says. One place, so the three stages read as one
+ * voice and the wording is not scattered across the scheduler.
+ */
+const STAGE_COPY = {
+  one_month: { whenLabel: "in 1 month", advice: "Time to start sorting a present." },
+  one_week: { whenLabel: "next week", advice: "Make sure you have their present sorted." },
+  one_day: { whenLabel: "tomorrow", advice: "Make sure the present is ready and dropped off." },
+} as const;
 
 /**
  * How old a row may be and still justify a notification RAISED BY A CLIENT.
@@ -82,7 +95,23 @@ export class NotificationError extends Error {
   }
 }
 
-export type NotificationEventKind = "purchase" | "payment" | "gift_idea" | "gift_status" | "payment_review";
+export type NotificationEventKind =
+  | "purchase"
+  | "payment"
+  | "gift_idea"
+  | "gift_status"
+  | "payment_review"
+  | "birthday_reminder";
+
+/**
+ * Kinds that belong to an event, and kinds that may not.
+ *
+ * A financial notification whose event cannot be resolved is a broken row and
+ * is retired. A birthday reminder with no event is the NORMAL case: most
+ * birthdays have no Birthday Event, and the reminder links to the Birthdays
+ * page instead.
+ */
+export const EVENTLESS_KINDS: readonly NotificationEventKind[] = ["birthday_reminder"];
 
 /**
  * The bit of a Supabase client this module uses.
@@ -190,9 +219,10 @@ function emptyReport(
 // ---------------------------------------------------------------------------
 
 export type FamilyContext = {
-  eventId: string;
-  /** Identity for the copy and the deep link. */
-  event: NotificationEvent;
+  /** Null for a family-wide notification that belongs to no event. */
+  eventId: string | null;
+  /** Identity for the copy and the deep link; null when there is no event. */
+  event: NotificationEvent | null;
   members: NotifiableMember[];
   membersById: Map<string, NotifiableMember>;
   contributorNames: Map<string, string>;
@@ -263,6 +293,28 @@ export async function resolveSubjectEventId(
     return (settlement.data.christmas_event_id as string) ?? null;
   }
 
+  if (kind === "birthday_reminder") {
+    // A birthday reminder belongs to a Birthday Event only if one has been
+    // created for that person and year. Usually it has not, and that is normal:
+    // the reminder then links to the Birthdays page instead.
+    const reminder = await reader
+      .from("birthday_reminders")
+      .select("person_id,occurrence_year")
+      .eq("id", subjectId)
+      .maybeSingle();
+    if (reminder.error || !reminder.data) return null;
+    const event = await reader
+      .from("events")
+      .select("id,event_date")
+      .eq("event_type", "birthday")
+      .eq("status", "active")
+      .eq("celebrant_person_id", reminder.data.person_id);
+    if (event.error) return null;
+    const match = (event.data ?? []).find((row: { event_date: string }) =>
+      String(row.event_date).slice(0, 4) === String(reminder.data.occurrence_year));
+    return (match?.id as string) ?? null;
+  }
+
   const receipt = await reader
     .from("payment_receipts")
     .select("christmas_event_id")
@@ -302,12 +354,16 @@ export async function loadNotificationEvent(
 export async function loadFamilyContext(
   reader: DataClient,
   admin: DataClient,
-  eventId: string,
+  eventId: string | null,
   event?: NotificationEvent,
 ): Promise<FamilyContext> {
+  // With no event there is nothing event-scoped to load. The family itself —
+  // who is active, and what they have asked to hear about — is what a birthday
+  // reminder needs, and that is family-wide.
+  const empty = { data: [] as never[], error: null };
   const [contributors, recipients, memberships, preferences] = await Promise.all([
-    reader.from("contributors").select("id,person_id,active").eq("christmas_event_id", eventId),
-    reader.from("christmas_recipients").select("id,person_id").eq("christmas_event_id", eventId),
+    eventId ? reader.from("contributors").select("id,person_id,active").eq("christmas_event_id", eventId) : empty,
+    eventId ? reader.from("christmas_recipients").select("id,person_id").eq("christmas_event_id", eventId) : empty,
     admin.from("app_members").select("id,person_id,contributor_id,active").eq("active", true),
     admin.from("notification_preferences").select("*"),
   ]);
@@ -346,6 +402,7 @@ export async function loadFamilyContext(
     return {
       appMemberId: membership.id,
       contributorId: contributor?.id ?? null,
+      personId: membership.person_id ?? null,
       name: membership.person_id ? personNames.get(membership.person_id) ?? "Someone" : "Someone",
       preferences: stored
         ? {
@@ -354,6 +411,9 @@ export async function loadFamilyContext(
           money_owed_to_me: stored.money_owed_to_me,
           gift_ideas: stored.gift_ideas,
           gift_status: stored.gift_status,
+          // A database that predates the birthdays column simply has no value
+          // here, and a member with no stored preference is opted in.
+          birthdays: stored.birthdays ?? true,
         }
         : DEFAULT_NOTIFICATION_PREFERENCES,
     };
@@ -361,12 +421,12 @@ export async function loadFamilyContext(
 
   return {
     eventId,
-    event: event ?? await loadNotificationEvent(reader, eventId),
+    event: eventId ? (event ?? await loadNotificationEvent(reader, eventId)) : null,
     members,
     membersById: new Map(members.map((row) => [row.appMemberId, row])),
     contributorNames,
     recipientNames,
-    balances: await loadAuthoritativeBalances(reader, eventId, [...recipientNames.keys()]),
+    balances: eventId ? await loadAuthoritativeBalances(reader, eventId, [...recipientNames.keys()]) : [],
   };
 }
 
@@ -441,8 +501,16 @@ export async function loadAuthoritativeBalances(
 export type BuiltPlan = {
   planned: PlannedNotification[];
   fingerprint: string;
-  /** The actor as recorded on the row itself, never as claimed by a caller. */
-  actorAppMemberId: string;
+  /**
+   * The actor as recorded on the row itself, never as claimed by a caller.
+   *
+   * Null where there is genuinely nobody: a birthday reminder is "about" the
+   * person whose birthday it is, and that person may have no app account.
+   * `notification_events.actor_app_member_id` is a nullable foreign key to
+   * `app_members`, so a person id here would be rejected at insert time --
+   * which would cost the family the deduplication ledger for that send.
+   */
+  actorAppMemberId: string | null;
 };
 
 /**
@@ -624,6 +692,55 @@ export async function buildPlan(
     };
   }
 
+  if (kind === "birthday_reminder") {
+    const reminder = await reader
+      .from("birthday_reminders")
+      .select("id,person_id,occurrence_year,stage,occurrence_date,queued_at")
+      .eq("id", subjectId)
+      .maybeSingle();
+    if (reminder.error || !reminder.data) return null;
+    const row = reminder.data;
+
+    const person = await reader
+      .from("people")
+      .select("id,name,birthday_month,birthday_day")
+      .eq("id", row.person_id)
+      .maybeSingle();
+    if (person.error || !person.data || person.data.birthday_month === null) return null;
+
+    // The birthday person is treated as the actor, which is precisely what
+    // keeps them out of their own audience: nobody is reminded to buy their
+    // own present.
+    const celebrant = context.members.find((member) => member.personId === row.person_id);
+    authorize(celebrant?.appMemberId ?? null, row.queued_at);
+
+    const stage = STAGE_COPY[row.stage as keyof typeof STAGE_COPY];
+    if (!stage) return null;
+
+    return {
+      // Null, never the person id: these are different tables, and the column
+      // is a foreign key to app_members.
+      actorAppMemberId: celebrant?.appMemberId ?? null,
+      // One send per person, per occurrence year, per stage. The database row
+      // this reads is already unique on exactly that, so a retry converges.
+      fingerprint: `${row.occurrence_year}:${row.stage}`,
+      planned: planBirthdayReminderNotifications(
+        {
+          celebrantAppMemberId: celebrant?.appMemberId ?? null,
+          personId: row.person_id,
+          personName: person.data.name,
+          whenLabel: stage.whenLabel,
+          birthdayLabel: formatBirthday(person.data.birthday_month, person.data.birthday_day),
+          advice: stage.advice,
+          occurrenceYear: row.occurrence_year,
+          stage: row.stage,
+          eventId: context.eventId,
+        },
+        context.members,
+      ),
+    };
+  }
+
   const idea = await reader
     .from("gift_ideas")
     .select("id,christmas_recipient_id,suggested_by_app_member_id,created_at")
@@ -650,7 +767,8 @@ export async function buildPlan(
   };
 }
 
-function nameOf(context: FamilyContext, appMemberId: string): string {
+function nameOf(context: FamilyContext, appMemberId: string | null): string {
+  if (!appMemberId) return "Someone";
   return context.membersById.get(appMemberId)?.name ?? "Someone";
 }
 
@@ -727,15 +845,23 @@ export async function runNotificationEvent(input: RunEventInput): Promise<Dispat
    * and its collapse key is scoped to the event so two events' messages cannot
    * replace one another on the device.
    */
-  const built: BuiltPlan = {
-    ...unstamped,
-    planned: unstamped.planned.map((notification) => ({
-      ...notification,
-      payload: withEvent(notification.payload, context.event),
-    })),
-  };
+  const eventContext = context.event;
+  const built: BuiltPlan = eventContext
+    ? {
+      ...unstamped,
+      planned: unstamped.planned.map((notification) => ({
+        ...notification,
+        payload: withEvent(notification.payload, eventContext),
+      })),
+    }
+    // No event: a family-wide notification keeps exactly what its builder
+    // wrote, including its own link and its own collapse key.
+    : unstamped;
 
   const actor = shortName(nameOf(context, built.actorAppMemberId));
+  // With no actor nobody is excluded here, which is correct: an eventless
+  // notification with no actor is addressed to whoever its builder planned for,
+  // and the builder has already done its own exclusion.
   const audience = context.members.filter((member) => member.appMemberId !== built.actorAppMemberId).length;
 
   const base: DispatchReport = {
@@ -1086,10 +1212,21 @@ export async function drainNotificationOutbox(input: DrainInput): Promise<Dispat
    * it is per-drain and never outlives the call.
    */
   const contextByEvent = new Map<string, FamilyContext>();
+  /** Cache key for the one context that belongs to no event. */
+  const FAMILY_WIDE = "family-wide";
   const contextFor = async (kind: NotificationEventKind, subjectId: string): Promise<FamilyContext | null> => {
     if (input.loadContext) return input.loadContext(admin);
     const eventId = await resolveSubjectEventId(kind, subjectId, admin);
-    if (!eventId) return null;
+    // A birthday reminder usually has no event, and that is not a failure: it
+    // gets a family-wide context and links to the Birthdays page.
+    if (!eventId) {
+      if (!EVENTLESS_KINDS.includes(kind)) return null;
+      const familyWide = contextByEvent.get(FAMILY_WIDE);
+      if (familyWide) return familyWide;
+      const loaded = await loadFamilyContext(admin, admin, null);
+      contextByEvent.set(FAMILY_WIDE, loaded);
+      return loaded;
+    }
     const cached = contextByEvent.get(eventId);
     if (cached) return cached;
     const loaded = await loadFamilyContext(admin, admin, eventId);

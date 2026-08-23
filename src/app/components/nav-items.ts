@@ -49,7 +49,7 @@ export function navItemsFor(eventId: string | null): NavItem[] {
  */
 export function activeNavSection(pathname: string): EventSection | null {
   const section = eventSectionFromPath(pathname);
-  if (section === "payment-log") return "more";
+  if (section === "payment-log" || section === "settings") return "more";
   if (section) return section;
   if (pathname.startsWith("/more") || pathname.startsWith("/account") || pathname.startsWith("/payment-log")) return "more";
   return null;
@@ -81,6 +81,7 @@ const EVENT_SECTION_TITLES: Record<EventSection, string> = {
   owed: "Owed",
   more: "More",
   "payment-log": "Payment log",
+  settings: "Event settings",
 };
 
 const TITLES: Array<{ test: RegExp; title: string; parent?: { href: string; label: string } }> = [

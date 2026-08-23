@@ -1,7 +1,6 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { formatPennies } from "@/lib/currency";
 import { INPUT_LIMITS, validateEmail } from "@/lib/input-validation";
 import { IconPlus, IconSearch, IconShield } from "../../components/icons";
 import {
@@ -25,8 +24,7 @@ import { useRealtimeRefresh } from "../../components/use-realtime-refresh";
 type AccountStatus = "no_account" | "pending" | "active" | "disabled";
 type AccountRole = "admin" | "member" | null;
 
-type FamilyContributor = {
-  contributorId: string;
+type FamilyMember = {
   personId: string;
   name: string;
   email: string | null;
@@ -34,15 +32,10 @@ type FamilyContributor = {
   active: boolean | null;
   status: AccountStatus;
   isCurrentUser: boolean;
-  plannedAmountPennies: number;
 };
 
-type AvailablePerson = { personId: string; name: string };
-
 type FamilyAccessResponse = {
-  contributors: FamilyContributor[];
-  availablePeople: AvailablePerson[];
-  currentEvent: { id: string; year: number; name: string };
+  members: FamilyMember[];
   currentUser: {
     personId: string;
     role: "admin";
@@ -57,9 +50,7 @@ type ActionName =
   | "copy-reset-link"
   | "disable"
   | "reactivate"
-  | "update-email"
-  | "add-contributor"
-  | "remove-contributor";
+  | "update-email";
 
 type ActionResponse = {
   ok?: boolean;
@@ -71,10 +62,8 @@ type ActionResponse = {
 type Filter = "all" | AccountStatus;
 type DialogState =
   | { kind: "create"; personId: string }
-  | { kind: "email"; person: FamilyContributor }
-  | { kind: "contributor" }
-  | { kind: "confirm-disable"; person: FamilyContributor }
-  | { kind: "confirm-remove"; person: FamilyContributor }
+  | { kind: "email"; person: FamilyMember }
+  | { kind: "confirm-disable"; person: FamilyMember }
   | null;
 
 const filters: Array<{ value: Filter; label: string }> = [
@@ -86,8 +75,7 @@ const filters: Array<{ value: Filter; label: string }> = [
 ];
 
 export function FamilyAccessClient() {
-  const [contributors, setContributors] = useState<FamilyContributor[]>([]);
-  const [availablePeople, setAvailablePeople] = useState<AvailablePerson[]>([]);
+  const [members, setMembers] = useState<FamilyMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,7 +85,7 @@ export function FamilyAccessClient() {
   const [dialog, setDialog] = useState<DialogState>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const loadContributors = useCallback(async (quiet = false) => {
+  const loadMembers = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     setError(null);
 
@@ -113,17 +101,15 @@ export function FamilyAccessClient() {
 
       if (response.status === 401 || response.status === 403) {
         setForbidden(true);
-        setContributors([]);
-        setAvailablePeople([]);
+        setMembers([]);
         return;
       }
-      if (!response.ok || !payload || !("contributors" in payload)) {
+      if (!response.ok || !payload || !("members" in payload)) {
         throw new Error(payload && "error" in payload && payload.error ? payload.error : "Family access could not be loaded.");
       }
 
       setForbidden(false);
-      setContributors(payload.contributors);
-      setAvailablePeople(payload.availablePeople);
+      setMembers(payload.members);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Family access could not be loaded.");
     } finally {
@@ -133,38 +119,40 @@ export function FamilyAccessClient() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void loadContributors();
+      void loadMembers();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [loadContributors]);
+  }, [loadMembers]);
 
-  // Adding or removing a contributor on another device changes `contributors`;
-  // planned totals shown on each card come from `recipient_contributions`, and
-  // names from `people`. The refetch goes back through the admin route, so the
-  // Global Admin check still runs on every refresh.
+  // This screen is family-global, so it watches the one family-global table it
+  // shows: `people`. It no longer watches `contributors`, because contributor
+  // membership is per-event and is edited in Event Settings, and no longer
+  // watches `recipient_contributions`, because no money is shown here. The
+  // refetch goes back through the admin route, so the Global Admin check still
+  // runs on every refresh.
   useRealtimeRefresh(
-    ["contributors", "recipient_contributions", "people"],
-    () => loadContributors(true),
+    ["people"],
+    () => loadMembers(true),
     { enabled: !forbidden },
   );
 
   const counts = useMemo(() => {
     const result: Record<Filter, number> = {
-      all: contributors.length,
+      all: members.length,
       no_account: 0,
       pending: 0,
       active: 0,
       disabled: 0,
     };
-    contributors.forEach((person) => {
+    members.forEach((person) => {
       result[person.status] += 1;
     });
     return result;
-  }, [contributors]);
+  }, [members]);
 
   const visible = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    return contributors.filter((person) => {
+    return members.filter((person) => {
       const matchesFilter = filter === "all" || person.status === filter;
       const matchesQuery =
         !normalizedQuery ||
@@ -172,16 +160,16 @@ export function FamilyAccessClient() {
         person.email?.toLowerCase().includes(normalizedQuery);
       return matchesFilter && matchesQuery;
     });
-  }, [filter, contributors, query]);
+  }, [filter, members, query]);
 
   const noAccountPeople = useMemo(
-    () => contributors.filter((person) => person.status === "no_account").sort((a, b) => a.name.localeCompare(b.name)),
-    [contributors],
+    () => members.filter((person) => person.status === "no_account").sort((a, b) => a.name.localeCompare(b.name)),
+    [members],
   );
 
   const runAction = async (
     action: ActionName,
-    person: Pick<FamilyContributor, "personId" | "name"> | AvailablePerson,
+    person: Pick<FamilyMember, "personId" | "name">,
     options?: { email?: string; delivery?: "email" | "link" },
   ) => {
     const busyKey = `${action}:${person.personId}`;
@@ -215,7 +203,7 @@ export function FamilyAccessClient() {
           // The server action may already have created or updated the account.
           // Refresh before reporting the separate clipboard failure.
           setDialog(null);
-          await loadContributors(true);
+          await loadMembers(true);
           setError(copyError instanceof Error ? copyError.message : "The secure link was created, but this browser could not copy it.");
           return false;
         }
@@ -224,7 +212,7 @@ export function FamilyAccessClient() {
       const defaultMessage = actionMessage(action, person.name, options?.delivery);
       setNotice(copiesLink ? defaultMessage : payload?.message ?? defaultMessage);
       setDialog(null);
-      await loadContributors(true);
+      await loadMembers(true);
       return true;
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "That Family Access change could not be saved.");
@@ -267,19 +255,12 @@ export function FamilyAccessClient() {
           </div>
           <h1 className="mt-2 font-display text-[clamp(2rem,5vw,2.75rem)] leading-[1.08] font-semibold tracking-tight">Family Access</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-600">
-            Manage Christmas contributors and control who can open the app.
+            Who can open the app, and what they are allowed to do. This is the whole family,
+            not one event. To choose who receives or who chips in for a particular event,
+            open that event and use its settings.
           </p>
         </div>
         <div className="grid w-full gap-3 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
-          <Button
-            variant="secondary"
-            size="lg"
-            disabled={loading || availablePeople.length === 0}
-            onClick={() => setDialog({ kind: "contributor" })}
-          >
-            <IconPlus size={17} />
-            Add Contributor
-          </Button>
           <Button
             size="lg"
             disabled={loading || noAccountPeople.length === 0}
@@ -292,7 +273,7 @@ export function FamilyAccessClient() {
       </header>
 
       <section className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="Account summary">
-        <Summary label="Contributors" value={counts.all} />
+        <Summary label="Family" value={counts.all} />
         <Summary label="Active account" value={counts.active} accent />
         <Summary label="Setup pending" value={counts.pending} />
         <Summary label="No account" value={counts.no_account} />
@@ -339,7 +320,7 @@ export function FamilyAccessClient() {
 
       {visible.length === 0 ? (
         <div className="mt-7 rounded-2xl border border-dashed border-line-strong bg-surface-2 px-5 py-12 text-center">
-          <h2 className="font-display text-lg font-semibold">No matching contributors</h2>
+          <h2 className="font-display text-lg font-semibold">No matching people</h2>
           <p className="mt-2 text-sm text-ink-600">Try a different name or account filter.</p>
         </div>
       ) : (
@@ -353,7 +334,6 @@ export function FamilyAccessClient() {
               onEditEmail={() => setDialog({ kind: "email", person })}
               onAction={(action) => void runAction(action, person)}
               onDisable={() => setDialog({ kind: "confirm-disable", person })}
-              onRemoveContributor={() => setDialog({ kind: "confirm-remove", person })}
             />
           ))}
         </div>
@@ -378,15 +358,6 @@ export function FamilyAccessClient() {
         />
       )}
 
-      {dialog?.kind === "contributor" && (
-        <AddContributorDialog
-          people={availablePeople}
-          busy={busy !== null}
-          onClose={() => setDialog(null)}
-          onAdd={async (person) => runAction("add-contributor", person)}
-        />
-      )}
-
       {dialog?.kind === "confirm-disable" && (
         <ConfirmDialog
           title={`Disable app access for ${dialog.person.name}?`}
@@ -396,18 +367,6 @@ export function FamilyAccessClient() {
           busy={busy !== null}
           onCancel={() => setDialog(null)}
           onConfirm={() => void runAction("disable", dialog.person).then(() => setDialog(null))}
-        />
-      )}
-
-      {dialog?.kind === "confirm-remove" && (
-        <ConfirmDialog
-          title={`Remove ${dialog.person.name} as an active contributor?`}
-          body="Their account, recipient entry, and history will be kept."
-          confirmLabel="Remove Contributor"
-          busyLabel="Removing..."
-          busy={busy !== null}
-          onCancel={() => setDialog(null)}
-          onConfirm={() => void runAction("remove-contributor", dialog.person).then(() => setDialog(null))}
         />
       )}
     </div>
@@ -421,15 +380,13 @@ function AccountCard({
   onEditEmail,
   onAction,
   onDisable,
-  onRemoveContributor,
 }: {
-  person: FamilyContributor;
+  person: FamilyMember;
   busy: string | null;
   onAdd: () => void;
   onEditEmail: () => void;
   onAction: (action: ActionName) => void;
   onDisable: () => void;
-  onRemoveContributor: () => void;
 }) {
   const working = busy?.endsWith(`:${person.personId}`) ?? false;
   const isProtectedAdmin = person.role === "admin";
@@ -460,11 +417,6 @@ function AccountCard({
           <p className={cx("mt-0.5 break-all text-sm", person.email ? "font-semibold text-ink-900" : "text-ink-400")}>
             {person.email ?? "Not added yet"}
           </p>
-        </div>
-
-        <div className="mt-3 flex min-h-11 items-center justify-between gap-3 rounded-xl bg-accent-soft px-3 py-2.5">
-          <p className="text-xs font-medium text-ink-600">Planned contribution</p>
-          <p className="font-semibold tabular-nums text-accent">{formatPennies(person.plannedAmountPennies)}</p>
         </div>
 
         <div className="mt-5">
@@ -504,17 +456,6 @@ function AccountCard({
             </div>
           )}
 
-          {!isProtectedAdmin && (
-            <button
-              type="button"
-              onClick={onRemoveContributor}
-              disabled={working}
-              className="mt-4 min-h-11 w-full border-t border-line pt-4 text-sm font-semibold text-berry transition hover:text-berry disabled:opacity-50"
-            >
-              Remove Contributor
-            </button>
-          )}
-
           {working && <p role="status" className="mt-3 text-center text-xs font-medium text-ink-600">Saving change...</p>}
         </div>
       </div>
@@ -529,11 +470,11 @@ function CreateAccountDialog({
   onClose,
   onCreate,
 }: {
-  people: FamilyContributor[];
+  people: FamilyMember[];
   initialPersonId: string;
   busy: boolean;
   onClose: () => void;
-  onCreate: (person: FamilyContributor, email: string, delivery: "email" | "link") => Promise<boolean>;
+  onCreate: (person: FamilyMember, email: string, delivery: "email" | "link") => Promise<boolean>;
 }) {
   const [personId, setPersonId] = useState(initialPersonId);
   const [email, setEmail] = useState("");
@@ -583,70 +524,13 @@ function CreateAccountDialog({
   );
 }
 
-function AddContributorDialog({
-  people,
-  busy,
-  onClose,
-  onAdd,
-}: {
-  people: AvailablePerson[];
-  busy: boolean;
-  onClose: () => void;
-  onAdd: (person: AvailablePerson) => Promise<boolean>;
-}) {
-  const [personId, setPersonId] = useState(people[0]?.personId ?? "");
-  const [validation, setValidation] = useState<string | null>(null);
-  const person = people.find((item) => item.personId === personId);
-
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!person) {
-      setValidation("Choose an existing person.");
-      return;
-    }
-    setValidation(null);
-    await onAdd(person);
-  };
-
-  return (
-    <DialogFrame
-      title="Add Contributor"
-      description="Choose an existing person for the current Christmas. This does not create an account or change any allocations."
-      busy={busy}
-      onClose={onClose}
-    >
-      <form onSubmit={(event) => void submit(event)}>
-        <Field label="Person" required>
-          <Select autoFocus required value={personId} onChange={(event) => setPersonId(event.target.value)}>
-            <option value="">Choose a person</option>
-            {people.map((item) => (
-              <option key={item.personId} value={item.personId}>{item.name}</option>
-            ))}
-          </Select>
-        </Field>
-
-        <div className="mt-4 rounded-xl border border-line bg-surface-2 p-4 text-sm leading-6 text-ink-600">
-          Their planned contribution starts at {formatPennies(0)}. Use each recipient&apos;s contributor editor to assign money later.
-        </div>
-
-        {validation && <p className="mt-4 text-sm font-semibold text-berry">{validation}</p>}
-
-        <div className="mt-6 grid grid-cols-2 gap-3">
-          <Button variant="secondary" size="lg" disabled={busy} onClick={onClose}>Cancel</Button>
-          <Button type="submit" size="lg" disabled={busy || people.length === 0}>{busy ? "Adding..." : "Add Contributor"}</Button>
-        </div>
-      </form>
-    </DialogFrame>
-  );
-}
-
 function EmailDialog({
   person,
   busy,
   onClose,
   onSave,
 }: {
-  person: FamilyContributor;
+  person: FamilyMember;
   busy: boolean;
   onClose: () => void;
   onSave: (email: string) => Promise<boolean>;
@@ -764,8 +648,6 @@ function initials(name: string) {
 }
 
 function actionMessage(action: ActionName, name: string, delivery?: "email" | "link") {
-  if (action === "add-contributor") return `${name} is now an active contributor.`;
-  if (action === "remove-contributor") return `${name} is no longer an active contributor.`;
   if (action === "create") return delivery === "link" ? `${name}'s account was created and the setup link was copied.` : `${name}'s account was created and the invite was sent.`;
   if (action === "send-invite") return `A new setup email was sent to ${name}.`;
   if (action === "copy-setup-link") return `${name}'s setup link was copied.`;

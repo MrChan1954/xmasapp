@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { formatPennies } from "@/lib/currency";
 import { INPUT_LIMITS } from "@/lib/input-validation";
 import { getRequestOrigin } from "@/utils/request-origin";
 
@@ -34,12 +33,6 @@ type PersonRow = {
   name: string;
 };
 
-type ContributorRow = {
-  id: string;
-  person_id: string;
-  active: boolean;
-};
-
 type Action =
   | "create"
   | "send-invite"
@@ -48,9 +41,7 @@ type Action =
   | "copy-reset-link"
   | "disable"
   | "reactivate"
-  | "update-email"
-  | "add-contributor"
-  | "remove-contributor";
+  | "update-email";
 
 const actions = new Set<Action>([
   "create",
@@ -61,67 +52,40 @@ const actions = new Set<Action>([
   "disable",
   "reactivate",
   "update-email",
-  "add-contributor",
-  "remove-contributor",
 ]);
 
 const noStoreHeaders = {
   "Cache-Control": "private, no-store, max-age=0",
 };
 
+/**
+ * Every family member, with the state of their app account.
+ *
+ * FAMILY ACCESS IS FAMILY-GLOBAL, AND ONLY THAT.
+ *
+ * It used to list the contributors of "the current Christmas", because
+ * contributor membership had nowhere else to live. Since Checkpoint 4 it does:
+ * Event Settings edits contributors against an event named in the URL. So this
+ * screen answers the one question that genuinely has no event — who can sign
+ * in, and with what role — and resolves no event whatsoever.
+ */
 export async function GET() {
   try {
     // Route handlers are public entry points. Do not rely on Proxy or UI checks.
     const context = await requireFamilyAccessAdmin();
-    const currentEvent = await loadCurrentChristmasEvent(context.admin);
-    const [peopleResult, contributorResult, membershipResult, authUsers] =
-      await Promise.all([
-        context.admin.from("people").select("id, name").order("name"),
-        context.admin
-          .from("contributors")
-          .select("id, person_id, active")
-          .eq("christmas_event_id", currentEvent.id),
-        context.admin
-          .from("app_members")
-          .select("id, person_id, contributor_id, user_id, email, role, active"),
-        listAllAuthUsers(context.admin),
-      ]);
+    const [peopleResult, membershipResult, authUsers] = await Promise.all([
+      context.admin.from("people").select("id, name").order("name"),
+      context.admin
+        .from("app_members")
+        .select("id, person_id, contributor_id, user_id, email, role, active"),
+      listAllAuthUsers(context.admin),
+    ]);
 
-    if (peopleResult.error || contributorResult.error || membershipResult.error) {
-      throw new FamilyAccessError(
-        502,
-        "Christmas contributor access could not be loaded.",
-      );
+    if (peopleResult.error || membershipResult.error) {
+      throw new FamilyAccessError(502, "Family access could not be loaded.");
     }
 
     const people = peopleResult.data as PersonRow[];
-    const peopleById = new Map(people.map((person) => [person.id, person]));
-    const allContributors = contributorResult.data as ContributorRow[];
-    const activeContributors = allContributors.filter((row) => row.active);
-    const activeContributorIds = activeContributors.map((row) => row.id);
-    const contributionResult = activeContributorIds.length
-      ? await context.admin
-          .from("recipient_contributions")
-          .select("contributor_id, planned_amount_pennies")
-          .in("contributor_id", activeContributorIds)
-      : { data: [], error: null };
-
-    if (contributionResult.error) {
-      throw new FamilyAccessError(
-        502,
-        "Planned contributor totals could not be loaded.",
-      );
-    }
-
-    const plannedByContributor = new Map<string, number>();
-    for (const row of contributionResult.data ?? []) {
-      plannedByContributor.set(
-        row.contributor_id,
-        (plannedByContributor.get(row.contributor_id) ?? 0) +
-          row.planned_amount_pennies,
-      );
-    }
-
     const membershipByPerson = new Map<string, MembershipRow>();
     for (const membership of membershipResult.data as MembershipRow[]) {
       if (!membership.person_id) continue;
@@ -135,18 +99,9 @@ export async function GET() {
     }
 
     const authUserById = new Map(authUsers.map((user) => [user.id, user]));
-    const result = activeContributors.map((contributor) => {
-      const person = peopleById.get(contributor.person_id);
-      if (!person) {
-        throw new FamilyAccessError(
-          409,
-          "An active contributor is not linked to a family person.",
-        );
-      }
+    const result = people.map((person) => {
       const membership = membershipByPerson.get(person.id);
-      const authUser = membership?.user_id
-        ? authUserById.get(membership.user_id)
-        : undefined;
+      const authUser = membership?.user_id ? authUserById.get(membership.user_id) : undefined;
       const hasAccountDetails = Boolean(membership?.email || membership?.user_id);
 
       let status: AccountStatus = "no_account";
@@ -157,13 +112,10 @@ export async function GET() {
       }
 
       const role: MemberRole | null = hasAccountDetails
-        ? membership?.role === "admin"
-          ? "admin"
-          : "member"
+        ? membership?.role === "admin" ? "admin" : "member"
         : null;
 
       return {
-        contributorId: contributor.id,
         personId: person.id,
         name: person.name,
         email: membership?.email ?? authUser?.email ?? null,
@@ -171,26 +123,13 @@ export async function GET() {
         active: hasAccountDetails ? Boolean(membership?.active) : null,
         status,
         isCurrentUser: membership?.user_id === context.authUserId,
-        plannedAmountPennies: plannedByContributor.get(contributor.id) ?? 0,
       };
     }).sort((a, b) => a.name.localeCompare(b.name));
 
-    const activePersonIds = new Set(
-      activeContributors.map((contributor) => contributor.person_id),
-    );
-    const availablePeople = people
-      .filter((person) => !activePersonIds.has(person.id))
-      .map((person) => ({ personId: person.id, name: person.name }));
-
     return NextResponse.json(
       {
-        contributors: result,
-        availablePeople,
-        currentEvent,
-        currentUser: {
-          personId: context.personId,
-          role: "admin" as const,
-        },
+        members: result,
+        currentUser: { personId: context.personId, role: "admin" as const },
       },
       { headers: noStoreHeaders },
     );
@@ -207,18 +146,6 @@ export async function POST(request: NextRequest) {
     const body = await readBody(request);
     const action = requireAction(body.action);
     const personId = requirePersonId(body.personId);
-
-    if (action === "add-contributor") {
-      return await addContributor(context.admin, personId);
-    }
-
-    if (action === "remove-contributor") {
-      return await removeContributor(
-        context.admin,
-        context.authUserId,
-        personId,
-      );
-    }
 
     if (
       action === "create" ||
@@ -263,169 +190,8 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/**
- * COMPATIBILITY, until Checkpoint 4.
- *
- * Family Access adds and removes CONTRIBUTORS, which are per-event rows, but
- * the screen is still family-wide and names no event -- so it resolves the one
- * the app has always meant. This is the third and last runtime lookup of
- * Christmas by identity; the other two are `legacyChristmasEventId` (old
- * bookmarks) and `loadChristmasEventId` (notification dispatch, Checkpoint 3).
- *
- * It reads the `christmas_events` compatibility VIEW from migration 025, which
- * exposes Christmas-type events only. That matters here specifically: a
- * birthday carries a null year, and `order by year desc` puts nulls FIRST in
- * PostgreSQL, so without the view's type filter a birthday could capture this
- * query and contributors would be added to the wrong event.
- *
- * Checkpoint 4 makes the contributor editor event-scoped and this goes with it.
- */
-async function loadCurrentChristmasEvent(admin: FamilyAccessAdminClient) {
-  const { data, error } = await admin
-    .from("christmas_events")
-    .select("id, year, name")
-    .order("year", { ascending: false })
-    .limit(1)
-    .maybeSingle();
 
-  if (error) {
-    throw new FamilyAccessError(502, "The current Christmas event could not be loaded.");
-  }
-  if (!data) {
-    throw new FamilyAccessError(404, "No Christmas event has been configured.");
-  }
-  return data;
-}
 
-async function addContributor(
-  admin: FamilyAccessAdminClient,
-  personId: string,
-) {
-  const [currentEvent, personResult] = await Promise.all([
-    loadCurrentChristmasEvent(admin),
-    admin.from("people").select("id, name").eq("id", personId).maybeSingle(),
-  ]);
-  if (personResult.error) {
-    throw new FamilyAccessError(502, "This family person could not be checked.");
-  }
-  if (!personResult.data) {
-    throw new FamilyAccessError(404, "This family person was not found.");
-  }
-
-  const contributorResult = await admin
-    .from("contributors")
-    .select("id, active")
-    .eq("christmas_event_id", currentEvent.id)
-    .eq("person_id", personId)
-    .maybeSingle();
-  if (contributorResult.error) {
-    throw new FamilyAccessError(502, "Contributor status could not be checked.");
-  }
-  if (contributorResult.data?.active) {
-    throw new FamilyAccessError(409, `${personResult.data.name} is already an active contributor.`);
-  }
-
-  const saved = contributorResult.data
-    ? await admin
-        .from("contributors")
-        .update({ active: true })
-        .eq("id", contributorResult.data.id)
-    : await admin.from("contributors").insert({
-        christmas_event_id: currentEvent.id,
-        person_id: personId,
-        active: true,
-      });
-  if (saved.error) {
-    throw new FamilyAccessError(502, "This contributor could not be added.");
-  }
-
-  return NextResponse.json(
-    {
-      ok: true,
-      message: `${personResult.data.name} is now a contributor. Their planned total is ${formatPennies(0)}.`,
-    },
-    { headers: noStoreHeaders },
-  );
-}
-
-async function removeContributor(
-  admin: FamilyAccessAdminClient,
-  currentAuthUserId: string,
-  personId: string,
-) {
-  const currentEvent = await loadCurrentChristmasEvent(admin);
-  const { person, membership } = await loadTarget(admin, personId);
-  if (membership?.role === "admin" || membership?.user_id === currentAuthUserId) {
-    throw new FamilyAccessError(403, "The Global Admin contributor cannot be removed.");
-  }
-
-  const contributorResult = await admin
-    .from("contributors")
-    .select("id")
-    .eq("christmas_event_id", currentEvent.id)
-    .eq("person_id", personId)
-    .eq("active", true)
-    .maybeSingle();
-  if (contributorResult.error) {
-    throw new FamilyAccessError(502, "Contributor status could not be checked.");
-  }
-  if (!contributorResult.data) {
-    throw new FamilyAccessError(409, `${person.name} is not an active contributor.`);
-  }
-
-  const allocationResult = await admin
-    .from("recipient_contributions")
-    .select("christmas_recipient_id, planned_amount_pennies")
-    .eq("contributor_id", contributorResult.data.id)
-    .gt("planned_amount_pennies", 0);
-  if (allocationResult.error) {
-    throw new FamilyAccessError(502, "Contributor allocations could not be checked safely.");
-  }
-
-  const allocatedPennies = allocationResult.data.reduce(
-    (sum, row) => sum + row.planned_amount_pennies,
-    0,
-  );
-  if (allocatedPennies > 0) {
-    const recipientIds = [...new Set(allocationResult.data.map((row) => row.christmas_recipient_id))];
-    const recipientResult = await admin
-      .from("christmas_recipients")
-      .select("id, person_id")
-      .in("id", recipientIds);
-    if (recipientResult.error) {
-      throw new FamilyAccessError(502, "Affected Christmas recipients could not be loaded.");
-    }
-    const recipientPersonIds = [...new Set(recipientResult.data.map((row) => row.person_id))];
-    const peopleResult = await admin
-      .from("people")
-      .select("id, name")
-      .in("id", recipientPersonIds);
-    if (peopleResult.error) {
-      throw new FamilyAccessError(502, "Affected Christmas recipients could not be loaded.");
-    }
-    const names = peopleResult.data.map((row) => row.name).sort().join(", ");
-    throw new FamilyAccessError(
-      409,
-      `${person.name} still has ${formatPennies(allocatedPennies)} allocated across Christmas recipients. Reassign those contributions before removing ${person.name}.${names ? ` Affected: ${names}.` : ""}`,
-    );
-  }
-
-  const updated = await admin
-    .from("contributors")
-    .update({ active: false })
-    .eq("id", contributorResult.data.id);
-  if (updated.error) {
-    throw new FamilyAccessError(502, "This contributor could not be removed.");
-  }
-
-  return NextResponse.json(
-    {
-      ok: true,
-      message: `${person.name} is no longer an active contributor. Their account and history were kept.`,
-    },
-    { headers: noStoreHeaders },
-  );
-}
 
 async function createOrSetUpAccount(
   requestOrigin: string,
@@ -901,26 +667,15 @@ async function linkMembership(
   userId: string,
   membership: MembershipRow | null,
 ) {
-  let contributorId = membership?.contributor_id ?? null;
-  if (!contributorId) {
-    const contributorResult = await admin
-      .from("contributors")
-      .select("id")
-      .eq("person_id", personId)
-      .eq("active", true)
-      .limit(1);
-    if (contributorResult.error) {
-      throw new FamilyAccessError(
-        502,
-        "The family member's contributor link could not be checked.",
-      );
-    }
-    contributorId = contributorResult.data[0]?.id ?? null;
-  }
-
+  // app_members.contributor_id is a legacy tie-break, kept only where it is
+  // already set. It is NOT looked up here any more: a contributor row belongs
+  // to one event, so choosing one for a family-global account record would be
+  // picking an event arbitrarily. current_app_contributor_id() resolves the
+  // right contributor per event from person_id, which gives the same answer
+  // for the row this used to find and the correct answer for every other event.
   const values = {
     person_id: personId,
-    contributor_id: contributorId,
+    contributor_id: membership?.contributor_id ?? null,
     user_id: userId,
     email,
     role: "member",

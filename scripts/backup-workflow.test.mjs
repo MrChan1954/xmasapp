@@ -102,8 +102,18 @@ test("a failed dump cannot be mistaken for a successful backup", () => {
     // Every financial row belongs to an events row. A restore without it would
     // leave every purchase and payment pointing at nothing.
     "events",
+    // Which reminders have already been sent. Losing this table would not lose
+    // a birthday, but a restore would re-send every reminder still in range.
+    "birthday_reminders",
   ]) {
     assert.ok(verify.includes(table), `the schema check must require ${table}`);
+  }
+
+  // The birthdays themselves are columns on people, which no table-name check
+  // can see. They are the one piece of Checkpoint 4 data nobody can reconstruct
+  // from a receipt, so the dump has to prove it carried them.
+  for (const column of ["birthday_month", "birthday_day", "birthday_year"]) {
+    assert.ok(verify.includes(column), `the schema check must require people.${column}`);
   }
   // A data dump with no rows in it fails. (The COPY parsing itself is covered
   // by the fixture-driven tests further down, which run the real parser.)

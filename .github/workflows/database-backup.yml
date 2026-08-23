@@ -195,11 +195,25 @@ jobs:
           # purchase and payment belongs to one of its rows: a restore without
           # it would leave every financial row pointing at nothing. It replaced
           # `christmas_events`, which is now a compatibility view over it.
+          # ORDERING: birthday_reminders arrives with migration 026. This list
+          # must not reach the default branch before that migration is applied,
+          # or the nightly backup will report a valid dump as invalid.
           for TABLE in purchases purchase_allocations settlements payment_receipts \
                        contributors recipient_contributions christmas_recipients \
-                       app_members events; do
+                       app_members events birthday_reminders; do
             if ! grep -q "CREATE TABLE.*\<${TABLE}\>" "${DIR}/schema.sql"; then
               echo "::error::schema.sql does not define ${TABLE}. Treating this backup as invalid."
+              FAILED=1
+            fi
+          done
+
+          # Birthdays are columns on people, not a table of their own, so the
+          # loop above cannot see them. A restore that brought back every
+          # person but none of their birthdays would look complete and be
+          # wrong: the dates are irreplaceable in a way a purchase is not.
+          for COLUMN in birthday_month birthday_day birthday_year; do
+            if ! grep -q "\<${COLUMN}\>" "${DIR}/schema.sql"; then
+              echo "::error::schema.sql does not define people.${COLUMN}. Treating this backup as invalid."
               FAILED=1
             fi
           done

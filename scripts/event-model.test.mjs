@@ -28,6 +28,9 @@ const migrationFiles = readdirSync(migrationsDirectory)
   .sort();
 
 const eventMigrationName = "202608100025_generalise_christmas_into_events.sql";
+const birthdayMigrationName = "202608100026_add_birthdays_and_event_administration.sql";
+const birthdayMigration = readFileSync(join(migrationsDirectory, birthdayMigrationName), "utf8");
+const birthdayMigrationCode = birthdayMigration.replace(/--[^\n]*/g, "");
 const eventMigration = readFileSync(join(migrationsDirectory, eventMigrationName), "utf8");
 /** Comments explain the reasoning at length; assertions about CODE must ignore them. */
 const eventMigrationCode = eventMigration.replace(/--[^\n]*/g, "");
@@ -51,12 +54,35 @@ const financialTables = [
 // The migration history is append-only
 // ---------------------------------------------------------------------------
 
-test("migration 025 is the newest migration, and nothing else has been added", () => {
+test("migration 026 is the newest migration, and nothing else has been added", () => {
   // Pinned deliberately. Adding a migration fails this test on purpose, so a
   // schema change cannot land without this file being reviewed and its checks
   // extended to whatever the new migration introduced.
-  assert.equal(migrationFiles.at(-1), eventMigrationName);
-  assert.equal(migrationFiles.length, 25);
+  //
+  // 026 is Checkpoint 4: birthdays on people, the event administration
+  // functions, and the reminder bookkeeping. Its own promises are held by
+  // `scripts/event-administration.test.mjs` and
+  // `scripts/birthday-reminders.test.mjs`; what THIS file still owns is that
+  // 025 remains the Event layer and that 026 did not disturb it.
+  assert.equal(migrationFiles.at(-1), birthdayMigrationName);
+  assert.equal(migrationFiles.length, 26);
+  assert.ok(migrationFiles.includes(eventMigrationName), "025 is still present, unedited");
+});
+
+test("026 leaves the Event layer and the money exactly as 025 left them", () => {
+  // The reason this file can keep making claims about the Event layer after a
+  // later migration landed: 026 adds, and adds only.
+  for (const table of financialTables) {
+    assert.doesNotMatch(
+      birthdayMigrationCode,
+      new RegExp(`(alter table|drop table)\\s+(if exists\\s+)?public\\.${table}\\b`, "i"),
+      `026 must not alter ${table}`,
+    );
+  }
+  // The two guards 025 installed are not redefined, dropped or disabled.
+  assert.doesNotMatch(birthdayMigrationCode, /drop trigger[^;]*protect_event_scope_identity/i);
+  assert.doesNotMatch(birthdayMigrationCode, /drop trigger[^;]*enforce_event_scope_integrity/i);
+  assert.doesNotMatch(birthdayMigrationCode, /alter table[^;]*disable trigger/i);
 });
 
 test("no already-applied migration has been edited", () => {

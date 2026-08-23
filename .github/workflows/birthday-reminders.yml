@@ -1,0 +1,96 @@
+name: Birthday reminders
+
+# Why this exists
+#   Birthday reminders have to arrive whether or not anybody has the app open.
+#   Nothing in a browser can promise that, so a scheduled job asks the app once
+#   a day which reminders are due.
+#
+#   The repository already schedules the database backup this way, so this adds
+#   a caller rather than a second piece of infrastructure. Cloudflare cron
+#   triggers were the alternative: the OpenNext worker exports a fetch handler
+#   and adding a `scheduled` export would mean owning generated code, for no
+#   benefit at a once-a-day cadence.
+#
+# What this workflow does NOT do
+#   It sends nothing. It calls one endpoint, which decides what is due and hands
+#   it to the notification outbox the app already uses for purchases and
+#   payments. All the delivery, dedupe and retry behaviour is that pipeline's.
+#
+# Secrets
+#   BIRTHDAY_REMINDER_SECRET  shared with the deployed app, which rejects any
+#                             request without it. Set the same value with
+#                             `wrangler secret put BIRTHDAY_REMINDER_SECRET`.
+#   APP_ORIGIN                e.g. https://xmasapp.<subdomain>.workers.dev
+#
+#   Neither is ever echoed. The secret travels in a header, passed through the
+#   environment, and no step prints a response body that could contain one.
+
+on:
+  schedule:
+    # 08:00 UTC daily. Minute precision is irrelevant for a birthday reminder;
+    # what matters is that it runs once a calendar day, before most people are
+    # looking at their phone. The endpoint resolves "today" in Europe/London
+    # itself, so British Summer Time cannot shift which day is evaluated.
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+# Read-only. This workflow never touches the repository.
+permissions:
+  contents: read
+
+concurrency:
+  # One sweep at a time. A manual run alongside the scheduled one would still be
+  # safe — the claim is a unique insert — but there is no reason to make the
+  # database prove it.
+  group: birthday-reminders
+  cancel-in-progress: false
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the configuration is present
+        env:
+          APP_ORIGIN: ${{ secrets.APP_ORIGIN }}
+          REMINDER_SECRET: ${{ secrets.BIRTHDAY_REMINDER_SECRET }}
+        run: |
+          set -euo pipefail
+          # -z reveals nothing about either value.
+          if [ -z "${APP_ORIGIN:-}" ]; then
+            echo "::error::APP_ORIGIN is not set"
+            exit 1
+          fi
+          if [ -z "${REMINDER_SECRET:-}" ]; then
+            echo "::error::BIRTHDAY_REMINDER_SECRET is not set"
+            exit 1
+          fi
+
+      - name: Ask the app which birthday reminders are due
+        env:
+          APP_ORIGIN: ${{ secrets.APP_ORIGIN }}
+          REMINDER_SECRET: ${{ secrets.BIRTHDAY_REMINDER_SECRET }}
+        run: |
+          set -euo pipefail
+
+          # The secret goes in a header, never in the URL: a URL ends up in
+          # request logs and in this workflow's own output.
+          STATUS=$(curl --silent --show-error \
+            --output response.json \
+            --write-out '%{http_code}' \
+            --max-time 60 \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --header "x-reminder-secret: ${REMINDER_SECRET}" \
+            "${APP_ORIGIN}/api/birthdays/reminders")
+
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::The reminder sweep returned HTTP ${STATUS}."
+            # The body is printed ONLY on failure and only from this endpoint,
+            # which returns counts and a short message — never a name, a date or
+            # a secret.
+            head -c 500 response.json || true
+            exit 1
+          fi
+
+          # Counts only. No birthday, no name, no personal data reaches the log.
+          echo "Reminder sweep complete: $(head -c 200 response.json)"

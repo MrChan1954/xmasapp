@@ -32,6 +32,7 @@ const CATEGORIES: { key: keyof NotificationPreferences; title: string; descripti
   { key: "money_owed_to_me", title: "Money owed to me", description: "When someone owes you, or records a payment to you." },
   { key: "gift_ideas", title: "Gift ideas", description: "When someone adds a new gift idea." },
   { key: "gift_status", title: "Gift status", description: "When a gift you helped pay for is marked purchased or wrapped." },
+  { key: "birthdays", title: "Birthdays", description: "Reminders a month, a week and a day before a family birthday." },
 ];
 
 export default function NotificationsPage() {
@@ -60,7 +61,7 @@ export default function NotificationsPage() {
 
       const stored = await db
         .from("notification_preferences")
-        .select("purchases,money_i_owe,money_owed_to_me,gift_ideas,gift_status")
+        .select("purchases,money_i_owe,money_owed_to_me,gift_ideas,gift_status,birthdays")
         .eq("app_member_id", member.data.id)
         .maybeSingle();
       if (!active) return;

@@ -17,7 +17,7 @@ single point of failure.
 |---|---|
 | `roles.sql` | Database roles and their grants |
 | `schema.sql` | Every table, index, constraint, RLS policy, function and trigger |
-| `data.sql` | Every row in every table — purchases, allocations, settlements, payment receipts, contributors, contribution plans, recipients, memberships, gift ideas, audit log, notification tables |
+| `data.sql` | Every row in every table — purchases, allocations, settlements, payment receipts, contributors, contribution plans, recipients, memberships, gift ideas, audit log, notification tables, birthdays, birthday reminders |
 | `MANIFEST.txt` | Date, trigger, commit SHA, file sizes, `COPY` block count and **row count**, for spot-checking a backup without unpacking it |
 
 `data.sql` is dumped with `--use-copy`, so rows are written as
@@ -52,6 +52,24 @@ These are real gaps. Know about them before you need them.
   independently; losing the VAPID pair invalidates every push subscription.
 - **Push subscriptions are backed up but not portable** — the rows restore, but
   the endpoints are tied to the original VAPID key pair.
+
+### Birthdays
+
+Birthdays are covered by the ordinary dump and need nothing special:
+
+- the dates themselves are `birthday_month`, `birthday_day` and
+  `birthday_year` on `people`, so they travel with the people;
+- `birthday_reminders` records which reminders have already been sent.
+
+Restoring an **old** `birthday_reminders` alongside current people can re-send
+reminders that were already delivered, for any occurrence still inside its
+one-month window. Nothing is lost and no money is involved — expect a few
+duplicate notifications, not a repair job.
+
+> `birthday_reminders` and the birthday columns became required checks with
+> migration 026. A backup taken from a database that has not had 026 applied
+> will be reported as invalid by this workflow, which is why the migration is
+> applied before or with the deploy that adds these checks.
 
 ## Where backups appear
 
@@ -129,7 +147,11 @@ anything is uploaded, the workflow fails the run if:
 - any of the three files is missing or zero bytes;
 - `schema.sql` does not define all of `purchases`, `purchase_allocations`,
   `settlements`, `payment_receipts`, `contributors`, `recipient_contributions`,
-  `christmas_recipients`, `app_members`, `events`;
+  `christmas_recipients`, `app_members`, `events`, `birthday_reminders`;
+- `schema.sql` does not define `people.birthday_month`, `people.birthday_day`
+  and `people.birthday_year` — birthdays are columns rather than a table, so
+  no table-name check can see them, and they are the one thing in the database
+  nobody can reconstruct from a receipt or a bank statement;
 - `data.sql` contains no `COPY public.` blocks at all.
 
 Every step runs under `set -euo pipefail`, and the upload uses

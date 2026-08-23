@@ -1,6 +1,7 @@
 import {
   ArrowRight,
   Bell,
+  Cake,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
@@ -15,6 +16,7 @@ import {
   RefreshCw,
   Scale,
   Search,
+  Settings,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -68,5 +70,7 @@ export const IconRefresh = icon(RefreshCw);
 export const IconPencil = icon(Pencil);
 export const IconMail = icon(Mail);
 export const IconBell = icon(Bell);
+export const IconCake = icon(Cake);
+export const IconSettings = icon(Settings);
 
 export { IconBauble, IconSnowflake, IconStocking, IconTree } from "./festive/ornaments";

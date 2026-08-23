@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { eventPath } from "@/lib/events.ts";
 import { AppShell, PageHeader } from "../components/app-shell";
 import { useFestive } from "../components/festive/festive-context";
-import { IconBell, IconChevronRight, IconHistory, IconPeople, IconReceipt, IconUser } from "../components/icons";
+import { IconBell, IconCake, IconChevronRight, IconHistory, IconPeople, IconReceipt, IconSettings, IconUser } from "../components/icons";
 import { InstallCard } from "../components/install-card";
 import { Notice, Skeleton, cx } from "../components/ui";
 
@@ -110,6 +110,17 @@ export function MoreScreen({ eventId, eventName }: { eventId: string; eventName:
         </div>
       </Group>
 
+      {/* Birthdays belong to people, not to this event, so the link leaves the
+          event behind rather than nesting under it. */}
+      <Group label="Family">
+        <SettingsLink
+          href="/birthdays"
+          title="Birthdays"
+          description="Everyone's birthday, and what is coming up."
+          icon={<IconCake size={20} />}
+        />
+      </Group>
+
       <Group label="Records">
         <SettingsLink
           href={eventPath(eventId, "payment-log") ?? "/"}
@@ -136,12 +147,23 @@ export function MoreScreen({ eventId, eventName }: { eventId: string; eventName:
 
       {access === "admin" && (
         <Group label="Admin">
+          {/* Named for the event whose settings these are: contributors and
+              recipients are per-event, and this is the only screen that edits
+              them. Family Access below is the family-wide one. */}
           <SettingsLink
-            href="/more/family-access"
-            title="Family access"
-            description="Invite family and manage their app access."
-            icon={<IconPeople size={20} />}
+            href={eventPath(eventId, "settings") ?? "/"}
+            title="Event settings"
+            description={`Rename ${eventName}, move its date, or choose who takes part.`}
+            icon={<IconSettings size={20} />}
           />
+          <div className="mt-3">
+            <SettingsLink
+              href="/more/family-access"
+              title="Family access"
+              description="Invite family and manage their app access."
+              icon={<IconPeople size={20} />}
+            />
+          </div>
         </Group>
       )}
     </AppShell>

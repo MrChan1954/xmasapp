@@ -44,7 +44,7 @@ export type EventStatus = (typeof EVENT_STATUSES)[number];
  * other than "home" is a real folder under `src/app/events/[eventId]/`, so a
  * typo here cannot produce a link that resolves to nothing.
  */
-export const EVENT_SECTIONS = ["home", "people", "add-purchase", "owed", "more", "payment-log"] as const;
+export const EVENT_SECTIONS = ["home", "people", "add-purchase", "owed", "more", "payment-log", "settings"] as const;
 export type EventSection = (typeof EVENT_SECTIONS)[number];
 
 export const EVENT_DESCRIPTION_LIMIT = 1_000;

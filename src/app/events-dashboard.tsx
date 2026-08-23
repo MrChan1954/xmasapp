@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { CalendarDays, Plus } from "lucide-react";
+import { Cake, CalendarDays, Plus } from "lucide-react";
 import { formatPennies } from "@/lib/currency";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventPath, eventTypeMeta, formatEventDate, partitionEvents, type EventSummary } from "@/lib/events.ts";
@@ -45,12 +45,23 @@ export function EventsDashboard({
         eyebrow="Family gift planner"
         title="Events"
         description="Every occasion the family plans and pays for together. Open one to see its people, purchases and balances."
-        actions={isAdmin ? (
+        actions={(
+          <>
+            {/* Birthdays sit beside the events rather than inside one, because
+                a birthday belongs to a person all year round whether or not
+                anybody has planned an event for it. Everybody can look. */}
+            <ButtonLink href="/birthdays" variant="secondary" size="lg" className="w-full sm:w-auto">
+              <Cake size={18} aria-hidden />
+              Birthdays
+            </ButtonLink>
+            {isAdmin ? (
           <ButtonLink href="/events/new" size="lg" className="w-full sm:w-auto">
             <Plus size={18} aria-hidden />
             Create event
           </ButtonLink>
-        ) : undefined}
+            ) : null}
+          </>
+        )}
       />
 
       {error && <Notice tone="danger" className="mt-6">{error}</Notice>}
