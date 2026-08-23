@@ -451,6 +451,31 @@ export type ValidatedEvent = {
  * in the form is told which field is wrong instead of being handed a constraint
  * name. The database still decides; this only decides what to say.
  */
+/**
+ * A birthday event dated long ago is almost certainly a date of birth.
+ *
+ * @param eventDate the date on the form, `YYYY-MM-DD`
+ * @param today the family's today, passed in so this is deterministic
+ * @returns the warning to show, or null
+ *
+ * Deliberately a WARNING and not a refusal. Recording a birthday that has
+ * already been and gone this year is legitimate — somebody catching up on last
+ * month's celebration should not be blocked. Two years is well past the point
+ * where that is the likely explanation.
+ */
+export function birthdayDateLooksLikeDateOfBirth(eventDate: string, today: string): string | null {
+  const date = validateDateInput(eventDate);
+  const now = validateDateInput(today);
+  if (!date.ok || !now.ok) return null;
+
+  const yearsAgo = Number(now.value.slice(0, 4)) - Number(date.value.slice(0, 4));
+  if (yearsAgo < 2) return null;
+
+  return `That date is ${yearsAgo} years ago, which looks like a date of birth rather than a celebration you are planning. `
+    + "A person's birthday is saved once on the Birthdays page and lasts for good — this screen creates one year's gift planning. "
+    + "Change the date if you meant this year's.";
+}
+
 export function validateEventInput(input: EventInput): ValidationResult<ValidatedEvent> {
   const name = validateRequiredText(input.name, { field: "an event name", maxLength: INPUT_LIMITS.name });
   if (!name.ok) return name;

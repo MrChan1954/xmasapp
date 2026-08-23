@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { getCurrentMember } from "@/utils/supabase/current-member";
-import { loadFamilyBirthdays } from "@/utils/supabase/birthdays-server";
+import { loadFamilyBirthdays, londonToday } from "@/utils/supabase/birthdays-server";
 import { CreateEventForm, type CreatablePerson } from "./create-event-form";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +28,9 @@ export default async function CreateEventPage() {
 
   return (
     <Suspense fallback={null}>
-      <CreateEventForm people={creatable} />
+      {/* The family's today, resolved on the server, so the form can tell a
+          celebration being planned from a date of birth typed by mistake. */}
+      <CreateEventForm people={creatable} today={londonToday()} />
     </Suspense>
   );
 }

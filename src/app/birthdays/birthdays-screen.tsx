@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { CalendarDays, Cake, Pencil } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { birthdayWorkspacePath, describeDaysAway, formatBirthday, isValidBirthday, isValidBirthYear, peopleWithoutBirthdays, upcomingBirthdays, type PersonBirthday } from "@/lib/birthdays.ts";
+import { describeSupabaseError, describeThrown } from "@/lib/supabase-error";
 import { createClient } from "@/utils/supabase/client";
 import { AppShell, PageHeader } from "../components/app-shell";
 import { GarlandRule } from "../components/festive/garland";
@@ -34,18 +35,46 @@ export function BirthdaysScreen({
   birthdayEventsByPersonYear,
   isAdmin,
   today,
+  loadError = null,
 }: {
   people: PersonBirthday[];
   birthdayEventsByPersonYear: Record<string, BirthdayEventLink>;
   isAdmin: boolean;
   today: string;
+  /** The server could not read the birthdays. Said plainly, not thrown. */
+  loadError?: string | null;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState<PersonBirthday | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(loadError);
+  const [saved, setSaved] = useState<string | null>(null);
 
-  const upcoming = useMemo(() => upcomingBirthdays(people, today), [people, today]);
-  const missing = useMemo(() => peopleWithoutBirthdays(people), [people]);
+  /**
+   * What the database said, for anybody this page has just written.
+   *
+   * `router.refresh()` is still called after a save, and normally lands first.
+   * This is not a substitute for it — it is proof. `set_person_birthday`
+   * returns the saved row, so the date shown here after a save is the date
+   * PostgreSQL actually holds, not the date the form hoped it would.
+   *
+   * Live regression this fixes: a birthday was entered, the screen returned to
+   * the list, and nothing had changed — with no way to tell whether the write
+   * had failed or the page was simply stale. Now the two are distinguishable,
+   * because a confirmed write always changes what is on the screen.
+   */
+  const [confirmed, setConfirmed] = useState<Record<string, PersonBirthday["birthday"]>>({});
+
+  const shown = useMemo(
+    () => people.map((person) => (
+      Object.hasOwn(confirmed, person.personId)
+        ? { ...person, birthday: confirmed[person.personId] }
+        : person
+    )),
+    [confirmed, people],
+  );
+
+  const upcoming = useMemo(() => upcomingBirthdays(shown, today), [shown, today]);
+  const missing = useMemo(() => peopleWithoutBirthdays(shown), [shown]);
 
   return (
     <AppShell width="narrow">
@@ -57,6 +86,7 @@ export function BirthdaysScreen({
       />
 
       {error && <Notice tone="danger" className="mt-6">{error}</Notice>}
+      {saved && <Notice tone="success" className="mt-6">{saved}</Notice>}
 
       {people.length === 0 && (
         <EmptyState className="mt-8" illustration="star" title="No family members yet"
@@ -158,8 +188,19 @@ export function BirthdaysScreen({
         <BirthdayModal
           person={editing}
           onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); router.refresh(); }}
-          onError={(message) => { setEditing(null); setError(message); }}
+          onSaved={(person, birthday) => {
+            // The row the database returned, kept immediately, so the list
+            // below shows the new date on this render rather than the next.
+            setConfirmed((current) => ({ ...current, [person.personId]: birthday }));
+            setEditing(null);
+            setError(null);
+            setSaved(birthday
+              ? `${person.name}'s birthday is saved.`
+              : `${person.name}'s birthday was removed.`);
+            // And the server render catches up, so a reload agrees with this.
+            router.refresh();
+          }}
+          onError={(message) => { setEditing(null); setSaved(null); setError(message); }}
         />
       )}
     </AppShell>
@@ -174,7 +215,8 @@ function BirthdayModal({
 }: {
   person: PersonBirthday;
   onClose: () => void;
-  onSaved: () => void;
+  /** Called only with a row the database returned. */
+  onSaved: (person: PersonBirthday, birthday: PersonBirthday["birthday"]) => void;
   onError: (message: string) => void;
 }) {
   const [month, setMonth] = useState(person.birthday ? String(person.birthday.month) : "");
@@ -201,20 +243,64 @@ function BirthdayModal({
     }
 
     setSaving(true);
-    // The database checks admin rights itself; this call is refused for anybody
-    // else regardless of what the browser shows.
-    const result = await createClient().rpc("set_person_birthday", {
-      p_person_id: person.personId,
-      p_month: monthNumber,
-      p_day: dayNumber,
-      p_year: yearNumber,
-    });
-    setSaving(false);
-    if (result.error) {
-      onError(result.error.message || "That birthday could not be saved.");
-      return;
+    try {
+      // The database checks admin rights itself; this call is refused for
+      // anybody else regardless of what the browser shows.
+      //
+      // `set_person_birthday` RETURNS THE SAVED ROW. That return value is the
+      // only honest evidence the write happened, so it is what decides whether
+      // this reports success — not the absence of an error.
+      const result = await createClient().rpc("set_person_birthday", {
+        p_person_id: person.personId,
+        p_month: monthNumber,
+        p_day: dayNumber,
+        p_year: yearNumber,
+      });
+
+      if (result.error) {
+        onError(describeSupabaseError(result.error, "That birthday could not be saved."));
+        return;
+      }
+
+      const row = result.data as {
+        id?: string;
+        birthday_month?: number | null;
+        birthday_day?: number | null;
+        birthday_year?: number | null;
+      } | null;
+
+      if (!row || typeof row !== "object") {
+        // No error and no row: the call went somewhere that did not write.
+        // Reporting success here is what "the UI said it saved and it had not"
+        // looks like from the outside.
+        onError("The save could not be confirmed by the database, so nothing was changed. Please try again.");
+        return;
+      }
+
+      const savedBirthday = row.birthday_month === null || row.birthday_month === undefined
+        || row.birthday_day === null || row.birthday_day === undefined
+        ? null
+        : {
+          month: Number(row.birthday_month),
+          day: Number(row.birthday_day),
+          year: row.birthday_year === null || row.birthday_year === undefined ? null : Number(row.birthday_year),
+        };
+
+      // What was asked for, and what came back, have to agree. If they do not,
+      // something wrote a different value and the reader needs to know.
+      const wanted = clear ? null : { month: monthNumber, day: dayNumber };
+      if ((wanted === null) !== (savedBirthday === null)
+        || (wanted && savedBirthday && (wanted.month !== savedBirthday.month || wanted.day !== savedBirthday.day))) {
+        onError("The database saved something different from what was entered. Nothing has been assumed — please check the Birthdays list.");
+        return;
+      }
+
+      onSaved(person, savedBirthday);
+    } catch (thrown) {
+      onError(describeThrown(thrown, "That birthday could not be saved. Check your connection and try again."));
+    } finally {
+      setSaving(false);
     }
-    onSaved();
   };
 
   return (

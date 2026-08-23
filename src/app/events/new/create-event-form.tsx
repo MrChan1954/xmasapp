@@ -1,10 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Check, ChevronLeft } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { EVENT_TYPES, eventTypeMeta, formatEventDate, validateEventInput, type EventType } from "@/lib/events.ts";
+import { EVENT_TYPES, birthdayDateLooksLikeDateOfBirth, eventTypeMeta, formatEventDate, validateEventInput, type EventType } from "@/lib/events.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { birthdayOccurrence, suggestedBirthdayEventName } from "@/lib/birthdays.ts";
 import { INPUT_LIMITS } from "@/lib/input-validation";
@@ -42,7 +43,7 @@ const STEPS: Array<{ step: Step; label: string }> = [
  * database; this calls `create_event`, which checks Global Admin itself and
  * creates the event, its recipients and its contributors in one transaction.
  */
-export function CreateEventForm({ people }: { people: CreatablePerson[] }) {
+export function CreateEventForm({ people, today }: { people: CreatablePerson[]; today: string }) {
   const router = useRouter();
   const params = useSearchParams();
 
@@ -132,6 +133,20 @@ export function CreateEventForm({ people }: { people: CreatablePerson[] }) {
     celebrantPersonId: celebrantId || null,
   }), [celebrantId, date, name, type]);
 
+  /**
+   * The mistake this catches actually happened, in production.
+   *
+   * Somebody meaning to record a permanent birthday came here instead and typed
+   * a date of birth into the date field. The result was an event for a year
+   * three decades ago, and a person whose birthday the calendar still did not
+   * know. A warning, not a block: a celebration that has already happened is a
+   * legitimate thing to record.
+   */
+  const dateOfBirthWarning = useMemo(
+    () => (type === "birthday" ? birthdayDateLooksLikeDateOfBirth(date, today) : null),
+    [date, today, type],
+  );
+
   const create = async () => {
     setError(null);
     if (!validation.ok) { setError(validation.error); return; }
@@ -153,8 +168,16 @@ export function CreateEventForm({ people }: { people: CreatablePerson[] }) {
       return;
     }
     const created = Array.isArray(result.data) ? result.data[0] : result.data;
-    router.push(created?.id ? `/events/${created.id}` : "/");
-    router.refresh();
+    if (!created?.id) {
+      // No error and no row. Navigating to the dashboard here would look like
+      // success; saying so does not.
+      setError("The event could not be confirmed by the database, so nothing was created. Please try again.");
+      return;
+    }
+    // No refresh afterwards: this route is about to be left, and refreshing the
+    // page being navigated away from is what turned a successful delete into an
+    // error page elsewhere in this app. The destination loads its own data.
+    router.push(`/events/${created.id}`);
   };
 
   return (
@@ -250,6 +273,14 @@ export function CreateEventForm({ people }: { people: CreatablePerson[] }) {
           <Field label="Date" required hint={type === "easter" ? "Easter moves each year, so choose the date rather than guessing it." : undefined}>
             <Input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
           </Field>
+
+          {dateOfBirthWarning && (
+            <Notice tone="warning">
+              {dateOfBirthWarning}
+              {" "}
+              <Link href="/birthdays" className="font-semibold underline">Go to Birthdays</Link>
+            </Notice>
+          )}
 
           <Field label="Description" hint="Optional.">
             <Textarea

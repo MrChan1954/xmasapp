@@ -6,6 +6,7 @@ import { Archive, RotateCcw, Trash2 } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventTypeMeta, validateEventInput } from "@/lib/events.ts";
 import { INPUT_LIMITS } from "@/lib/input-validation";
+import { describeSupabaseError, describeThrown } from "@/lib/supabase-error";
 import { createClient } from "@/utils/supabase/client";
 import { AppShell, PageHeader } from "../../../components/app-shell";
 import { GarlandRule } from "../../../components/festive/garland";
@@ -69,18 +70,46 @@ export function EventSettingsScreen({
   const [saved, setSaved] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Set the moment the database confirms the delete. From then on this screen
+  // renders nothing that reads the event, because the event is gone.
+  const [deleted, setDeleted] = useState(false);
 
-  // The Supabase builder is thenable rather than a Promise, so the parameter
-  // is typed as what it resolves to rather than as a Promise of it.
-  const run = async (work: () => PromiseLike<{ error: { message: string } | null }>, done?: () => void) => {
+  /**
+   * Every change on this screen that STAYS on this screen.
+   *
+   * It refreshes afterwards, which is right for a rename or an archive: the
+   * server component above re-renders with the new values. It is exactly wrong
+   * for a delete -- refreshing a route whose event no longer exists asks the
+   * server to load something that is not there -- so the delete does not use
+   * this. That is the bug behind the live "Something went wrong" report.
+   *
+   * The Supabase builder is thenable rather than a Promise, so the parameter is
+   * typed as what it resolves to rather than as a Promise of it.
+   */
+  const run = async (
+    work: () => PromiseLike<{ error: { message: string; code?: string | null; details?: string | null; hint?: string | null } | null }>,
+    done?: () => void,
+  ) => {
     setError(null);
     setSaved(false);
     setBusy(true);
-    const result = await work();
-    setBusy(false);
-    if (result.error) { setError(result.error.message || "That change could not be saved."); return; }
-    done?.();
-    router.refresh();
+    try {
+      const result = await work();
+      if (result.error) {
+        // The database's own sentence, with its code. Never a shrug.
+        setError(describeSupabaseError(result.error, "That change could not be saved."));
+        return;
+      }
+      done?.();
+      router.refresh();
+    } catch (thrown) {
+      // A request that never reached the server rejects rather than resolving.
+      // Without this it would be an unhandled rejection in a click handler:
+      // the button would stop spinning and the screen would say nothing.
+      setError(describeThrown(thrown, "That change could not be saved. Check your connection and try again."));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const saveDetails = () => {
@@ -112,17 +141,84 @@ export function EventSettingsScreen({
       p_active: active,
     }));
 
-  const deleteEvent = () =>
-    void run(
-      () => createClient().rpc("delete_event_if_empty", { p_event_id: event.id }),
-      () => router.replace("/"),
-    );
+  /**
+   * Where the reader goes after this event stops existing.
+   *
+   * A birthday occurrence belongs to a person, so the honest destination is
+   * that person's birthday page -- they were looking at Taylor's birthday, and
+   * they still are. Anything else goes back to the dashboard.
+   */
+  const destinationAfterDelete = event.type === "birthday" && event.celebrantPersonId
+    ? `/birthdays/${event.celebrantPersonId}`
+    : "/";
+
+  /**
+   * Delete, and leave.
+   *
+   * DELIBERATELY NOT `run`.
+   *
+   * `run` refreshes the current route when it finishes, and the current route
+   * is `/events/<this id>/settings`. Once the event is deleted that route has
+   * nothing to load, so refreshing it asks the server for a row that no longer
+   * exists -- which is how a successful delete ended up showing the generic
+   * error page instead of going anywhere.
+   *
+   * So this does the opposite, in order:
+   *   1. call the database and wait for it to confirm,
+   *   2. mark the screen deleted, so nothing here renders the event again,
+   *   3. navigate away -- and never refresh what we just left.
+   *
+   * A refusal (the event turned out to hold something) is shown right here, on
+   * this screen, with the database's own explanation. It must never reach the
+   * error boundary: "This event has 4 purchases, archive it instead" is a
+   * useful sentence and "Something went wrong" is not.
+   */
+  const deleteEvent = async () => {
+    setError(null);
+    setSaved(false);
+    setBusy(true);
+    try {
+      const result = await createClient().rpc("delete_event_if_empty", { p_event_id: event.id });
+
+      if (result.error) {
+        setError(describeSupabaseError(result.error, "This event could not be deleted."));
+        return;
+      }
+      // The function returns true, and only true. Anything else means the call
+      // went somewhere unexpected, and treating it as success would leave the
+      // reader believing something happened that did not.
+      if (result.data !== true) {
+        setError("The delete could not be confirmed, so nothing was changed. Please try again.");
+        return;
+      }
+
+      setDeleted(true);
+      router.replace(destinationAfterDelete);
+    } catch (thrown) {
+      setError(describeThrown(thrown, "This event could not be deleted. Check your connection and try again."));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const addRecipient = (personId: string) =>
     void run(() => createClient().rpc("add_event_recipient", {
       p_event_id: event.id,
       p_person_id: personId,
     }));
+
+  // Deleted, and on the way out. Rendering the event's name, date, recipients
+  // or contributors now would be rendering something that no longer exists.
+  if (deleted) {
+    return (
+      <AppShell width="narrow">
+        <PageHeader eyebrow="Deleted" title="Event removed" />
+        <Notice tone="success" className="mt-6">
+          The event was deleted. Taking you back…
+        </Notice>
+      </AppShell>
+    );
+  }
 
   if (!isAdmin) {
     return (
@@ -285,7 +381,7 @@ export function EventSettingsScreen({
           title={`Delete ${event.name}?`}
           body="It is removed completely, along with its recipient and contributor setup. Nothing else is affected, and the deletion is recorded in the activity log. This cannot be undone."
           confirmLabel="Delete event"
-          onConfirm={() => { setConfirmDelete(false); deleteEvent(); }}
+          onConfirm={() => { setConfirmDelete(false); void deleteEvent(); }}
           onCancel={() => setConfirmDelete(false)}
         />
       )}
