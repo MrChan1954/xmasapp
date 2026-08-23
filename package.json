@@ -32,7 +32,12 @@
     "test:notification-security": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/notification-security.test.mjs",
     "test:service-worker": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/service-worker-push.test.mjs",
     "test:notification-centre": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/notification-centre.test.mjs",
-    "test:notification-dispatch": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/notification-dispatch.test.mjs"
+    "test:notification-dispatch": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/notification-dispatch.test.mjs",
+    "test:events": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/events.test.ts",
+    "test:event-model": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/event-model.test.mjs",
+    "test:event-scoping": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/event-scoping.test.mjs",
+    "test:event-routing": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/event-routing.test.mjs",
+    "test:event-dashboard": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/event-dashboard-consistency.test.mjs"
   },
   "dependencies": {
     "@opennextjs/cloudflare": "^1.20.2",

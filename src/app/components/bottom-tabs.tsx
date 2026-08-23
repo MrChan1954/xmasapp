@@ -3,12 +3,27 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Plus } from "lucide-react";
+import { useFamily } from "../family-context";
 import { cx } from "./cx";
-import { navItems } from "./nav-items";
+import { activeNavSection, navItemsFor } from "./nav-items";
 
-/** Mobile navigation: five tabs with the add-purchase action raised as a gold FAB. */
+/**
+ * Mobile navigation: five tabs with the add-purchase action raised as a gold
+ * FAB.
+ *
+ * Every href carries the event the reader is currently in, built from the URL
+ * by `navItemsFor`. Tapping Owed inside Paige's Birthday cannot reach Christmas
+ * Owed, because there is no bare "/owed" anywhere in this component to reach.
+ * Outside an event there is nothing to navigate within, so the bar renders
+ * nothing rather than offering tabs that would have to guess an event.
+ */
 export function BottomTabs() {
   const pathname = usePathname();
+  const { eventId } = useFamily();
+  const items = navItemsFor(eventId);
+  const activeSection = activeNavSection(pathname);
+
+  if (!items.length) return null;
 
   return (
     <nav
@@ -16,8 +31,8 @@ export function BottomTabs() {
       className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-ground/90 pb-[max(8px,env(safe-area-inset-bottom))] backdrop-blur-md lg:hidden"
     >
       <div className="mx-auto grid max-w-md grid-cols-5 items-end px-2 pt-2">
-        {navItems.map((item) => {
-          const active = item.match(pathname);
+        {items.map((item) => {
+          const active = item.section === activeSection;
           const Glyph = item.icon;
 
           if (item.primary) {

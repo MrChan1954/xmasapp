@@ -47,6 +47,8 @@ const notificationRepairMigrationName = "202608100023_repair_notification_centre
 const notificationRepairMigration = readFileSync(join(migrationsDirectory, notificationRepairMigrationName), "utf8");
 const balanceVisibilityMigrationName = "202608100024_family_wide_balance_visibility.sql";
 const balanceVisibilityMigration = readFileSync(join(migrationsDirectory, balanceVisibilityMigrationName), "utf8");
+const eventLayerMigrationName = "202608100025_generalise_christmas_into_events.sql";
+const eventLayerMigration = readFileSync(join(migrationsDirectory, eventLayerMigrationName), "utf8");
 
 const applicationTables = [
   "christmas_events",
@@ -65,7 +67,7 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  assert.equal(migrationFiles.at(-1), balanceVisibilityMigrationName);
+  assert.equal(migrationFiles.at(-1), eventLayerMigrationName);
 
   for (const table of applicationTables) {
     assert.match(
@@ -323,22 +325,24 @@ test("changing gift location cannot rewrite purchase responsibility or Owed inpu
 });
 
 test("secondary Payment Log navigation remains under More", () => {
-  // The primary nav is now one shared list consumed by both the desktop icon
-  // rail and the mobile tab bar, so this asserts against that list directly.
+  // The primary nav is one shared list consumed by both the desktop icon rail
+  // and the mobile tab bar. Since Checkpoint 2 it is built per event, so it
+  // holds sections rather than literal paths -- which is itself the guarantee
+  // that a tab cannot point at the wrong event.
   const navItems = readFileSync(join(root, "src", "app", "components", "nav-items.ts"), "utf8");
-  const primaryNav = navItems.match(/export const navItems[\s\S]*?\n\];/)?.[0];
+  const primaryNav = navItems.match(/const EVENT_NAV[\s\S]*?\n\];/)?.[0];
   assert.ok(primaryNav);
-  assert.doesNotMatch(primaryNav, /"\/payment-log"/);
-  assert.match(primaryNav, /href: "\/more"/);
+  assert.doesNotMatch(primaryNav, /payment-log/);
+  assert.match(primaryNav, /section: "more"/);
   // Payment Log still counts as being "under More" for active highlighting.
-  assert.match(navItems, /moreMatch[\s\S]*?startsWith\("\/payment-log"\)/);
+  assert.match(navItems, /activeNavSection[\s\S]*?section === "payment-log"\) return "more"/);
 
-  const morePage = readFileSync(join(root, "src", "app", "more", "page.tsx"), "utf8");
-  assert.match(morePage, /href="\/payment-log"[\s\S]*?Payment log/i);
+  const morePage = readFileSync(join(root, "src", "app", "more", "more-screen.tsx"), "utf8");
+  assert.match(morePage, /eventPath\(eventId, "payment-log"\)[\s\S]*?Payment log/i);
 });
 
 test("contributor cards present responsibility spending without checkout totals", () => {
-  const home = readFileSync(join(root, "src", "app", "page.tsx"), "utf8");
+  const home = readFileSync(join(root, "src", "app", "home-screen.tsx"), "utf8");
   assert.match(home, /purchase_allocations/);
   assert.match(home, /actualResponsibilityPennies/);
   assert.match(home, /contributor\.owed\?\.youOwePennies/);
@@ -1036,8 +1040,8 @@ test("a confirmation reaches every open tab through the subscription that alread
   assert.doesNotMatch(paymentConfirmationsMigration, /alter publication supabase_realtime add table/);
 
   // And the screens subscribe once each, to the tables they read.
-  const owedPage = readFileSync(join(root, "src", "app", "owed", "page.tsx"), "utf8");
-  const paymentLogPage = readFileSync(join(root, "src", "app", "payment-log", "page.tsx"), "utf8");
+  const owedPage = readFileSync(join(root, "src", "app", "owed", "owed-screen.tsx"), "utf8");
+  const paymentLogPage = readFileSync(join(root, "src", "app", "payment-log", "payment-log-screen.tsx"), "utf8");
   for (const page of [owedPage, paymentLogPage]) {
     assert.equal((page.match(/useRealtimeRefresh\(/g) ?? []).length, 1, "one subscription per screen");
     assert.match(page, /"settlements"/);
@@ -1200,7 +1204,7 @@ test("the admin override changes nothing about the confirmation state model", ()
 });
 
 test("the Owed screen offers the ordinary payment action to the two people only", () => {
-  const owedPage = readFileSync(join(root, "src", "app", "owed", "page.tsx"), "utf8");
+  const owedPage = readFileSync(join(root, "src", "app", "owed", "owed-screen.tsx"), "utf8");
 
   // The record button is gated on the reader's relationship to the balance,
   // with no admin term -- so an admin sees exactly what a member sees.
@@ -1227,7 +1231,7 @@ test("the Owed screen offers the ordinary payment action to the two people only"
   );
 
   // The Payment Log never lets an override pass for an ordinary confirmation.
-  const paymentLogPage = readFileSync(join(root, "src", "app", "payment-log", "page.tsx"), "utf8");
+  const paymentLogPage = readFileSync(join(root, "src", "app", "payment-log", "payment-log-screen.tsx"), "utf8");
   assert.match(paymentLogPage, /isAdminConfirmedPayment\(record\) && <Badge tone="gold">Admin confirmed<\/Badge>/);
   assert.match(paymentLogPage, /adminOverrideReason\(record\)/);
 });
@@ -1594,7 +1598,7 @@ test("changing a contribution plan can never rewrite historical purchase respons
 });
 
 test("the UI keeps recipient creation and removal behind Global Admin", () => {
-  const peoplePage = readFileSync(join(root, "src", "app", "people", "page.tsx"), "utf8");
+  const peoplePage = readFileSync(join(root, "src", "app", "people", "people-screen.tsx"), "utf8");
   const personModal = readFileSync(join(root, "src", "app", "people", "person-modal.tsx"), "utf8");
   // Adding a person.
   assert.match(peoplePage, /\{isAdmin && adding && <AddForm/);
@@ -1610,7 +1614,7 @@ test("the UI keeps recipient creation and removal behind Global Admin", () => {
 // exactly where migrations 021 and 022 put it.
 
 test("1-2. every active member can open both balance views", () => {
-  const owedPage = readFileSync(join(root, "src", "app", "owed", "page.tsx"), "utf8");
+  const owedPage = readFileSync(join(root, "src", "app", "owed", "owed-screen.tsx"), "utf8");
 
   // The view switcher must not be behind an admin check any more.
   assert.match(owedPage, /ariaLabel="Balance view"/);
@@ -1668,7 +1672,7 @@ test("3. a normal member can read the settlements behind another pair's balance"
 });
 
 test("4. Why this balance? is available for any pair, to any active member", () => {
-  const owedPage = readFileSync(join(root, "src", "app", "owed", "page.tsx"), "utf8");
+  const owedPage = readFileSync(join(root, "src", "app", "owed", "owed-screen.tsx"), "utf8");
 
   // The explanation button is unconditional on every balance card. Matched on
   // its behaviour (ghost variant, onView handler, the label) rather than its
@@ -1694,7 +1698,7 @@ test("4. Why this balance? is available for any pair, to any active member", () 
 });
 
 test("5. an unrelated member is shown the balance read-only, and refused by the database", () => {
-  const owedPage = readFileSync(join(root, "src", "app", "owed", "page.tsx"), "utf8");
+  const owedPage = readFileSync(join(root, "src", "app", "owed", "owed-screen.tsx"), "utf8");
 
   // UI: no control at all for a non-participant -- not a disabled one. The
   // payment button renders only for the two people; everybody else gets a
@@ -1757,7 +1761,7 @@ test("7-8. the payer can still record and the receiver can still review", () => 
 });
 
 test("9-11. Global Admin sees the same tabs, with the same payment rules", () => {
-  const owedPage = readFileSync(join(root, "src", "app", "owed", "page.tsx"), "utf8");
+  const owedPage = readFileSync(join(root, "src", "app", "owed", "owed-screen.tsx"), "utf8");
 
   // The switcher is not conditional at all, so an admin sees what a member sees.
   assert.equal(
@@ -1838,4 +1842,81 @@ test("13. the visibility migration changes no money and no write permission", ()
     paymentConfirmationsMigration,
     /create trigger payment_receipts_are_append_only\s*before update or delete on public\.payment_receipts/,
   );
+});
+
+test("14. the Event layer adds a table without adding a way in", () => {
+  const statements = eventLayerMigration.replace(/--[^\n]*/g, "");
+
+  // `christmas_events` becomes a VIEW over the renamed `events` table, so the
+  // list above still names every application relation. What matters for
+  // security is that the rename carried RLS with it and that the view cannot
+  // be used to step around it.
+  assert.match(statements, /alter table public\.christmas_events rename to events;/);
+  assert.match(statements, /alter table public\.events enable row level security;/);
+  assert.match(statements, /with \(security_invoker = true, check_option = cascaded\)/);
+  assert.match(statements, /where event\.event_type = 'christmas'/);
+
+  // Read-only to every browser session, admin included. Creating an event is a
+  // Checkpoint 4 SECURITY DEFINER entry point, not a table grant.
+  assert.match(statements, /revoke all privileges on table public\.events from public, anon, authenticated;/);
+  assert.match(statements, /grant select on table public\.events to authenticated;/);
+  assert.match(statements, /revoke all privileges on public\.christmas_events from public, anon, authenticated;/);
+  assert.match(statements, /grant select on public\.christmas_events to authenticated;/);
+  assert.doesNotMatch(statements, /grant (insert|update|delete|all)[^;]*on (table )?public\.(events|christmas_events)/i);
+  assert.doesNotMatch(statements, /for (insert|update|delete|all)\s*\non public\.events/i);
+  assert.doesNotMatch(statements, /\bto anon\b/i);
+
+  // Reading is behind the same active-membership check as every other table.
+  assert.match(
+    statements,
+    /create policy "active members read events"[\s\S]*?using \(public\.is_active_app_member\(\)\)/,
+  );
+
+  // The two new functions are triggers. Neither is an entry point, so neither
+  // is executable by a browser token.
+  for (const guard of ["protect_event_scope_identity", "enforce_event_scope_integrity"]) {
+    const definition = statements.slice(statements.indexOf(`create or replace function public.${guard}()`));
+    assert.ok(definition.length > 0, `${guard} must be defined`);
+    assert.match(definition.slice(0, 400), /security definer/);
+    assert.match(definition.slice(0, 400), /set search_path = ''/);
+    assert.ok(
+      statements.includes(`revoke all on function public.${guard}() from public, anon, authenticated;`),
+      `${guard} must be revoked from every browser role`,
+    );
+    assert.ok(
+      !statements.includes(`grant execute on function public.${guard}`),
+      `${guard} is a trigger, not an entry point`,
+    );
+  }
+
+  // No existing authorization is loosened. Not one policy, grant or function
+  // belonging to the financial tables is redefined by this migration.
+  for (const table of applicationTables.filter((name) => name !== "christmas_events")) {
+    assert.doesNotMatch(
+      statements,
+      new RegExp(String.raw`create policy[^;]*on public\.${table}\b`, "i"),
+      `${table} must not gain a policy from the Event migration`,
+    );
+    assert.doesNotMatch(
+      statements,
+      new RegExp(String.raw`grant [a-z, ]+ on table public\.${table}\b`, "i"),
+      `${table} must not gain a grant from the Event migration`,
+    );
+  }
+  for (const entryPoint of [
+    "record_settlement", "review_payment", "admin_record_confirmed_payment",
+    "void_settlement", "save_purchase", "save_purchase_with_location",
+    "save_christmas_recipient_with_contributions", "is_app_admin", "is_active_app_member",
+  ]) {
+    assert.doesNotMatch(
+      statements,
+      new RegExp(String.raw`create (or replace )?function public\.${entryPoint}\b`, "i"),
+      `${entryPoint} must be left exactly as it was`,
+    );
+  }
+
+  // Payment review history stays append-only, and payer/payee restrictions are
+  // untouched: this migration contains no authorization logic about payments.
+  assert.doesNotMatch(statements, /payment_receipts_are_append_only/);
+  assert.doesNotMatch(statements, /current_app_contributor_id/);
 });

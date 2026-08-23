@@ -252,7 +252,7 @@ export function FamilyAccessClient() {
         illustration="wreath"
         title="Global Admin access only"
         body="Your account can use the Christmas app, but it cannot manage other family accounts."
-        action={<ButtonLink href="/more" size="lg">Back to More</ButtonLink>}
+        action={<ButtonLink href="/" size="lg">Back to Events</ButtonLink>}
       />
     );
   }

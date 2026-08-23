@@ -19,6 +19,8 @@ import {
   type PurchaseStatus,
 } from "@/lib/purchases";
 import { createClient } from "@/utils/supabase/client";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { eventPath } from "@/lib/events.ts";
 import { PageHeader } from "../components/app-shell";
 import { notifyFamily } from "../components/notify-family";
 import { GarlandRule } from "../components/festive/garland";
@@ -77,7 +79,7 @@ type AllocationRow = {
   responsibility_pennies: number;
 };
 
-export function PurchaseForm() {
+export function PurchaseForm({ eventId }: { eventId: string }) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { refresh } = useFamily();
@@ -137,17 +139,9 @@ export function PurchaseForm() {
         return;
       }
       const db = createClient();
-      const event = await db.from("christmas_events").select("id").eq("year", 2026).maybeSingle();
-      if (!active) return;
-      if (event.error || !event.data) {
-        setError("Christmas 2026 could not be loaded.");
-        setLoading(false);
-        return;
-      }
-
       const [recipientRows, contributorRows, auth] = await Promise.all([
-        db.from("christmas_recipients").select("id,person_id,budget_pennies,active").eq("christmas_event_id", event.data.id).order("created_at"),
-        db.from("contributors").select("id,person_id,active").eq("christmas_event_id", event.data.id),
+        db.from("christmas_recipients").select("id,person_id,budget_pennies,active").eq("christmas_event_id", eventId).order("created_at"),
+        db.from("contributors").select("id,person_id,active").eq("christmas_event_id", eventId),
         db.auth.getUser(),
       ]);
       if (!active) return;
@@ -256,7 +250,7 @@ export function PurchaseForm() {
     };
     void load();
     return () => { active = false; };
-  }, [editId, ideaId, queryError, requestedRecipientId]);
+  }, [editId, eventId, ideaId, queryError, requestedRecipientId]);
 
   useEffect(() => {
     if (!recipientId) return;
@@ -412,7 +406,7 @@ export function PurchaseForm() {
     }
 
     await refresh();
-    router.push("/people");
+    router.push(eventPath(eventId, "people") ?? "/");
   };
 
   if (loading) {
@@ -426,7 +420,7 @@ export function PurchaseForm() {
       <PageHeader
         title={editId ? "Edit purchase" : "Add purchase"}
         description="Record what was bought, who paid at checkout, and who is responsible for the cost."
-        actions={<Button variant="secondary" size="lg" onClick={() => router.push("/people")} className="w-full sm:w-auto">Cancel</Button>}
+        actions={<Button variant="secondary" size="lg" onClick={() => router.push(eventPath(eventId, "people") ?? "/")} className="w-full sm:w-auto">Cancel</Button>}
       />
 
       {prefillNotice && <Notice tone="warning" className="mt-5">{prefillNotice}</Notice>}

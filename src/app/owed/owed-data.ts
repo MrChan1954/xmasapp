@@ -7,8 +7,6 @@ import {
 } from "../../lib/owed";
 import { paymentStatusOf, type PaymentReceiptSource, type PaymentStatus } from "../../lib/payment-confirmation";
 
-const CHRISTMAS_YEAR = 2026;
-
 export type OwedObligationDetail = PurchaseObligation & {
   purchaseId: string;
   recipientName: string;
@@ -58,17 +56,20 @@ export type OwedData = {
   balances: NetOwedBalance[];
 };
 
-export async function loadOwedData(): Promise<OwedData> {
+/**
+ * Every figure the Owed screen draws, for ONE event.
+ *
+ * The event is supplied by the caller -- ultimately by the URL, validated on
+ * the server -- rather than looked up by year. The arithmetic below is
+ * unchanged: the same obligations, the same confirmed-only settlement rule, the
+ * same `calculateNetOwedBalances`. All that changed is which rows reach it.
+ */
+export async function loadOwedData(eventId: string): Promise<OwedData> {
   const db = createClient();
-  const [authResult, eventResult] = await Promise.all([
-    db.auth.getUser(),
-    db.from("christmas_events").select("id").eq("year", CHRISTMAS_YEAR).maybeSingle(),
-  ]);
+  const authResult = await db.auth.getUser();
 
   const user = authResult.data.user;
   if (authResult.error || !user) throw new Error("Your signed-in account could not be verified.");
-  if (eventResult.error || !eventResult.data) throw new Error("Christmas 2026 could not be loaded.");
-  const eventId = eventResult.data.id;
 
   const [memberResult, contributorResult, recipientResult] = await Promise.all([
     db.from("app_members").select("person_id,contributor_id,role,active").eq("user_id", user.id).eq("active", true).maybeSingle(),
@@ -76,7 +77,7 @@ export async function loadOwedData(): Promise<OwedData> {
     db.from("christmas_recipients").select("id,person_id").eq("christmas_event_id", eventId),
   ]);
   if (memberResult.error || !memberResult.data) throw new Error("Your active family membership could not be loaded.");
-  if (contributorResult.error || recipientResult.error) throw new Error("Christmas contributor details could not be loaded.");
+  if (contributorResult.error || recipientResult.error) throw new Error("Event contributor details could not be loaded.");
   const member = memberResult.data;
 
   const currentContributor = contributorResult.data.find((row) =>
@@ -85,7 +86,7 @@ export async function loadOwedData(): Promise<OwedData> {
       || row.person_id === member.person_id
     ),
   );
-  if (!currentContributor) throw new Error("Your account is not linked to an active Christmas contributor.");
+  if (!currentContributor) throw new Error("Your account is not a contributor to this event.");
 
   const recipientIds = recipientResult.data.map((row) => row.id);
   const personIds = [...new Set([

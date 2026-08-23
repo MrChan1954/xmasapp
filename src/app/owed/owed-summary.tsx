@@ -3,12 +3,14 @@
 import { useEffect, useState } from "react";
 import { formatPennies } from "../../lib/currency";
 import { contributorOwedSummary } from "../../lib/owed";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { eventPath } from "@/lib/events.ts";
 import { ButtonLink, Skeleton } from "../components/ui";
 import { loadOwedData } from "./owed-data";
 
 type Summary = { owedToYouPennies: number; youOwePennies: number };
 
-export function OwedSummary({ snapshot }: { snapshot?: { summary: Summary | null; unavailable: boolean; loading: boolean } }) {
+export function OwedSummary({ eventId, snapshot }: { eventId: string; snapshot?: { summary: Summary | null; unavailable: boolean; loading: boolean } }) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [unavailable, setUnavailable] = useState(false);
 
@@ -17,7 +19,7 @@ export function OwedSummary({ snapshot }: { snapshot?: { summary: Summary | null
     if (snapshot) return () => { active = false; };
     const load = async () => {
       try {
-        const data = await loadOwedData();
+        const data = await loadOwedData(eventId);
         if (active) setSummary(contributorOwedSummary(data.balances, data.currentContributorId));
       } catch {
         if (active) setUnavailable(true);
@@ -25,7 +27,7 @@ export function OwedSummary({ snapshot }: { snapshot?: { summary: Summary | null
     };
     void load();
     return () => { active = false; };
-  }, [snapshot]);
+  }, [eventId, snapshot]);
 
   const shownSummary = snapshot ? snapshot.summary : summary;
   const shownUnavailable = snapshot ? snapshot.unavailable : unavailable;
@@ -37,9 +39,9 @@ export function OwedSummary({ snapshot }: { snapshot?: { summary: Summary | null
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-gold">Payments</p>
           <h2 className="mt-1 font-display text-xl font-semibold">Owed</h2>
-          <p className="mt-1 text-sm text-ink-600">Your current Christmas 2026 balance</p>
+          <p className="mt-1 text-sm text-ink-600">Your current balance for this event</p>
         </div>
-        <ButtonLink href="/owed" variant="tonal">View details</ButtonLink>
+        <ButtonLink href={eventPath(eventId, "owed") ?? "/"} variant="tonal">View details</ButtonLink>
       </div>
       {shownUnavailable ? (
         <p className="mt-4 text-sm text-ink-600">Owed totals are unavailable until payments are set up.</p>

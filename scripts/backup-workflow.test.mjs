@@ -99,6 +99,9 @@ test("a failed dump cannot be mistaken for a successful backup", () => {
   for (const table of [
     "purchases", "purchase_allocations", "settlements", "payment_receipts",
     "contributors", "recipient_contributions", "christmas_recipients", "app_members",
+    // Every financial row belongs to an events row. A restore without it would
+    // leave every purchase and payment pointing at nothing.
+    "events",
   ]) {
     assert.ok(verify.includes(table), `the schema check must require ${table}`);
   }
@@ -196,7 +199,7 @@ test("the data dump is summarised by a real parser, not a fragile grep", () => {
   // The core-table list is passed to the parser, not embedded in a grep.
   assert.match(
     verify,
-    /-v CORE='\^\(people\|contributors\|christmas_recipients\|app_members\|purchases\|settlements\)\$'/,
+    /-v CORE='\^\(events\|people\|contributors\|christmas_recipients\|app_members\|purchases\|settlements\)\$'/,
   );
 
   // The manifest records the figures, so a backup can be spot-checked without
@@ -335,7 +338,7 @@ test("the backup is documented, including what it does not cover", () => {
 // --quote-all-identifiers, which the Supabase CLI passes, so the header is
 // `COPY "public"."people" (...) FROM stdin;` and `^COPY public\.` matched none.
 
-const CORE_PATTERN = "^(people|contributors|christmas_recipients|app_members|purchases|settlements)$";
+const CORE_PATTERN = "^(events|people|contributors|christmas_recipients|app_members|purchases|settlements)$";
 
 /** The exact policy the workflow applies to the parser's output. */
 function verdictFor(source) {

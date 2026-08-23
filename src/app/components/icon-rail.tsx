@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ShieldCheck } from "lucide-react";
+import { CalendarDays, ShieldCheck } from "lucide-react";
 import { useFamily } from "../family-context";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { eventTypeMeta } from "@/lib/events.ts";
 import { cx } from "./cx";
-import { navItems } from "./nav-items";
+import { EVENTS_HOME, activeNavSection, navItemsFor } from "./nav-items";
 import { Ornament } from "./festive/ornaments";
 
 /**
@@ -17,7 +19,9 @@ import { Ornament } from "./festive/ornaments";
  */
 export function IconRail() {
   const pathname = usePathname();
-  const { isAdmin } = useFamily();
+  const { isAdmin, event, eventId } = useFamily();
+  const items = navItemsFor(eventId);
+  const activeSection = activeNavSection(pathname);
 
   return (
     <aside className="relative hidden w-[76px] shrink-0 lg:block">
@@ -38,14 +42,35 @@ export function IconRail() {
             <Ornament name="tree" size={28} strokeWidth={1.6} />
           </span>
           <span className="min-w-0 opacity-0 transition-opacity duration-200 group-hover/rail:opacity-100 group-has-focus-visible/rail:opacity-100">
-            <span className="block truncate font-display text-base font-semibold text-ink-900">Christmas Budget</span>
-            <span className="block text-[11px] font-semibold tracking-eyebrow text-gold uppercase">Christmas 2026</span>
+            <span className="block truncate font-display text-base font-semibold text-ink-900">Family Budget</span>
+            {/* Which event the reader is inside, so a Christmas gift cannot be
+                added to a birthday by accident. Blank on the dashboard, where
+                there is no active event to name. */}
+            <span className="block truncate text-[11px] font-semibold tracking-eyebrow text-gold uppercase">
+              {event ? `${eventTypeMeta(event.type).icon} ${event.name}` : "Events"}
+            </span>
           </span>
         </Link>
 
         <nav aria-label="Main navigation" className="mt-2 flex flex-col gap-1 px-3.5">
-          {navItems.map((item) => {
-            const active = item.match(pathname);
+          {/* Always first, and always present: the way back out to the
+              dashboard without reaching for the browser's Back button. */}
+          <Link
+            href={EVENTS_HOME.href}
+            aria-current={activeSection === null && pathname === "/" ? "page" : undefined}
+            className={cx(
+              "relative flex h-12 shrink-0 items-center gap-3.5 rounded-xl pl-[11px] text-sm font-semibold whitespace-nowrap",
+              pathname === "/" ? "bg-accent-soft text-accent" : "text-ink-600 hover:bg-hover-veil hover:text-ink-900",
+            )}
+          >
+            <CalendarDays aria-hidden size={21} strokeWidth={pathname === "/" ? 2 : 1.7} className="shrink-0" />
+            <span className="opacity-0 transition-opacity duration-200 group-hover/rail:opacity-100 group-has-focus-visible/rail:opacity-100">
+              {EVENTS_HOME.label}
+            </span>
+          </Link>
+
+          {items.map((item) => {
+            const active = item.section === activeSection;
             const Glyph = item.icon;
             return (
               <Link

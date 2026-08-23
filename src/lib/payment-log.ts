@@ -26,7 +26,10 @@ export type PaymentLogReceipt = {
  */
 export type PaymentLogRecord = {
   id: string;
-  eventYear: number;
+  /** The event this payment belongs to, named for the detail panel. */
+  eventName: string;
+  /** Christmas only; null for every other kind of event. */
+  eventYear: number | null;
   payerContributorId: string;
   payerName: string;
   payeeContributorId: string;
@@ -92,7 +95,9 @@ export type PaymentLogOption = { id: string; name: string };
 
 export type PaymentLogResponse = {
   eventId: string;
-  eventYear: number;
+  eventName: string;
+  /** Christmas only; null for every other kind of event. */
+  eventYear: number | null;
   today: string;
   currentContributorId: string;
   currentAppMemberId: string;

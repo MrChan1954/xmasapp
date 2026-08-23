@@ -4,9 +4,11 @@ import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { formatPennies } from "@/lib/currency";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { eventPath } from "@/lib/events.ts";
 import { useFamily } from "../family-context";
 import { cx } from "./cx";
-import { navItems } from "./nav-items";
+import { navItemsFor } from "./nav-items";
 import { Modal } from "./ui";
 
 type Result = { key: string; label: string; hint?: string; href: string; group: "People" | "Go to" };
@@ -44,7 +46,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
 function CommandPalettePanel({ onClose }: { onClose: () => void }) {
   const router = useRouter();
-  const { people } = useFamily();
+  const { people, eventId } = useFamily();
   const [query, setQuery] = useState("");
 
   const results = useMemo<Result[]>(() => {
@@ -56,16 +58,18 @@ function CommandPalettePanel({ onClose }: { onClose: () => void }) {
         key: `person-${person.id}`,
         label: person.name,
         hint: `${formatPennies(person.budgetPennies)} budget`,
-        href: `/people?person=${person.id}`,
+        href: `${eventPath(eventId ?? "", "people") ?? "/"}?person=${encodeURIComponent(person.id)}`,
         group: "People",
       }));
 
-    const matchedRoutes = navItems
+    // Event-scoped destinations only exist while the reader is inside an event;
+    // on the dashboard the palette offers people and nothing to jump to.
+    const matchedRoutes = navItemsFor(eventId)
       .filter((item) => !needle || item.label.toLowerCase().includes(needle))
       .map<Result>((item) => ({ key: `route-${item.href}`, label: item.label, href: item.href, group: "Go to" }));
 
     return [...matchedPeople, ...matchedRoutes];
-  }, [people, query]);
+  }, [eventId, people, query]);
 
   const go = (href: string) => {
     onClose();

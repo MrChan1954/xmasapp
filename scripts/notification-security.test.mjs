@@ -334,7 +334,7 @@ test("push is an alert, not a data channel, and does not displace Realtime", () 
   // Realtime is still wired to the same tables it was.
   const realtime = read("src", "app", "components", "use-realtime-refresh.ts");
   assert.match(realtime, /postgres_changes/);
-  const owedPage = read("src", "app", "owed", "page.tsx");
+  const owedPage = read("src", "app", "owed", "owed-screen.tsx");
   assert.match(owedPage, /useRealtimeRefresh\(/);
 
   // Push tables are deliberately absent from the Realtime publication, which

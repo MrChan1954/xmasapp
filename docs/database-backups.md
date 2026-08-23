@@ -129,7 +129,7 @@ anything is uploaded, the workflow fails the run if:
 - any of the three files is missing or zero bytes;
 - `schema.sql` does not define all of `purchases`, `purchase_allocations`,
   `settlements`, `payment_receipts`, `contributors`, `recipient_contributions`,
-  `christmas_recipients`, `app_members`;
+  `christmas_recipients`, `app_members`, `events`;
 - `data.sql` contains no `COPY public.` blocks at all.
 
 Every step runs under `set -euo pipefail`, and the upload uses

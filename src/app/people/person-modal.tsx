@@ -38,7 +38,7 @@ type Contribution = {
 };
 
 export function PersonModal({ person, onClose }: { person: Person; onClose: () => void }) {
-  const { saveRecipient, archive, isAdmin, setIdeaCount, setPurchaseMetrics } = useFamily();
+  const { saveRecipient, archive, isAdmin, setIdeaCount, setPurchaseMetrics, event } = useFamily();
   const [rows, setRows] = useState<Contribution[]>([]);
   const [mode, setMode] = useState<"view" | "contributors" | "person">("view");
   const [loading, setLoading] = useState(true);
@@ -61,7 +61,7 @@ export function PersonModal({ person, onClose }: { person: Person; onClose: () =
       .eq("id", person.id)
       .maybeSingle();
     if (recipient.error || !recipient.data) {
-      setError("This Christmas recipient could not be loaded.");
+      setError("This recipient could not be loaded.");
       setLoading(false);
       return;
     }
@@ -220,7 +220,7 @@ export function PersonModal({ person, onClose }: { person: Person; onClose: () =
     <Modal labelledBy="person-dialog-title" onClose={onClose} size="xl" dismissible={!confirmingRemove} className="min-h-[88dvh] sm:min-h-0">
       <ModalHeader
         id="person-dialog-title"
-        eyebrow="Christmas 2026"
+        eyebrow={event?.name ?? "Event"}
         title={name}
         onClose={onClose}
         closeLabel="Close person details"
@@ -271,7 +271,7 @@ export function PersonModal({ person, onClose }: { person: Person; onClose: () =
 
       {confirmingRemove && (
         <ConfirmDialog
-          title={`Remove ${person.name} from Christmas 2026?`}
+          title={`Remove ${person.name} from ${event?.name ?? "this event"}?`}
           body="They will no longer appear in the active Christmas list or budget. You can restore them later."
           confirmLabel="Remove person"
           busyLabel="Removing..."

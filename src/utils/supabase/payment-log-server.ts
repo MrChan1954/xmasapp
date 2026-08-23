@@ -2,10 +2,9 @@ import "server-only";
 
 import { createClient as createAdminSupabaseClient } from "@supabase/supabase-js";
 import type { PaymentLogReceipt, PaymentLogRecord, PaymentLogResponse } from "@/lib/payment-log";
+import { validateUuid } from "@/lib/input-validation";
 import { paymentStatusOf, type PaymentStatus } from "@/lib/payment-confirmation";
 import { createClient as createSessionClient } from "@/utils/supabase/server";
-
-const CHRISTMAS_YEAR = 2026;
 
 export class PaymentLogServerError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -14,7 +13,17 @@ export class PaymentLogServerError extends Error {
   }
 }
 
-export async function loadPaymentLog(): Promise<PaymentLogResponse> {
+/**
+ * The Payment Log for ONE event.
+ *
+ * The event id comes from the request, is validated as a UUID here, and is then
+ * looked up through RLS -- so an id for an event this member cannot see returns
+ * 404 rather than anybody else's payments. No year is involved.
+ */
+export async function loadPaymentLog(eventId: string): Promise<PaymentLogResponse> {
+  const validEventId = validateUuid(eventId);
+  if (!validEventId.ok) throw new PaymentLogServerError(404, "That event could not be found.");
+
   const session = await createSessionClient();
   const auth = await session.auth.getUser();
   if (auth.error || !auth.data.user) throw new PaymentLogServerError(401, "You must sign in to view the Payment Log.");
@@ -26,12 +35,13 @@ export async function loadPaymentLog(): Promise<PaymentLogResponse> {
       .eq("user_id", auth.data.user.id)
       .eq("active", true)
       .maybeSingle(),
-    session.from("christmas_events").select("id,year").eq("year", CHRISTMAS_YEAR).maybeSingle(),
+    session.from("events").select("id,name,year").eq("id", validEventId.value).maybeSingle(),
   ]);
   if (membershipResult.error || !membershipResult.data) throw new PaymentLogServerError(403, "Your active family membership could not be verified.");
-  if (eventResult.error || !eventResult.data) throw new PaymentLogServerError(503, "Christmas 2026 could not be loaded.");
+  if (eventResult.error || !eventResult.data) throw new PaymentLogServerError(404, "That event could not be found.");
   const membership = membershipResult.data;
   const event = eventResult.data;
+  const eventName = event.name as string;
 
   const [contributorsResult, settlementsResult] = await Promise.all([
     session
@@ -45,7 +55,7 @@ export async function loadPaymentLog(): Promise<PaymentLogResponse> {
       .order("payment_date", { ascending: false })
       .order("created_at", { ascending: false }),
   ]);
-  if (contributorsResult.error) throw new PaymentLogServerError(503, "Christmas contributors could not be loaded.");
+  if (contributorsResult.error) throw new PaymentLogServerError(503, "Event contributors could not be loaded.");
   if (settlementsResult.error) throw new PaymentLogServerError(503, paymentLogDatabaseError(settlementsResult.error.code));
 
   const currentContributor = contributorsResult.data.find((contributor) =>
@@ -54,7 +64,7 @@ export async function loadPaymentLog(): Promise<PaymentLogResponse> {
       || contributor.person_id === membership.person_id
     ),
   );
-  if (!currentContributor) throw new PaymentLogServerError(403, "Your account is not linked to an active Christmas contributor.");
+  if (!currentContributor) throw new PaymentLogServerError(403, "Your account is not a contributor to this event.");
 
   const settlementRows = settlementsResult.data;
 
@@ -125,6 +135,7 @@ export async function loadPaymentLog(): Promise<PaymentLogResponse> {
 
   const records: PaymentLogRecord[] = settlementRows.map((row) => ({
     id: row.id,
+    eventName,
     eventYear: event.year,
     payerContributorId: row.payer_contributor_id,
     payerName: namesByContributorId.get(row.payer_contributor_id) ?? "Unknown contributor (record link missing)",
@@ -172,6 +183,7 @@ export async function loadPaymentLog(): Promise<PaymentLogResponse> {
 
   return {
     eventId: event.id,
+    eventName,
     eventYear: event.year,
     today: londonDateInput(),
     currentContributorId: currentContributor.id,

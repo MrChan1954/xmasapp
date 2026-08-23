@@ -15,12 +15,12 @@ export async function GET() {
   }
 
   try {
-    const query = await db.from("christmas_events").select("id").eq("year", 2026).maybeSingle();
+    const query = await db.from("events").select("id").limit(1);
     if (query.error) {
       console.error("[supabase-health] database check failed", { code: query.error.code });
       return NextResponse.json({ configured: true, reachable: false }, { status: 502, headers: noStoreHeaders });
     }
-    return NextResponse.json({ configured: true, reachable: true, hasEvent: Boolean(query.data) }, { headers: noStoreHeaders });
+    return NextResponse.json({ configured: true, reachable: true, hasEvent: (query.data ?? []).length > 0 }, { headers: noStoreHeaders });
   } catch (error) {
     console.error("[supabase-health] unexpected check failure", { type: error instanceof Error ? error.name : "UnknownError" });
     return NextResponse.json({ configured: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL), reachable: false }, { status: 502, headers: noStoreHeaders });

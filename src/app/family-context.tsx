@@ -2,6 +2,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { eventIdFromPath } from "@/lib/events.ts";
 import { INPUT_LIMITS, MAX_PENNIES, validateRequiredText, validateUuid } from "@/lib/input-validation";
 import {
   validateRecipientAllocationSnapshot,
@@ -18,14 +20,26 @@ export type SaveRecipientInput = {
   budgetPennies: number;
   allocations: RecipientAllocation[];
 };
-type Family = { people: Person[]; loading: boolean; error: string | null; role: "admin" | "member" | null; isAdmin: boolean; saveRecipient: (input: SaveRecipientInput) => Promise<void>; archive: (id: string) => Promise<void>; restore: (id: string) => Promise<void>; setIdeaCount: (id: string, count: number) => void; setPurchaseMetrics: (id: string, spentPennies: number, count: number) => void; refresh: (quiet?: boolean) => Promise<void> };
+export type ActiveEvent = { id: string; name: string; type: string; eventDate: string; status: string; year: number | null };
+type Family = { eventId: string | null; event: ActiveEvent | null; people: Person[]; loading: boolean; error: string | null; role: "admin" | "member" | null; isAdmin: boolean; saveRecipient: (input: SaveRecipientInput) => Promise<void>; archive: (id: string) => Promise<void>; restore: (id: string) => Promise<void>; setIdeaCount: (id: string, count: number) => void; setPurchaseMetrics: (id: string, spentPennies: number, count: number) => void; refresh: (quiet?: boolean) => Promise<void> };
 const Context = createContext<Family | null>(null);
-const YEAR = 2026;
 
+/**
+ * THE URL OWNS THE EVENT.
+ *
+ * This provider used to find its event by year, which is what made the whole
+ * application mean "Christmas 2026". It now reads the id straight out of the
+ * path on every render, so a refresh, a bookmark, a shared link and a tab
+ * restored from sleep all resolve to the same event, and React state can never
+ * disagree with the address bar. Outside an event -- the dashboard, Family
+ * Access, Account -- there is no event and no event-scoped data is fetched.
+ */
 export function FamilyProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const eventId = eventIdFromPath(pathname);
   const [people, setPeople] = useState<Person[]>([]);
+  const [event, setEvent] = useState<ActiveEvent | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [role, setRole] = useState<"admin" | "member" | null>(null);
@@ -53,10 +67,18 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     setRole(membership.data.role === "admin" ? "admin" : "member");
-    const event = await db.from("christmas_events").select("id").eq("year", YEAR).maybeSingle();
-    if (event.error || !event.data) { setError("Christmas 2026 could not be loaded."); setLoading(false); return; }
-    const recipients = await db.from("christmas_recipients").select("id,person_id,active,budget_pennies").eq("christmas_event_id", event.data.id).order("created_at");
-    if (recipients.error) { setError("The Christmas people list could not be loaded."); setLoading(false); return; }
+    // Outside an event there is nothing event-scoped to fetch. The role above
+    // is still needed, because the navigation chrome renders everywhere.
+    if (!eventId) { setPeople([]); setEvent(null); setError(null); setLoading(false); return; }
+    // Identity only, for the chrome that has to name the active event. The
+    // server has already validated this id in `requireEvent`; this read is
+    // behind the same RLS policy and cannot widen what it returns.
+    const eventRow = await db.from("events").select("id,name,event_type,event_date,status,year").eq("id", eventId).maybeSingle();
+    setEvent(eventRow.data
+      ? { id: eventRow.data.id, name: eventRow.data.name, type: eventRow.data.event_type, eventDate: String(eventRow.data.event_date).slice(0, 10), status: eventRow.data.status, year: eventRow.data.year }
+      : null);
+    const recipients = await db.from("christmas_recipients").select("id,person_id,active,budget_pennies").eq("christmas_event_id", eventId).order("created_at");
+    if (recipients.error) { setError("This event's people list could not be loaded."); setLoading(false); return; }
     const recipientIds = recipients.data.map((row) => row.id);
     const [personRows, ideaRows, purchaseRows] = await Promise.all([
       db.from("people").select("id,name").in("id", recipients.data.map((row) => row.person_id)),
@@ -98,7 +120,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
       purchaseRows.error ? "Purchase totals are unavailable until the Purchases migration is applied." : null,
     ].filter(Boolean);
     setError(metricErrors.length ? metricErrors.join(" ") : null); setLoading(false);
-  }, [authRoute, router]);
+  }, [authRoute, eventId, router]);
 
   useEffect(() => { const handle = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(handle); }, [load]);
 
@@ -126,12 +148,11 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     const validName = validatePersonValues(id ?? null, name, budgetPennies);
     const validAllocations = validateRecipientAllocationSnapshot(budgetPennies, allocations);
     if (!validAllocations.ok) throw new Error(validAllocations.error);
+    if (!eventId) throw new Error("Open an event before adding or editing a person.");
     const db = createClient();
-    const event = await db.from("christmas_events").select("id").eq("year", YEAR).single();
-    if (event.error || !event.data) throw new Error("Christmas 2026 could not be loaded.");
     await mutate(db.rpc("save_christmas_recipient_with_contributions", {
       p_christmas_recipient_id: id ?? null,
-      p_christmas_event_id: event.data.id,
+      p_christmas_event_id: eventId,
       p_name: validName,
       p_budget_pennies: budgetPennies,
       p_allocations: validAllocations.value.map((allocation) => ({
@@ -149,7 +170,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
   const restore = async (id: string) => setActive(id, true);
   const setIdeaCount = useCallback((id: string, count: number) => setPeople((current) => current.map((person) => person.id === id ? { ...person, ideaCount: count } : person)), []);
   const setPurchaseMetrics = useCallback((id: string, spentPennies: number, count: number) => setPeople((current) => current.map((person) => person.id === id ? { ...person, spentPennies, giftCount: count } : person)), []);
-  return <Context.Provider value={{ people, loading, error, role, isAdmin: role === "admin", saveRecipient, archive, restore, setIdeaCount, setPurchaseMetrics, refresh: load }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ eventId, event, people, loading, error, role, isAdmin: role === "admin", saveRecipient, archive, restore, setIdeaCount, setPurchaseMetrics, refresh: load }}>{children}</Context.Provider>;
 }
 
 export function useFamily() { const value = useContext(Context); if (!value) throw new Error("FamilyProvider missing"); return value; }

@@ -263,6 +263,23 @@ export async function POST(request: NextRequest) {
   }
 }
 
+/**
+ * COMPATIBILITY, until Checkpoint 4.
+ *
+ * Family Access adds and removes CONTRIBUTORS, which are per-event rows, but
+ * the screen is still family-wide and names no event -- so it resolves the one
+ * the app has always meant. This is the third and last runtime lookup of
+ * Christmas by identity; the other two are `legacyChristmasEventId` (old
+ * bookmarks) and `loadChristmasEventId` (notification dispatch, Checkpoint 3).
+ *
+ * It reads the `christmas_events` compatibility VIEW from migration 025, which
+ * exposes Christmas-type events only. That matters here specifically: a
+ * birthday carries a null year, and `order by year desc` puts nulls FIRST in
+ * PostgreSQL, so without the view's type filter a birthday could capture this
+ * query and contributors would be added to the wrong event.
+ *
+ * Checkpoint 4 makes the contributor editor event-scoped and this goes with it.
+ */
 async function loadCurrentChristmasEvent(admin: FamilyAccessAdminClient) {
   const { data, error } = await admin
     .from("christmas_events")

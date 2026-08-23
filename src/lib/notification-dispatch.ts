@@ -200,6 +200,16 @@ export type FamilyContext = {
   balances: NetOwedBalance[];
 };
 
+/**
+ * COMPATIBILITY, until Checkpoint 3.
+ *
+ * The dispatcher still assumes one event, because every notification link
+ * written so far points at a legacy path (`/owed`, `/people?person=`) which the
+ * compatibility redirects forward into Christmas 2026. Checkpoint 3
+ * makes notifications event-explicit and this function goes with it. Nothing
+ * else in the application resolves an event by year -- see
+ * `scripts/event-routing.test.mjs`, which enumerates the exceptions.
+ */
 export async function loadChristmasEventId(reader: DataClient): Promise<string> {
   const event = await reader
     .from("christmas_events")

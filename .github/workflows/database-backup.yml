@@ -190,8 +190,14 @@ jobs:
           [ "$FAILED" -eq 0 ] || exit 1
 
           # The schema must contain the tables the app cannot run without.
+          #
+          # `events` is on this list because every recipient, contributor,
+          # purchase and payment belongs to one of its rows: a restore without
+          # it would leave every financial row pointing at nothing. It replaced
+          # `christmas_events`, which is now a compatibility view over it.
           for TABLE in purchases purchase_allocations settlements payment_receipts \
-                       contributors recipient_contributions christmas_recipients app_members; do
+                       contributors recipient_contributions christmas_recipients \
+                       app_members events; do
             if ! grep -q "CREATE TABLE.*\<${TABLE}\>" "${DIR}/schema.sql"; then
               echo "::error::schema.sql does not define ${TABLE}. Treating this backup as invalid."
               FAILED=1
@@ -212,7 +218,7 @@ jobs:
           #
           # It prints aggregates only. Row contents never reach the log.
           SUMMARY=$(awk \
-            -v CORE='^(people|contributors|christmas_recipients|app_members|purchases|settlements)$' \
+            -v CORE='^(events|people|contributors|christmas_recipients|app_members|purchases|settlements)$' \
             -f scripts/verify-backup-dump.awk \
             "${DIR}/data.sql")
           read -r COPY_BLOCKS PUBLIC_BLOCKS DATA_ROWS CORE_COUNT CORE_TABLES <<< "$SUMMARY"

@@ -1,0 +1,521 @@
+import assert from "node:assert/strict";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import test from "node:test";
+
+/**
+ * Event-aware routing, as a regression suite.
+ *
+ * THE PROPERTY THESE PROTECT
+ *   The event a screen is showing comes from the URL and from nowhere else. A
+ *   tab, a link, a loader and a refresh must all agree, and none of them may
+ *   fall back to "the Christmas one" — because the moment one does, a birthday
+ *   purchase can land in Christmas and no test would notice.
+ *
+ *   The one deliberate exception is the legacy redirect layer, which exists to
+ *   keep old bookmarks and old notification links alive. It is confined to a
+ *   single named function, and the last test here proves it stays there.
+ */
+
+const root = process.cwd();
+const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
+const exists = (...parts) => existsSync(join(root, ...parts));
+
+const { EVENT_SECTIONS, eventIdFromPath, eventPath, eventSectionFromPath, partitionEvents } =
+  await import("../src/lib/events.ts");
+
+const CHRISTMAS = "11111111-1111-4111-8111-111111111111";
+const APP = ["src", "app"];
+const EVENT_ROUTE = [...APP, "events", "[eventId]"];
+
+// ---------------------------------------------------------------------------
+// 1. The root is the dashboard
+// ---------------------------------------------------------------------------
+
+test("1. GET / renders the Event Dashboard and never redirects into Christmas", () => {
+  const rootPage = read(...APP, "page.tsx");
+
+  // It RENDERS the dashboard...
+  assert.match(rootPage, /export default async function \w+\(\)/, "the root is a page, not a redirect");
+  assert.match(rootPage, /<EventsDashboard/, "the root renders the dashboard component");
+  assert.match(rootPage, /listEvents\(\)/, "it lists every event the member may open");
+
+  // ...and is incapable of doing anything else. These are the whole point:
+  // "/" is the one route that must never resolve to a particular event.
+  assert.doesNotMatch(rootPage, /redirect\(/, "the root must not redirect anywhere");
+  assert.doesNotMatch(rootPage, /legacyChristmasEventId/, "the root must not resolve Christmas");
+  assert.doesNotMatch(rootPage, /redirectLegacyRoute/, "the root is not a legacy route");
+  assert.doesNotMatch(rootPage, /\/events\//, "the root must not forward into a specific event");
+  assert.doesNotMatch(rootPage, /eq\("year"/, "the front door does not resolve a Christmas");
+
+  // The legacy redirect list is event-specific routes only. "/" is not one of
+  // them, and adding it would be caught here.
+  const legacyPaths = LEGACY.map((entry) => `/${entry.folder.join("/")}`);
+  assert.ok(!legacyPaths.includes("/"), "the root is not a legacy redirect");
+  assert.deepEqual(
+    legacyPaths.slice().sort(),
+    ["/add-purchase", "/more", "/owed", "/payment-log", "/people", "/people/[id]"],
+    "exactly these event-specific routes redirect for compatibility",
+  );
+
+  // `/events` is the alias, so a guessed URL still lands somewhere sensible.
+  const alias = read(...APP, "events", "page.tsx");
+  assert.match(alias, /redirect\("\/"\)/);
+
+  // The PWA opens at "/" — which is the dashboard itself, with no redirect on
+  // a cold start.
+  assert.match(read(...APP, "manifest.ts"), /start_url: "\/"/);
+});
+
+test("2. Christmas 2026 appears as an event card like any other", () => {
+  const dashboard = read(...APP, "events-dashboard.tsx");
+  // Nothing about the card is Christmas-specific: it renders whatever
+  // `listEvents` returned, using the shared type registry for its icon.
+  assert.match(dashboard, /events\.map\(\(event\) => <EventCard/);
+  assert.match(dashboard, /eventTypeMeta\(String\(event\.type\)\)/);
+  // Prose may mention Christmas; the RENDERING must not branch on it.
+  const dashboardCode = dashboard.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/\/\/[^\n]*/gu, "");
+  assert.doesNotMatch(dashboardCode, /christmas/iu, "no event type is special-cased in the dashboard");
+
+  const server = read("src", "utils", "supabase", "events-server.ts");
+  assert.match(server, /from\("events"\)/, "every event is listed from the generalised table");
+  assert.doesNotMatch(
+    server.slice(0, server.indexOf("COMPATIBILITY ONLY")),
+    /eq\("year"/,
+    "listing events never filters by year",
+  );
+});
+
+test("3. every event link carries the event id", () => {
+  for (const section of EVENT_SECTIONS) {
+    const path = eventPath(CHRISTMAS, section);
+    assert.ok(path, `${section} must have a path`);
+    assert.ok(path.includes(CHRISTMAS), `${section} must carry the event id`);
+    assert.equal(eventIdFromPath(path), CHRISTMAS);
+    assert.equal(eventSectionFromPath(path), section);
+  }
+  assert.equal(eventPath(CHRISTMAS), `/events/${CHRISTMAS}`);
+});
+
+// ---------------------------------------------------------------------------
+// 4-9. Every section is a real route, and validates its event
+// ---------------------------------------------------------------------------
+
+const SECTION_ROUTES = [
+  { section: "home", folder: [], screen: "EventHome" },
+  { section: "people", folder: ["people"], screen: "PeopleScreen" },
+  { section: "add-purchase", folder: ["add-purchase"], screen: "PurchaseForm" },
+  { section: "owed", folder: ["owed"], screen: "OwedScreen" },
+  { section: "more", folder: ["more"], screen: "MoreScreen" },
+  { section: "payment-log", folder: ["payment-log"], screen: "PaymentLogScreen" },
+];
+
+test("4-9. each event section is a route that validates the event before rendering", () => {
+  for (const { section, folder, screen } of SECTION_ROUTES) {
+    const file = [...EVENT_ROUTE, ...folder, "page.tsx"];
+    assert.ok(exists(...file), `/events/[eventId]/${folder.join("/")} must exist`);
+    const page = read(...file);
+
+    // The gate, on every single one. No route may render its screen first and
+    // check afterwards.
+    assert.match(page, /await requireEvent\(eventId\)/, `${section} must call requireEvent`);
+    assert.ok(
+      page.indexOf("requireEvent(eventId)") < page.indexOf(`<${screen}`),
+      `${section} must validate before it renders`,
+    );
+    assert.match(page, /const \{ eventId \} = await params;/, `${section} takes its event from the route`);
+    assert.match(page, new RegExp(`${screen}[\\s\\S]*?eventId=\\{event\\.id\\}`), `${section} passes the resolved event down`);
+
+    // And no route smuggles in a fallback.
+    assert.doesNotMatch(page, /eq\("year"/, `${section} must not resolve an event by year`);
+  }
+
+  // The section list and the route folders are the same set, so a link can
+  // never be built for a section that has no page.
+  const folders = readdirSync(join(root, ...EVENT_ROUTE), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  assert.deepEqual(folders, EVENT_SECTIONS.filter((section) => section !== "home").slice().sort());
+});
+
+test("5. an invalid, unknown or unauthorized event id fails safely", () => {
+  // A malformed id never becomes a link or a query.
+  assert.equal(eventPath("not-a-uuid"), null);
+  assert.equal(eventIdFromPath("/events/not-a-uuid"), null);
+  assert.equal(eventIdFromPath("/events/../admin"), null);
+
+  const server = read("src", "utils", "supabase", "events-server.ts");
+  // Validate the shape, then ask the database, then 404 — and the three
+  // failures are deliberately indistinguishable to the caller.
+  assert.match(server, /const validId = validateUuid\(eventId\);\s*\n\s*if \(!validId\.ok\) return null;/);
+  assert.match(server, /if \(membership\.error \|\| !membership\.data\) notFound\(\);/);
+  assert.match(server, /const event = await getEvent\(eventId\);\s*\n\s*if \(!event\) notFound\(\);/);
+  assert.match(server, /if \(!auth\.user\) redirect\("\/login"\);/);
+  // Reading an event is behind the same RLS as everything else; this module
+  // never uses a service-role client to look one up.
+  assert.doesNotMatch(server, /SUPABASE_SECRET_KEY|createAdminSupabaseClient|service_role/);
+});
+
+// ---------------------------------------------------------------------------
+// 10-11. Legacy routes
+// ---------------------------------------------------------------------------
+
+const LEGACY = [
+  { folder: ["owed"], section: "owed" },
+  { folder: ["people"], section: "people" },
+  { folder: ["add-purchase"], section: "add-purchase" },
+  { folder: ["more"], section: "more" },
+  { folder: ["payment-log"], section: "payment-log" },
+  { folder: ["people", "[id]"], section: "people" },
+];
+
+test("10-11. every legacy route redirects into Christmas 2026 rather than breaking", () => {
+  for (const { folder, section } of LEGACY) {
+    const page = read(...APP, ...folder, "page.tsx");
+    assert.match(page, /redirectLegacyRoute\(/, `/${folder.join("/")} must redirect`);
+    assert.match(page, new RegExp(`redirectLegacyRoute\\("${section}"`), `/${folder.join("/")} -> ${section}`);
+    assert.match(page, /COMPATIBILITY/, `/${folder.join("/")} must be labelled as compatibility`);
+    // A redirect is all it is: no screen, no data loading, no duplicate
+    // implementation of the page it forwards to.
+    assert.doesNotMatch(page, /createClient|useState|"use client"/);
+  }
+
+  // The deep links notifications already use survive with their query intact.
+  assert.match(read(...APP, "people", "page.tsx"), /\?person=\$\{encodeURIComponent\(person\)\}/);
+  assert.match(read(...APP, "people", "[id]", "page.tsx"), /\?person=\$\{encodeURIComponent\(id\)\}/);
+  assert.match(read(...APP, "add-purchase", "page.tsx"), /"edit", "idea", "recipient"/);
+
+  // Notification links still point at those legacy paths, which is exactly why
+  // the redirects have to exist.
+  assert.match(read("src", "lib", "notification-content.ts"), /OWED_URL = "\/owed"/);
+  assert.match(read("src", "lib", "notification-content.ts"), /\/people\?person=/);
+});
+
+// ---------------------------------------------------------------------------
+// 12-13. Navigation
+// ---------------------------------------------------------------------------
+
+test("12-13. mobile and desktop navigation both carry the current event", () => {
+  const navItems = read(...APP, "components", "nav-items.ts");
+  // The nav is built from sections and `eventPath`, so there is no literal
+  // "/owed" anywhere for a tab to accidentally point at.
+  assert.match(navItems, /export function navItemsFor\(eventId: string \| null\): NavItem\[\]/);
+  assert.match(navItems, /const href = eventPath\(eventId, item\.section\);/);
+  assert.match(navItems, /if \(!eventId\) return \[\];/);
+  const eventNav = navItems.match(/const EVENT_NAV[\s\S]*?\n\];/)?.[0];
+  assert.ok(eventNav);
+  assert.doesNotMatch(eventNav, /href|"\//, "the nav table holds sections, never paths");
+
+  for (const [surface, file] of [["mobile", "bottom-tabs.tsx"], ["desktop", "icon-rail.tsx"]]) {
+    const source = read(...APP, "components", file);
+    assert.match(source, /navItemsFor\(eventId\)/, `${surface} nav must be built per event`);
+    assert.match(source, /activeNavSection\(pathname\)/, `${surface} nav highlights by section`);
+    assert.doesNotMatch(
+      source,
+      /href="\/(people|owed|add-purchase|more|payment-log)"/,
+      `${surface} nav must not contain a literal section path`,
+    );
+  }
+
+  // Every href a real event produces contains that event.
+  const items = navItemsFor(CHRISTMAS, navItems);
+  assert.equal(items.length, 5);
+  for (const href of items) assert.ok(href.includes(CHRISTMAS), `${href} must carry the event id`);
+});
+
+/** Rebuilds the nav hrefs the same way the components do. */
+function navItemsFor(eventId) {
+  return ["home", "people", "add-purchase", "owed", "more"].map((section) => eventPath(eventId, section));
+}
+
+test("there is always an obvious way back out to Events", () => {
+  const navItems = read(...APP, "components", "nav-items.ts");
+  // The top bar breadcrumb inside an event points at the dashboard, so leaving
+  // never depends on the browser's Back button.
+  assert.match(navItems, /export const EVENTS_HOME = \{ href: "\/", label: "Events" \}/);
+  assert.match(navItems, /if \(section === "home"\) return \{ title: EVENT_SECTION_TITLES\.home, parent: EVENTS_HOME \};/);
+  // The desktop rail carries it as a permanent first entry.
+  assert.match(read(...APP, "components", "icon-rail.tsx"), /href=\{EVENTS_HOME\.href\}/);
+});
+
+test("the active event is named in the chrome, so nobody adds a gift to the wrong one", () => {
+  const rail = read(...APP, "components", "icon-rail.tsx");
+  assert.match(rail, /eventTypeMeta\(event\.type\)\.icon/);
+  assert.match(rail, /event\.name/);
+  assert.doesNotMatch(rail, /Christmas 2026/);
+
+  // Event Home leads with the event's own name, icon and date.
+  const home = read(...APP, "home-screen.tsx");
+  assert.match(home, /\{eventName\}/);
+  assert.match(home, /eventTypeMeta\(eventType\)\.icon/);
+  assert.match(home, /formatEventDate\(eventDate\)/);
+  assert.doesNotMatch(home, /Christmas<span/, "the masthead no longer hardcodes Christmas");
+});
+
+// ---------------------------------------------------------------------------
+// 14. No hidden Christmas default
+// ---------------------------------------------------------------------------
+
+test("14. no event-scoped screen or loader resolves its event by year", () => {
+  const screens = [
+    ["home-screen.tsx"],
+    ["people", "people-screen.tsx"],
+    ["add-purchase", "purchase-form.tsx"],
+    ["owed", "owed-screen.tsx"],
+    ["owed", "owed-data.ts"],
+    ["owed", "owed-summary.tsx"],
+    ["payment-log", "payment-log-screen.tsx"],
+    ["more", "more-screen.tsx"],
+    ["events-dashboard.tsx"],
+    ["family-context.tsx"],
+  ];
+  for (const parts of screens) {
+    const source = read(...APP, ...parts);
+    assert.doesNotMatch(source, /eq\("year"/, `${parts.join("/")} must not look an event up by year`);
+    assert.doesNotMatch(source, /christmas_events/, `${parts.join("/")} must not read the compatibility view`);
+  }
+
+  // The server loaders too.
+  for (const parts of [["payment-log-server.ts"], ["events-server.ts"]]) {
+    const source = read("src", "utils", "supabase", ...parts);
+    const beforeCompat = source.includes("COMPATIBILITY ONLY")
+      ? source.slice(0, source.indexOf("COMPATIBILITY ONLY"))
+      : source;
+    assert.doesNotMatch(beforeCompat, /eq\("year"/, `${parts[0]} must not look an event up by year`);
+  }
+
+  // The URL is authoritative: the family context reads the id from the path
+  // rather than holding its own idea of the current event.
+  const familyContext = read(...APP, "family-context.tsx");
+  assert.match(familyContext, /const eventId = eventIdFromPath\(pathname\);/);
+  assert.doesNotMatch(familyContext, /useState.*eventId|setEventId/);
+
+  // Exactly one function in the whole application is allowed to find Christmas
+  // by year, and it exists only to keep old links working.
+  const yearLookups = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(join(root, ...dir), { withFileTypes: true })) {
+      if (entry.name === "node_modules") continue;
+      if (entry.isDirectory()) { walk([...dir, entry.name]); continue; }
+      if (!/\.(ts|tsx)$/u.test(entry.name) || entry.name.endsWith(".test.ts")) continue;
+      if (read(...dir, entry.name).includes('eq("year"')) yearLookups.push([...dir, entry.name].join("/"));
+    }
+  };
+  walk(["src"]);
+  assert.deepEqual(
+    yearLookups.sort(),
+    [
+      // The legacy redirect resolver, labelled as compatibility.
+      "src/utils/supabase/events-server.ts",
+      // Notification dispatch, which Checkpoint 3 makes event-explicit.
+      "src/lib/notification-dispatch.ts",
+    ].sort(),
+    "only the compatibility layer and the notification dispatcher may resolve Christmas by year",
+  );
+});
+
+test("every runtime read of the Christmas compatibility view is enumerated and labelled", () => {
+  // A year filter is not the only way to pin an event to Christmas: Family
+  // Access uses `order by year desc limit 1`, which the search above cannot
+  // see. So this enumerates every runtime READ of the compatibility view
+  // instead, whatever shape the query takes.
+  const readers = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(join(root, ...dir), { withFileTypes: true })) {
+      if (entry.name === "node_modules") continue;
+      if (entry.isDirectory()) { walk([...dir, entry.name]); continue; }
+      if (!/\.(ts|tsx)$/u.test(entry.name) || entry.name.endsWith(".test.ts")) continue;
+      const source = read(...dir, entry.name);
+      if (/from\("christmas_events"\)/u.test(source)) readers.push([...dir, entry.name].join("/"));
+    }
+  };
+  walk(["src"]);
+
+  const EXPECTED = {
+    // Old bookmarks and pre-Checkpoint-2 notification links.
+    "src/utils/supabase/events-server.ts": "legacyChristmasEventId",
+    // Notification dispatch. Checkpoint 3.
+    "src/lib/notification-dispatch.ts": "loadChristmasEventId",
+    // Family Access still edits contributors without naming an event.
+    // Checkpoint 4.
+    "src/app/api/admin/family-access/route.ts": "loadCurrentChristmasEvent",
+  };
+
+  assert.deepEqual(
+    readers.sort(),
+    Object.keys(EXPECTED).sort(),
+    "a new runtime dependency on Christmas identity appeared — isolate and label it, or scope it to the route's event",
+  );
+
+  // Each one is confined to a single named helper and says why it exists.
+  for (const [file, helper] of Object.entries(EXPECTED)) {
+    const source = read(...file.split("/"));
+    assert.match(source, new RegExp(`function ${helper}\\b`), `${file} must isolate the lookup in ${helper}`);
+    assert.match(source, /COMPATIBILITY/, `${file} must label the lookup as compatibility`);
+    assert.equal(
+      (source.match(/from\("christmas_events"\)/gu) ?? []).length,
+      1,
+      `${file} must read the compatibility view exactly once`,
+    );
+  }
+
+  // No event-scoped SCREEN is on that list.
+  for (const file of readers) {
+    assert.ok(
+      !file.startsWith("src/app/events/"),
+      `${file} is an event route and must take its event from the URL`,
+    );
+  }
+});
+
+test("the URL is the only source of the current event", () => {
+  const familyContext = read(...APP, "family-context.tsx");
+
+  // Derived on every render from the path. Not state, not a prop, not storage.
+  assert.match(familyContext, /const eventId = eventIdFromPath\(pathname\);/);
+  assert.doesNotMatch(familyContext, /setEventId/u, "the event id is never held in state");
+  assert.doesNotMatch(familyContext, /localStorage|sessionStorage|currentEvent/u, "no client-side event fallback");
+
+  // Because it is derived, a changed URL cannot leave a stale event behind:
+  // the loader is keyed to it, so switching events refetches rather than
+  // reusing the previous event's people.
+  assert.match(familyContext, /\}, \[authRoute, eventId, router\]\);/, "the loader is keyed to the event id");
+  assert.match(
+    familyContext,
+    /if \(!eventId\) \{ setPeople\(\[\]\); setEvent\(null\);/,
+    "leaving an event clears its data",
+  );
+
+  // Every event-scoped screen takes the id as a prop from the validated route
+  // and keys its own loaders to it, so none can hold a previous event's data.
+  const keyedLoaders = [
+    [["home-screen.tsx"], /\}, \[active, eventId\]\);/],
+    [["people", "people-screen.tsx"], /\}, \[eventId\]\);/],
+    [["add-purchase", "purchase-form.tsx"], /\}, \[editId, eventId, ideaId, queryError, requestedRecipientId\]\);/],
+    [["owed", "owed-screen.tsx"], /\}, \[eventId\]\);/],
+    [["payment-log", "payment-log-screen.tsx"], /\}, \[eventId\]\);/],
+    [["owed", "owed-summary.tsx"], /\}, \[eventId, snapshot\]\);/],
+  ];
+  for (const [parts, pattern] of keyedLoaders) {
+    assert.match(read(...APP, ...parts), pattern, `${parts.join("/")} must refetch when the event changes`);
+  }
+
+  // And nothing anywhere persists a "current event" outside the URL.
+  for (const parts of [
+    ["family-context.tsx"], ["events-dashboard.tsx"], ["components", "nav-items.ts"],
+    ["components", "bottom-tabs.tsx"], ["components", "icon-rail.tsx"],
+    ["components", "command-search.tsx"], ["components", "account-menu.tsx"],
+  ]) {
+    assert.doesNotMatch(
+      read(...APP, ...parts),
+      /localStorage|sessionStorage/u,
+      `${parts.join("/")} must not store an event`,
+    );
+  }
+});
+
+test("the compatibility resolver can never return a birthday", () => {
+  const server = read("src", "utils", "supabase", "events-server.ts");
+  const compat = server.slice(server.indexOf("COMPATIBILITY ONLY"));
+  // It reads the christmas-only view from migration 025, not the events table.
+  assert.match(compat, /from\("christmas_events"\)/);
+  assert.doesNotMatch(compat, /from\("events"\)/);
+  // And a missing Christmas degrades to the dashboard rather than an error.
+  assert.match(compat, /if \(!eventId\) redirect\("\/"\);/);
+});
+
+// ---------------------------------------------------------------------------
+// 15. The money is untouched
+// ---------------------------------------------------------------------------
+
+test("15. this checkpoint changed navigation, not money", () => {
+  // The Owed engine, the split engine and the allocation validator are all
+  // byte-identical to Checkpoint 1 — routing must never reach into them.
+  for (const file of ["owed.ts", "purchases.ts", "recipient-allocations.ts", "currency.ts", "payment-confirmation.ts"]) {
+    const source = read("src", "lib", file);
+    assert.doesNotMatch(source, /events|eventId/i, `${file} must know nothing about events`);
+  }
+
+  // The Owed loader still nets confirmed money only, and still uses the same
+  // engine. All that changed is which event's rows reach it.
+  const owedData = read(...APP, "owed", "owed-data.ts");
+  assert.match(owedData, /export async function loadOwedData\(eventId: string\)/);
+  assert.match(owedData, /calculateNetOwedBalances\(obligations, settlements\)/);
+  assert.match(owedData, /confirmed_amount_pennies/);
+  assert.match(owedData, /\.eq\("christmas_event_id", eventId\)/);
+
+  // Dashboard spend is a read of the same rows Event Home reads, under the
+  // same rule, not a second definition of spend.
+  const server = read("src", "utils", "supabase", "events-server.ts");
+  assert.match(server, /\.is\("deleted_at", null\)/, "voided purchases are excluded");
+  assert.match(server, /actual_price_pennies/);
+  assert.doesNotMatch(server, /Math\.round|parseFloat|toFixed/, "pennies stay integers");
+
+  const home = read(...APP, "home-screen.tsx");
+  assert.match(home, /\.is\("deleted_at", null\)/);
+
+  // No route or navigation file writes to a financial table.
+  const routed = [
+    ["page.tsx"], ["events-dashboard.tsx"], ["components", "nav-items.ts"],
+    ["components", "bottom-tabs.tsx"], ["components", "icon-rail.tsx"],
+    ["events", "page.tsx"], ["events", "new", "page.tsx"],
+    ["events", "[eventId]", "page.tsx"],
+  ];
+  for (const parts of routed) {
+    const source = read(...APP, ...parts);
+    assert.doesNotMatch(source, /\.rpc\(|\.insert\(|\.update\(|\.delete\(/, `${parts.join("/")} must not write`);
+  }
+});
+
+test("creating an event is not possible yet, and the shell says so", () => {
+  const page = read(...APP, "events", "new", "page.tsx");
+  assert.match(page, /member\.role !== "admin"\) redirect\("\/"\)/, "admin only");
+  assert.match(page, /Coming next/);
+  // Checkpoint 4 owns the mutation. Nothing here may write an event.
+  assert.doesNotMatch(page, /\.insert\(|\.rpc\(|from\("events"\)/);
+
+  // The dashboard offers it to Global Admin only.
+  const dashboard = read(...APP, "events-dashboard.tsx");
+  assert.match(dashboard, /isAdmin \? \(\s*\n\s*<ButtonLink href="\/events\/new"/);
+});
+
+// ---------------------------------------------------------------------------
+// Ordering
+// ---------------------------------------------------------------------------
+
+test("the dashboard orders events deterministically, never by insertion", () => {
+  const events = [
+    { id: "a", name: "Easter 2027", type: "easter", eventDate: "2027-03-28", status: "active", year: null, celebrantPersonId: null, description: null },
+    { id: "b", name: "Christmas 2026", type: "christmas", eventDate: "2026-12-25", status: "active", year: 2026, celebrantPersonId: null, description: null },
+    { id: "c", name: "Paige's Birthday", type: "birthday", eventDate: "2027-03-14", status: "active", year: null, celebrantPersonId: "p", description: null },
+    { id: "d", name: "Christmas 2025", type: "christmas", eventDate: "2025-12-25", status: "archived", year: 2025, celebrantPersonId: null, description: null },
+  ];
+
+  const shuffled = [events[2], events[0], events[3], events[1]];
+  const first = partitionEvents(events, "2027-01-10");
+  const second = partitionEvents(shuffled, "2027-01-10");
+  assert.deepEqual(first.upcoming.map((e) => e.id), second.upcoming.map((e) => e.id), "order is independent of input order");
+
+  assert.deepEqual(first.upcoming.map((e) => e.name), ["Paige's Birthday", "Easter 2027"], "soonest first");
+  assert.deepEqual(first.past.map((e) => e.name), ["Christmas 2026"], "most recent first");
+  assert.deepEqual(first.archived.map((e) => e.name), ["Christmas 2025"], "archived kept apart");
+
+  // The dashboard renders exactly those three groups, in that order.
+  const dashboard = read(...APP, "events-dashboard.tsx");
+  const upcomingAt = dashboard.indexOf('title="Upcoming"');
+  const pastAt = dashboard.indexOf('title="Past"');
+  const archivedAt = dashboard.indexOf('title="Archived"');
+  assert.ok(upcomingAt > 0 && upcomingAt < pastAt && pastAt < archivedAt);
+});
+
+test("the dashboard is responsive and its cards are comfortable to tap", () => {
+  const dashboard = read(...APP, "events-dashboard.tsx");
+  // One card per row on a phone, a grid above that.
+  assert.match(dashboard, /grid gap-4 sm:grid-cols-2 xl:grid-cols-3/);
+  // The whole card is the control, which is far larger than 44px.
+  assert.match(dashboard, /min-h-\[11rem\]/);
+  // Long names wrap instead of overflowing.
+  assert.match(dashboard, /break-words/);
+  assert.match(dashboard, /focus-visible:outline/, "keyboard focus is visible");
+});

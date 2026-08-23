@@ -11,6 +11,7 @@ import { adminOverrideReason, emptyPaymentFilters, filterPaymentRecords, isAdmin
 function record(overrides: Partial<PaymentLogRecord> & Pick<PaymentLogRecord, "id">): PaymentLogRecord {
   const amountPennies = overrides.amountPennies ?? 1_200;
   return {
+    eventName: "Christmas 2026",
     eventYear: 2026,
     payerContributorId: "paige",
     payerName: "Paige",

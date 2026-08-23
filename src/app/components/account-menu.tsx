@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { LogOut, Settings, ShieldCheck, Snowflake, User } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { eventPath } from "@/lib/events.ts";
 import { useFamily } from "../family-context";
 import { useFestive } from "./festive/festive-context";
 import { Popover, PopoverItem, PopoverSection } from "./popover";
@@ -11,7 +13,7 @@ import { Popover, PopoverItem, PopoverSection } from "./popover";
 export function AccountMenu() {
   const router = useRouter();
   // FamilyProvider short-circuits on auth routes, so tolerate an empty role.
-  const { isAdmin } = useFamily();
+  const { isAdmin, eventId } = useFamily();
   const { snow, setSnow, reducedMotion } = useFestive();
   const [email, setEmail] = useState("");
 
@@ -76,7 +78,7 @@ export function AccountMenu() {
             <PopoverItem href="/account" icon={<User aria-hidden size={16} strokeWidth={1.8} />}>
               Account &amp; security
             </PopoverItem>
-            <PopoverItem href="/more" icon={<Settings aria-hidden size={16} strokeWidth={1.8} />}>
+            <PopoverItem href={eventPath(eventId ?? "", "more") ?? "/"} icon={<Settings aria-hidden size={16} strokeWidth={1.8} />}>
               Settings
             </PopoverItem>
             <PopoverItem

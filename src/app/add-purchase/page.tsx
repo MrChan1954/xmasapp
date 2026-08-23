@@ -1,15 +1,15 @@
-"use client";
+import { redirectLegacyRoute } from "@/utils/supabase/events-server";
 
-import { Suspense } from "react";
-import { AppShell } from "../components/app-shell";
-import { PurchaseForm } from "./purchase-form";
+export const dynamic = "force-dynamic";
 
-export default function AddPurchasePage() {
-  return (
-    <AppShell>
-      <Suspense fallback={<p className="py-6 text-sm font-medium text-ink-600">Loading purchase form...</p>}>
-        <PurchaseForm />
-      </Suspense>
-    </AppShell>
-  );
+/** COMPATIBILITY: forwards an old `/add-purchase` link into Christmas 2026. */
+export default async function LegacyAddPurchaseRedirect({ searchParams }: PageProps<"/add-purchase">) {
+  const params = await searchParams;
+  const query = new URLSearchParams();
+  for (const key of ["edit", "idea", "recipient"]) {
+    const value = params[key];
+    if (typeof value === "string") query.set(key, value);
+  }
+  const search = query.toString();
+  return redirectLegacyRoute("add-purchase", search ? `?${search}` : "");
 }

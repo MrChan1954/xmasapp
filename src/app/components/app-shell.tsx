@@ -71,7 +71,7 @@ export function AppShell({
  * actions, closed by a gold hairline.
  */
 export function PageHeader({
-  eyebrow = "Christmas 2026",
+  eyebrow,
   title,
   description,
   actions,
