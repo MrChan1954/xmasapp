@@ -9,7 +9,13 @@ import type { BirthdayOccurrence, BirthdayWorkspace } from "@/utils/supabase/bir
 import { AppShell, PageHeader } from "../../components/app-shell";
 import { GarlandRule } from "../../components/festive/garland";
 import { FinancialProgressBar } from "../../components/financial-progress";
-import { Badge, ButtonLink, EmptyState, Notice, cx } from "../../components/ui";
+import { Badge, ButtonLink, EmptyState, Notice } from "../../components/ui";
+// NOT from "./ui": this is a Server Component, and `ui.tsx` is "use client".
+// A plain function exported from a client module becomes a client reference,
+// and calling one during a server render throws — which is exactly what put
+// this page into the global error boundary for every person whose birthday
+// planning had been started.
+import { cx } from "../../components/cx";
 
 /**
  * Taylor's birthday, not "Taylor's Birthday 2026".
