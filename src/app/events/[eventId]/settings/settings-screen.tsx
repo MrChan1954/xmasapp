@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Archive, RotateCcw } from "lucide-react";
+import { Archive, RotateCcw, Trash2 } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventTypeMeta, validateEventInput } from "@/lib/events.ts";
 import { INPUT_LIMITS } from "@/lib/input-validation";
@@ -44,12 +44,19 @@ export function EventSettingsScreen({
   recipientPersonIds,
   contributorPersonIds,
   isAdmin,
+  isEmpty = false,
 }: {
   event: EventSettings;
   people: SettingsPerson[];
   recipientPersonIds: string[];
   contributorPersonIds: string[];
   isAdmin: boolean;
+  /**
+   * Nothing has ever been recorded here: no purchase, no gift idea, no payment.
+   * Shows the delete control. It is NOT the authorization -- the database
+   * repeats every check inside the delete itself.
+   */
+  isEmpty?: boolean;
 }) {
   const router = useRouter();
   const meta = eventTypeMeta(event.type);
@@ -61,6 +68,7 @@ export function EventSettingsScreen({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   // The Supabase builder is thenable rather than a Promise, so the parameter
   // is typed as what it resolves to rather than as a Promise of it.
@@ -103,6 +111,12 @@ export function EventSettingsScreen({
       p_person_id: personId,
       p_active: active,
     }));
+
+  const deleteEvent = () =>
+    void run(
+      () => createClient().rpc("delete_event_if_empty", { p_event_id: event.id }),
+      () => router.replace("/"),
+    );
 
   const addRecipient = (personId: string) =>
     void run(() => createClient().rpc("add_event_recipient", {
@@ -243,6 +257,38 @@ export function EventSettingsScreen({
             )}
         </div>
       </section>
+
+      {/* Only for an occurrence that never held anything. The moment a purchase,
+          a gift idea or a payment exists, this section is not rendered and the
+          database refuses the call anyway. */}
+      {isEmpty && (
+        <section className="mt-12">
+          <h2 className="font-display text-xl font-semibold text-ink-900">Delete</h2>
+          <p className="mt-1.5 text-sm leading-6 text-ink-600">
+            Nothing has been recorded against this event — no purchases, no gift ideas,
+            no payments — so it can be removed completely rather than archived. Once
+            anything is recorded, this option disappears and archiving is the only way
+            to take it off the list.
+          </p>
+          <GarlandRule className="mt-4" />
+          <div className="mt-5">
+            <Button variant="ghost" className="min-h-11 text-berry" disabled={busy} onClick={() => setConfirmDelete(true)}>
+              <Trash2 size={16} aria-hidden />
+              Delete this event
+            </Button>
+          </div>
+        </section>
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title={`Delete ${event.name}?`}
+          body="It is removed completely, along with its recipient and contributor setup. Nothing else is affected, and the deletion is recorded in the activity log. This cannot be undone."
+          confirmLabel="Delete event"
+          onConfirm={() => { setConfirmDelete(false); deleteEvent(); }}
+          onCancel={() => setConfirmDelete(false)}
+        />
+      )}
 
       {confirmArchive && (
         <ConfirmDialog

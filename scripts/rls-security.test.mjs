@@ -53,6 +53,9 @@ const eventLayerMigration = readFileSync(join(migrationsDirectory, eventLayerMig
 const birthdayMigrationName = "202608100026_add_birthdays_and_event_administration.sql";
 const birthdayMigration = readFileSync(join(migrationsDirectory, birthdayMigrationName), "utf8");
 
+const reminderMigrationName = "202608100027_two_stage_birthday_reminders_and_safe_event_deletion.sql";
+const reminderMigration = readFileSync(join(migrationsDirectory, reminderMigrationName), "utf8");
+
 const applicationTables = [
   "christmas_events",
   "people",
@@ -70,8 +73,28 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  assert.equal(migrationFiles.at(-1), birthdayMigrationName);
+  assert.equal(migrationFiles.at(-1), reminderMigrationName);
   assert.ok(migrationFiles.includes(eventLayerMigrationName), "the Event layer migration is still present");
+  assert.ok(migrationFiles.includes(birthdayMigrationName), "the birthdays migration is still present");
+
+  // What 027 introduces, security-wise: one destructive function, which is the
+  // only thing in the whole schema that can remove an event row.
+  const deleteStart = reminderMigration.indexOf("function public.delete_event_if_empty(");
+  assert.ok(deleteStart > 0, "delete_event_if_empty must exist");
+  const deleteBody = reminderMigration.slice(deleteStart, reminderMigration.indexOf("$;", deleteStart));
+  assert.match(deleteBody, /is_app_admin\(\)/, "it must check Global Admin in the database");
+  assert.match(deleteBody, /set search_path = ''/, "it must pin search_path");
+  assert.match(deleteBody, /security definer/, "it runs as definer, which is why it must check");
+  assert.match(
+    reminderMigration,
+    /revoke all on function public\.delete_event_if_empty\(uuid\) from public, anon;/,
+    "it must be revoked from anon",
+  );
+  assert.doesNotMatch(
+    reminderMigration,
+    /grant (delete|truncate)[^;]*on table public\.events to (authenticated|anon)/i,
+    "no browser role may delete events directly",
+  );
 
   // What 026 introduces, security-wise: one table nobody may read, and six
   // write functions that check Global Admin in the database.
@@ -355,7 +378,7 @@ test("secondary Payment Log navigation remains under More", () => {
   // holds sections rather than literal paths -- which is itself the guarantee
   // that a tab cannot point at the wrong event.
   const navItems = readFileSync(join(root, "src", "app", "components", "nav-items.ts"), "utf8");
-  const primaryNav = navItems.match(/const EVENT_NAV[\s\S]*?\n\];/)?.[0];
+  const primaryNav = navItems.match(/const EVENT_NAV[\s\S]*?\n\};/)?.[0];
   assert.ok(primaryNav);
   assert.doesNotMatch(primaryNav, /payment-log/);
   assert.match(primaryNav, /section: "more"/);
@@ -1627,8 +1650,20 @@ test("changing a contribution plan can never rewrite historical purchase respons
 test("the UI keeps recipient creation and removal behind Global Admin", () => {
   const peoplePage = readFileSync(join(root, "src", "app", "people", "people-screen.tsx"), "utf8");
   const personModal = readFileSync(join(root, "src", "app", "people", "person-modal.tsx"), "utf8");
-  // Adding a person.
-  assert.match(peoplePage, /\{isAdmin && adding && <AddForm/);
+  // Adding a person. The form is built once and rendered in all three shapes
+  // of the screen -- list, single recipient and empty -- so the admin gate is
+  // asserted on the one place it now lives rather than on each render site.
+  assert.match(peoplePage, /const addForm = isAdmin && adding \? \(\s*\n\s*<AddForm/);
+  assert.equal(
+    (peoplePage.match(/<AddForm/gu) ?? []).length,
+    1,
+    "there must be exactly one AddForm, so there is exactly one gate",
+  );
+  assert.equal(
+    (peoplePage.match(/\{addForm\}/gu) ?? []).length,
+    3,
+    "and every shape of the screen renders that one gated form",
+  );
   // Editing details and removing from Christmas.
   assert.match(personModal, /\{isAdmin && \(\s*<section[\s\S]*?Edit person[\s\S]*?Remove from Christmas/);
 });

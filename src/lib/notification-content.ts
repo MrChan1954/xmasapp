@@ -76,11 +76,21 @@ export function personUrl(christmasRecipientId: string): string {
 export const BIRTHDAYS_URL = "/birthdays";
 
 /**
- * "Paige's birthday is in 1 month."
+ * "🎂 Taylor's birthday is next week."
  *
  * The TITLE says what is happening, as every notification does since
  * Checkpoint 3. The BODY leads with the date, so somebody glancing at a lock
- * screen knows when without opening anything.
+ * screen knows when without opening anything:
+ *
+ *   🎂 Taylor's birthday is next week
+ *   10 September · Make sure you have their present sorted.
+ *
+ *   🎂 Taylor's birthday is tomorrow
+ *   10 September · Make sure the present is ready and dropped off.
+ *
+ * Those are the only two. There is no month-out reminder and no on-the-day
+ * one: the dashboard carries the long-range warning, and a notification on the
+ * day itself would arrive too late to be worth interrupting anybody for.
  *
  * Where a Birthday Event already exists the link goes straight to it and
  * `withEvent` prefixes the body with the event's name. Where one does not, the
@@ -88,7 +98,7 @@ export const BIRTHDAYS_URL = "/birthdays";
  */
 export function birthdayReminderNotification(input: {
   personName: string;
-  /** "in 1 month", "next week", "tomorrow". */
+  /** "next week" or "tomorrow". */
   whenLabel: string;
   /** "6 November". */
   birthdayLabel: string;

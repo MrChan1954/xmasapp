@@ -67,15 +67,23 @@ test("1. GET / renders the Event Dashboard and never redirects into Christmas", 
   assert.match(read(...APP, "manifest.ts"), /start_url: "\/"/);
 });
 
-test("2. Christmas 2026 appears as an event card like any other", () => {
+test("2. the dashboard groups by type, and the CARD itself is still type-agnostic", () => {
+  // Checkpoint 4.1 changed where a card is put, not what a card is. The
+  // grouping is a product decision and lives in one function in the model;
+  // `EventCard` still renders whatever it is handed, using the shared type
+  // registry for its icon, with no branch on any type name.
   const dashboard = read(...APP, "events-dashboard.tsx");
-  // Nothing about the card is Christmas-specific: it renders whatever
-  // `listEvents` returned, using the shared type registry for its icon.
   assert.match(dashboard, /events\.map\(\(event\) => <EventCard/);
   assert.match(dashboard, /eventTypeMeta\(String\(event\.type\)\)/);
-  // Prose may mention Christmas; the RENDERING must not branch on it.
-  const dashboardCode = dashboard.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/\/\/[^\n]*/gu, "");
-  assert.doesNotMatch(dashboardCode, /christmas/iu, "no event type is special-cased in the dashboard");
+
+  const cardStart = dashboard.indexOf("function EventCard(");
+  const cardCode = dashboard.slice(cardStart)
+    .replace(/\/\*[\s\S]*?\*\//gu, "")
+    .replace(/\/\/[^\n]*/gu, "");
+  assert.doesNotMatch(cardCode, /christmas|birthday/iu, "the card must not special-case a type");
+
+  // The grouping lives in the model, where it is tested directly.
+  assert.match(dashboard, /groupDashboardEvents\(events, today\)/, "grouping comes from the model");
 
   const server = read("src", "utils", "supabase", "events-server.ts");
   assert.match(server, /from\("events"\)/, "every event is listed from the generalised table");
@@ -200,16 +208,19 @@ test("12-13. mobile and desktop navigation both carry the current event", () => 
   const navItems = read(...APP, "components", "nav-items.ts");
   // The nav is built from sections and `eventPath`, so there is no literal
   // "/owed" anywhere for a tab to accidentally point at.
-  assert.match(navItems, /export function navItemsFor\(eventId: string \| null\): NavItem\[\]/);
+  assert.match(
+    navItems,
+    /export function navItemsFor\(eventId: string \| null, activeRecipientCount: number \| null = null\): NavItem\[\]/,
+  );
   assert.match(navItems, /const href = eventPath\(eventId, item\.section\);/);
   assert.match(navItems, /if \(!eventId\) return \[\];/);
-  const eventNav = navItems.match(/const EVENT_NAV[\s\S]*?\n\];/)?.[0];
+  const eventNav = navItems.match(/const EVENT_NAV[\s\S]*?\n\};/)?.[0];
   assert.ok(eventNav);
   assert.doesNotMatch(eventNav, /href|"\//, "the nav table holds sections, never paths");
 
   for (const [surface, file] of [["mobile", "bottom-tabs.tsx"], ["desktop", "icon-rail.tsx"]]) {
     const source = read(...APP, "components", file);
-    assert.match(source, /navItemsFor\(eventId\)/, `${surface} nav must be built per event`);
+    assert.match(source, /navItemsFor\(eventId/, `${surface} nav must be built per event`);
     assert.match(source, /activeNavSection\(pathname\)/, `${surface} nav highlights by section`);
     assert.doesNotMatch(
       source,
@@ -526,12 +537,16 @@ test("the dashboard orders events deterministically, never by insertion", () => 
   assert.deepEqual(first.past.map((e) => e.name), ["Christmas 2026"], "most recent first");
   assert.deepEqual(first.archived.map((e) => e.name), ["Christmas 2025"], "archived kept apart");
 
-  // The dashboard renders exactly those three groups, in that order.
+  // The dashboard's sections, in the order Checkpoint 4.1 specified:
+  // Christmas, then Upcoming birthdays, then Special events, then history.
   const dashboard = read(...APP, "events-dashboard.tsx");
-  const upcomingAt = dashboard.indexOf('title="Upcoming"');
-  const pastAt = dashboard.indexOf('title="Past"');
-  const archivedAt = dashboard.indexOf('title="Archived"');
-  assert.ok(upcomingAt > 0 && upcomingAt < pastAt && pastAt < archivedAt);
+  // Keyed on the JSX, not on prose: the doc comment at the top of the file
+  // describes the same sections in the same order, which an indexOf on words
+  // alone would find first.
+  const order = ['title="Christmas"', "<UpcomingBirthdaysSection", 'title="Special events"', 'title="Past"', 'title="Archived"']
+    .map((marker) => dashboard.indexOf(marker));
+  assert.ok(order.every((at) => at > 0), "every section must exist");
+  assert.deepEqual(order.slice().sort((a, b) => a - b), order, "the sections are in the specified order");
 });
 
 test("the dashboard is responsive and its cards are comfortable to tap", () => {

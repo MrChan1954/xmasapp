@@ -127,35 +127,81 @@ test("days away is counted in whole days and never goes negative", () => {
 // 3. Reminder stages
 // ---------------------------------------------------------------------------
 
-test("there are exactly three reminder stages: one month, one week, one day", () => {
-  // Checkpoint 4 says three and only three. A fourth would mean a fourth push
-  // notification per birthday per year, which nobody asked for.
-  assert.deepEqual(REMINDER_STAGES.map((s: { stage: string }) => s.stage), ["one_month", "one_week", "one_day"]);
+test("there are exactly two reminder stages: one week, one day", () => {
+  // Checkpoint 4.1 retired the one-month reminder. The dashboard shows the next
+  // few birthdays with the days to go, so the long-range warning is on the
+  // front page rather than on everybody's lock screen.
+  assert.deepEqual(REMINDER_STAGES.map((s: { stage: string }) => s.stage), ["one_week", "one_day"]);
+  assert.ok(
+    !REMINDER_STAGES.some((s: { stage: string }) => s.stage === "one_month"),
+    "no one_month stage may survive anywhere in the model",
+  );
 });
+
+test("no reminder is ever generated a month out, for any birthday, on any day", () => {
+  // The regression this checkpoint exists for, checked across a whole year of
+  // dates and every day of the month a birthday could fall on -- not just the
+  // one date somebody remembered to try.
+  for (let month = 1; month <= 12; month += 1) {
+    for (const day of [1, 15, 28, 29, 30, 31]) {
+      if (!isValidBirthday(month, day)) continue;
+      const birthday = { month, day };
+      for (let offset = 0; offset < 366; offset += 1) {
+        const today = addDays("2026-01-01", offset);
+        for (const due of dueReminderStages(birthday, today)) {
+          assert.notEqual(due.stage, "one_month", `${today} produced a one-month reminder`);
+        }
+      }
+    }
+  }
+});
+
+test("each birthday produces exactly two reminders in a year, and no more", () => {
+  const birthday = { month: 11, day: 6 };
+  const stages: string[] = [];
+  for (let offset = 0; offset < 365; offset += 1) {
+    for (const due of dueReminderStages(birthday, addDays("2026-01-01", offset))) {
+      if (due.occurrenceYear === 2026) stages.push(due.stage);
+    }
+  }
+  assert.deepEqual(stages, ["one_week", "one_day"]);
+});
+
+/** Whole calendar days from a date, without dragging a library in. */
+function addDays(from: string, days: number): string {
+  const [year, month, day] = from.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
 
 test("each stage fires on its own day and no other", () => {
   const nov6 = { month: 11, day: 6 };
   const stagesOn = (today: string) =>
     dueReminderStages(nov6, today).map((due: { stage: string }) => due.stage);
 
-  assert.deepEqual(stagesOn("2026-10-06"), ["one_month"]);
   assert.deepEqual(stagesOn("2026-10-30"), ["one_week"]);
   assert.deepEqual(stagesOn("2026-11-05"), ["one_day"]);
 
-  // Every other day in the run-up is silent.
-  for (const quiet of ["2026-10-05", "2026-10-07", "2026-10-29", "2026-10-31", "2026-11-04", "2026-11-06", "2026-11-07"]) {
+  // Every other day in the run-up is silent -- including the day the retired
+  // one-month reminder used to fire, and the birthday itself.
+  for (const quiet of [
+    "2026-10-06", "2026-10-05", "2026-10-07",
+    "2026-10-29", "2026-10-31", "2026-11-04", "2026-11-06", "2026-11-07",
+  ]) {
     assert.deepEqual(stagesOn(quiet), [], `${quiet} must send nothing`);
   }
 });
 
-test("a stage that lands on a day the month does not have still fires exactly once", () => {
-  // 31 March minus one month is 31 February. The rule is the same clamp as the
-  // leap rule: the reminder is observed on the last day the month has.
-  const mar31 = { month: 3, day: 31 };
-  assert.deepEqual(dueReminderStages(mar31, "2026-02-28").map((d: { stage: string }) => d.stage), ["one_month"]);
-  assert.deepEqual(dueReminderStages(mar31, "2026-03-01").map((d: { stage: string }) => d.stage), []);
-  // ...and only once: a clamped date must not also match the day before it.
-  assert.deepEqual(dueReminderStages(mar31, "2026-02-27").map((d: { stage: string }) => d.stage), []);
+test("a reminder that lands in the previous month is still exactly one day", () => {
+  // 1 March minus seven days is 22 February. Both remaining stages are whole
+  // day counts, so month lengths and leap years are handled by the calendar
+  // rather than by any clamping rule of ours.
+  const mar1 = { month: 3, day: 1 };
+  assert.deepEqual(dueReminderStages(mar1, "2026-02-22").map((d: { stage: string }) => d.stage), ["one_week"]);
+  assert.deepEqual(dueReminderStages(mar1, "2026-02-28").map((d: { stage: string }) => d.stage), ["one_day"]);
+  assert.deepEqual(dueReminderStages(mar1, "2026-02-21").map((d: { stage: string }) => d.stage), []);
+  // A leap year moves the day-before to the 29th, and nothing else.
+  assert.deepEqual(dueReminderStages(mar1, "2028-02-29").map((d: { stage: string }) => d.stage), ["one_day"]);
+  assert.deepEqual(dueReminderStages(mar1, "2028-02-28").map((d: { stage: string }) => d.stage), []);
 });
 
 test("a reminder identifies the occurrence YEAR, which is what makes it once-a-year", () => {
@@ -164,21 +210,22 @@ test("a reminder identifies the occurrence YEAR, which is what makes it once-a-y
   // reminder for a January birthday sent in December would collide with the
   // one sent the following December, and the second would be swallowed.
   const jan3 = { month: 1, day: 3 };
-  const [december] = dueReminderStages(jan3, "2026-12-03");
-  assert.equal(december.stage, "one_month");
+  const [december] = dueReminderStages(jan3, "2026-12-27");
+  assert.equal(december.stage, "one_week");
   assert.equal(december.occurrenceYear, 2027, "the December reminder belongs to the 2027 birthday");
   assert.equal(december.occurrenceDate, "2027-01-03");
 
-  const [nextDecember] = dueReminderStages(jan3, "2027-12-03");
+  const [nextDecember] = dueReminderStages(jan3, "2027-12-27");
   assert.equal(nextDecember.occurrenceYear, 2028, "next year's is a different row, so it is not deduped away");
 });
 
 test("29 February reminders are counted from the observed date", () => {
   const feb29 = { month: 2, day: 29 };
-  // 2027 observes it on the 28th, so a month before is 28 January.
-  assert.deepEqual(dueReminderStages(feb29, "2027-01-28").map((d: { stage: string }) => d.stage), ["one_month"]);
+  // 2027 observes it on the 28th, so a week before is 21 February.
+  assert.deepEqual(dueReminderStages(feb29, "2027-02-21").map((d: { stage: string }) => d.stage), ["one_week"]);
   assert.deepEqual(dueReminderStages(feb29, "2027-02-27").map((d: { stage: string }) => d.stage), ["one_day"]);
-  // 2028 has the real date, so a day before is the 28th.
+  // 2028 has the real date, so a day before is the 28th and a week is the 22nd.
+  assert.deepEqual(dueReminderStages(feb29, "2028-02-22").map((d: { stage: string }) => d.stage), ["one_week"]);
   assert.deepEqual(dueReminderStages(feb29, "2028-02-28").map((d: { stage: string }) => d.stage), ["one_day"]);
 });
 

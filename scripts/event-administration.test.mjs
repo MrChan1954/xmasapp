@@ -20,6 +20,9 @@ const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
 const MIGRATION = "202608100026_add_birthdays_and_event_administration.sql";
 const sql = read("supabase", "migrations", MIGRATION);
 
+const REMINDER_MIGRATION = "202608100027_two_stage_birthday_reminders_and_safe_event_deletion.sql";
+const reminderSql = read("supabase", "migrations", REMINDER_MIGRATION);
+
 /** The body of one `create ... function public.<name>(` block. */
 function functionBody(name) {
   const start = sql.indexOf(`function public.${name}(`);
@@ -42,14 +45,17 @@ const ADMIN_WRITES = [
 // 1. Migration hygiene -- the same invariants every applied migration holds
 // ---------------------------------------------------------------------------
 
-test("026 is the next migration number and nothing before it was touched", () => {
+test("026 and 027 are the two newest migrations, in that order", () => {
   const files = readdirSync(join(root, "supabase", "migrations")).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(files.at(-1), MIGRATION, "026 must be the newest migration");
-  assert.equal(
-    files.filter((name) => name.startsWith("202608100026")).length,
-    1,
-    "there must be exactly one migration 026",
-  );
+  assert.equal(files.at(-2), MIGRATION, "026 must be second-newest");
+  assert.equal(files.at(-1), REMINDER_MIGRATION, "027 must be the newest");
+  for (const prefix of ["202608100026", "202608100027"]) {
+    assert.equal(
+      files.filter((name) => name.startsWith(prefix)).length,
+      1,
+      `there must be exactly one migration ${prefix.slice(-3)}`,
+    );
+  }
 });
 
 test("every function it defines is search_path-pinned and explicitly granted", () => {
@@ -346,6 +352,29 @@ test("every planned amount 026 writes is zero, so no money is invented", () => {
     /update public\.recipient_contributions[\s\S]{0,200}?planned_amount_pennies/iu,
     "026 must never rewrite a planned amount",
   );
+});
+
+test("027 replaces only the two reminder functions, and leaves the rest of 026 alone", () => {
+  // A migration that "just changes the reminder stages" is exactly the kind
+  // that quietly re-creates a neighbouring function with an older body. The
+  // admin write functions are the ones that would matter: silently reverting
+  // one would undo an authorization check with no diff to notice.
+  const redefined = [...reminderSql.matchAll(/create or replace function public\.(\w+)\(/gu)]
+    .map((match) => match[1])
+    .sort();
+  assert.deepEqual(
+    redefined,
+    ["claim_birthday_reminder", "delete_event_if_empty", "due_birthday_reminders"],
+    "027 may only replace the two reminder functions and add the delete",
+  );
+
+  for (const untouched of ADMIN_WRITES) {
+    assert.ok(!redefined.includes(untouched), `${untouched} must be left exactly as 026 wrote it`);
+  }
+
+  // And it must not drop or re-create anything 026 built either.
+  assert.doesNotMatch(reminderSql, /drop function[^;]*(create_event|set_person_birthday|update_event)/iu);
+  assert.doesNotMatch(reminderSql, /drop table[^;]*birthday_reminders/iu, "the reminder history table survives");
 });
 
 test("the Christmas compatibility view is left exactly as migration 025 left it", () => {

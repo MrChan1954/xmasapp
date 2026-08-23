@@ -16,6 +16,11 @@ name: Birthday reminders
 #   it to the notification outbox the app already uses for purchases and
 #   payments. All the delivery, dedupe and retry behaviour is that pipeline's.
 #
+#   It is also not the family's early warning. Two reminders go out — one week
+#   before and one day before — and that is deliberately all. The longer view is
+#   the dashboard, which lists the next few birthdays with the days to go every
+#   time anybody opens the app, and costs nobody an interruption.
+#
 # Secrets
 #   BIRTHDAY_REMINDER_SECRET  shared with the deployed app, which rejects any
 #                             request without it. Set the same value with

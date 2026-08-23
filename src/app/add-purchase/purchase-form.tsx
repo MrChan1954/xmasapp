@@ -413,6 +413,30 @@ export function PurchaseForm({ eventId }: { eventId: string }) {
     return <p className="py-6 text-sm font-medium text-ink-600">Loading purchase form...</p>;
   }
 
+  // Nobody to buy for. A purchase belongs to a recipient, so there is no
+  // half-usable version of this form: it needs a target or it needs to say so.
+  // The navigation already withholds the Add tab for such an event; this is for
+  // anybody who arrives by URL anyway.
+  if (!editId && !recipients.some((row) => row.active)) {
+    return (
+      <div className="pb-10">
+        <PageHeader
+          title="Add purchase"
+          description="This event has nobody to buy for yet."
+        />
+        <Notice tone="info" className="mt-6">
+          A purchase belongs to a recipient, so somebody has to be added to this event
+          first. The Global Admin can do that on the set-up screen.
+        </Notice>
+        <div className="mt-6">
+          <Button size="lg" onClick={() => router.push(eventPath(eventId, "people") ?? "/")}>
+            Go to set up
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     // Extra bottom padding on mobile so the sticky submit bar never covers the
     // end of the form; on desktop the submit lives in the sticky rail instead.

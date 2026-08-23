@@ -34,6 +34,8 @@ import {
   cx,
   type BadgeTone,
 } from "../components/ui";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { eventNavMode } from "@/lib/events.ts";
 import { useFamily, useTotals, type Person } from "../family-context";
 import { PersonModal } from "./person-modal";
 import {
@@ -45,10 +47,25 @@ import {
 const filters = ["All", "Not started", "In progress", "Budget reached", "Over budget", "Has ideas"];
 
 /**
- * The People screen for one event.
+ * The People screen for one event -- which is not always a list of people.
  *
  * The event arrives as a prop from the validated route, so the recipients,
  * contributors and budgets on this page all belong to it and to nothing else.
+ *
+ * ONE ROUTE, THREE SHAPES, DECIDED BY THE ACTIVE RECIPIENT COUNT
+ *
+ *   two or more   The list, with search, filters and a card each. Christmas.
+ *   exactly one   That person's gifts, straight away. No list, no search, no
+ *                 card to tap: Mother's Day has one recipient and making
+ *                 somebody choose them from a list of one is a tap that
+ *                 answers nothing.
+ *   none          A setup step, with "Add recipient" for the Global Admin --
+ *                 rather than an empty list and a filter bar over nothing.
+ *
+ * This is presentation. The recipient row, the contributor plan, the purchase
+ * allocations, Owed and the payment log are identical in all three: the single
+ * shape renders the SAME component the list opens in a dialog, so there is one
+ * budget editor, one contributor editor and one purchase list in the codebase.
  */
 export function PeopleScreen({ eventId, eventName }: { eventId: string; eventName: string }) {
   return (
@@ -106,6 +123,99 @@ function PeopleView({ eventId, eventName }: { eventId: string; eventName: string
   const archived = people.filter((person) => !person.active);
   const selected = selectedId ? people.find((person) => person.id === selectedId) ?? null : null;
 
+  const active = people.filter((person) => person.active);
+  // `null` while loading or after a failed load, so the screen never decides it
+  // is a "no recipients" event on the strength of an empty array it has not
+  // finished filling.
+  const mode = eventNavMode(loading || error ? null : active.length);
+  const soleRecipient = mode === "single" ? active[0] : null;
+
+  const addButton = isAdmin ? (
+    <Button size="lg" onClick={() => setAdding(true)} className="w-full sm:w-auto">
+      <IconPlus size={18} />
+      {mode === "multi" ? "Add person" : "Add recipient"}
+    </Button>
+  ) : undefined;
+
+  const addForm = isAdmin && adding ? (
+    <AddForm
+      eventId={eventId}
+      eventName={eventName}
+      onCancel={() => setAdding(false)}
+      onSave={async (name, budget, allocations) => {
+        await saveRecipient({ name, budgetPennies: budget, allocations });
+        setAdding(false);
+      }}
+    />
+  ) : null;
+
+  // ---- Exactly one recipient: their gifts, and nothing in the way ----------
+  if (soleRecipient) {
+    return (
+      // The top bar reads the route, and the route is still /people. Naming it
+      // here keeps the chrome and the page telling the reader the same thing.
+      <AppShell title="Gifts">
+        {error && <Notice tone="danger" className="mb-5">{error}</Notice>}
+
+        <PageHeader
+          eyebrow={eventName}
+          title={soleRecipient.name}
+          description={`${formatPennies(budgetPennies)} budget · everything this event is buying`}
+          actions={addButton}
+        />
+
+        {/* The SAME component the list opens in a dialog, rendered as the page.
+            Ideas, purchases, spend, budget and the contributor plan all come
+            from it, so nothing here is a second implementation of anything. */}
+        <div className="mt-7">
+          <PersonModal person={soleRecipient} onClose={() => undefined} variant="inline" />
+        </div>
+
+        <ArchivedPeople people={archived} isAdmin={isAdmin} restore={restore} />
+
+        {/* A deep link to somebody who is NOT the sole recipient -- an older
+            notification about a person since removed -- still opens them,
+            rather than quietly showing a different person's gifts. */}
+        {selected && selected.id !== soleRecipient.id && (
+          <PersonModal person={selected} onClose={closePerson} />
+        )}
+        {addForm}
+      </AppShell>
+    );
+  }
+
+  // ---- Nobody yet: a setup step, not an empty list ------------------------
+  if (mode === "empty") {
+    return (
+      <AppShell title="Set up">
+        {error && <Notice tone="danger" className="mb-5">{error}</Notice>}
+
+        <PageHeader
+          eyebrow={eventName}
+          title="Set up"
+          description="Nobody has been added to this event yet."
+          actions={addButton}
+        />
+
+        <EmptyState
+          className="mt-7"
+          illustration="wreath"
+          title="No recipients yet"
+          body={isAdmin
+            ? "Add the person or people this event is buying for. Gift ideas, purchases and budgets all hang off them, so nothing else can be recorded until one exists."
+            : "An admin has not added anybody to this event yet. Gift ideas and purchases open up as soon as they do."}
+        />
+
+        <ArchivedPeople people={archived} isAdmin={isAdmin} restore={restore} />
+
+        {/* Same reason as above: a link to an archived recipient still works. */}
+        {selected && <PersonModal person={selected} onClose={closePerson} />}
+        {addForm}
+      </AppShell>
+    );
+  }
+
+  // ---- Two or more: the list, unchanged -----------------------------------
   return (
     <AppShell>
       {error && <Notice tone="danger" className="mb-5">{error}</Notice>}
@@ -114,12 +224,7 @@ function PeopleView({ eventId, eventName }: { eventId: string; eventName: string
         eyebrow={eventName}
         title="People"
         description={`${visible.length} ${visible.length === 1 ? "person" : "people"} · ${formatPennies(budgetPennies)} total budget`}
-        actions={isAdmin ? (
-          <Button size="lg" onClick={() => setAdding(true)} className="w-full sm:w-auto">
-            <IconPlus size={18} />
-            Add person
-          </Button>
-        ) : undefined}
+        actions={addButton}
       />
 
       <Toolbar
@@ -167,31 +272,52 @@ function PeopleView({ eventId, eventName }: { eventId: string; eventName: string
         />
       )}
 
-      {isAdmin && archived.length > 0 && (
-        <details className="group mt-12 rounded-2xl border border-line bg-surface px-5 shadow-card sm:px-6">
-          <summary className="flex list-none items-center justify-between gap-4 py-4 [&::-webkit-details-marker]:hidden">
-            <span className="min-w-0">
-              <span className="block font-display text-lg font-semibold">Removed people</span>
-              <span className="mt-0.5 block text-sm text-ink-600">
-                {archived.length} archived · only Global Admin can restore them
-              </span>
-            </span>
-            <IconChevronRight size={20} className="shrink-0 text-ink-400 transition group-open:rotate-90" />
-          </summary>
-          <div className="divide-y divide-line border-t border-line pb-2">
-            {archived.map((person) => (
-              <div key={person.id} className="flex items-center justify-between gap-4 py-3.5">
-                <span className="min-w-0 break-words font-semibold">{person.name}</span>
-                <Button variant="tonal" onClick={() => void restore(person.id).catch(() => undefined)}>Restore</Button>
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
+      <ArchivedPeople people={archived} isAdmin={isAdmin} restore={restore} />
 
       {selected && <PersonModal person={selected} onClose={closePerson} />}
-      {isAdmin && adding && <AddForm eventId={eventId} eventName={eventName} onCancel={() => setAdding(false)} onSave={async (name, budget, allocations) => { await saveRecipient({ name, budgetPennies: budget, allocations }); setAdding(false); }} />}
+      {addForm}
     </AppShell>
+  );
+}
+
+/**
+ * Removed recipients, and the only way back.
+ *
+ * Shown in every shape of the screen, including the single-recipient one: an
+ * event that looks like it is for one person may be an event somebody was
+ * removed from by mistake, and restoring them has to stay reachable.
+ */
+function ArchivedPeople({
+  people,
+  isAdmin,
+  restore,
+}: {
+  people: Person[];
+  isAdmin: boolean;
+  restore: (id: string) => Promise<void>;
+}) {
+  if (!isAdmin || people.length === 0) return null;
+
+  return (
+    <details className="group mt-12 rounded-2xl border border-line bg-surface px-5 shadow-card sm:px-6">
+      <summary className="flex list-none items-center justify-between gap-4 py-4 [&::-webkit-details-marker]:hidden">
+        <span className="min-w-0">
+          <span className="block font-display text-lg font-semibold">Removed people</span>
+          <span className="mt-0.5 block text-sm text-ink-600">
+            {people.length} archived · only Global Admin can restore them
+          </span>
+        </span>
+        <IconChevronRight size={20} className="shrink-0 text-ink-400 transition group-open:rotate-90" />
+      </summary>
+      <div className="divide-y divide-line border-t border-line pb-2">
+        {people.map((person) => (
+          <div key={person.id} className="flex items-center justify-between gap-4 py-3.5">
+            <span className="min-w-0 break-words font-semibold">{person.name}</span>
+            <Button variant="tonal" onClick={() => void restore(person.id).catch(() => undefined)}>Restore</Button>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 

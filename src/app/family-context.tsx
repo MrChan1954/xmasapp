@@ -174,4 +174,24 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
 }
 
 export function useFamily() { const value = useContext(Context); if (!value) throw new Error("FamilyProvider missing"); return value; }
+
+/**
+ * How many people the current event is for, or `null` while that is not known.
+ *
+ * The count of ACTIVE recipients is what decides the shape of an event's
+ * navigation, and it has to mean the same thing everywhere or the tab bar and
+ * the screen it opens would disagree. So it is derived once, here, from the
+ * same `people` the rest of the app reads.
+ *
+ * `null` for "not inside an event", "still loading" and "the load failed" --
+ * all three of which would otherwise look like zero recipients and hide screens
+ * from an event that has plenty.
+ */
+export function useActiveRecipientCount(): number | null {
+  const { eventId, people, loading, error } = useFamily();
+  return useMemo(() => {
+    if (!eventId || loading || error) return null;
+    return people.filter((person) => person.active).length;
+  }, [eventId, error, loading, people]);
+}
 export function useTotals() { const { people } = useFamily(); return useMemo(() => { const active = people.filter((person) => person.active); const budgetPennies = active.reduce((sum, person) => sum + person.budgetPennies, 0); const spentPennies = active.some((person) => person.spentPennies === null) ? null : active.reduce((sum, person) => sum + (person.spentPennies ?? 0), 0); return { active, budgetPennies, spentPennies, remainingPennies: spentPennies === null ? null : budgetPennies - spentPennies }; }, [people]); }

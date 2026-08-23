@@ -145,27 +145,49 @@ export function describeDaysAway(daysAway: number): string {
 // Reminders
 // ---------------------------------------------------------------------------
 
-export type ReminderStage = "one_month" | "one_week" | "one_day";
+export type ReminderStage = "one_week" | "one_day";
 
 /**
- * The three stages, and nothing else.
+ * Two stages, and nothing else.
  *
- * `subtract` is how far before the occurrence the reminder is due. One month is
- * CALENDAR arithmetic — the 6th of October is one month before the 6th of
- * November whatever the month lengths — not thirty days. Where the earlier
- * month is shorter, the day clamps: one month before the 31st of March is the
- * 28th of February, matching what PostgreSQL's `- interval '1 month'` does, so
- * the server and the app agree on the day.
+ * WHY THERE IS NO ONE-MONTH REMINDER
+ *   There was, and it was removed in Checkpoint 4.1. The dashboard now shows
+ *   the next few birthdays with the number of days to go, straight from the
+ *   permanent date — so the long-range warning is there every time anybody
+ *   opens the app, and costs nobody an interruption. A push notification a
+ *   month out told the family something the front page was already telling
+ *   them.
+ *
+ *   A reminder that interrupts should be one you would act on today. A week out
+ *   is "order it now"; a day out is "have it ready". A month out is neither.
+ *
+ * `subtract` is how far before the occurrence the reminder is due, in whole
+ * calendar days, which is exactly what PostgreSQL's `- interval '7 days'` and
+ * `- interval '1 day'` do — so the server and the app agree on the day.
  */
 export const REMINDER_STAGES: Array<{
   stage: ReminderStage;
   label: string;
   subtract: { months: number; days: number };
 }> = [
-  { stage: "one_month", label: "in 1 month", subtract: { months: 1, days: 0 } },
   { stage: "one_week", label: "next week", subtract: { months: 0, days: 7 } },
   { stage: "one_day", label: "tomorrow", subtract: { months: 0, days: 1 } },
 ];
+
+/**
+ * How many birthdays the dashboard shows at a glance.
+ *
+ * Four, because that is one row on a wide screen and two on a phone: enough to
+ * answer "is anything coming up?" without the front page turning into a list.
+ * Everything else is one tap away on the Birthdays page, which is the full
+ * system rather than the glance.
+ */
+export const DASHBOARD_BIRTHDAY_LIMIT = 4;
+
+/** The person's birthday workspace: their planning, not an event id. */
+export function birthdayWorkspacePath(personId: string): string {
+  return `/birthdays/${personId}`;
+}
 
 /** The date a stage's reminder is due, for one occurrence. */
 export function reminderDateFor(occurrenceDate: string, stage: ReminderStage): string | null {
@@ -174,21 +196,13 @@ export function reminderDateFor(occurrenceDate: string, stage: ReminderStage): s
   if (!entry || !valid.ok) return null;
 
   // `parts` yields a ZERO-BASED month, so it can be handed straight to
-  // `Date.UTC`. Both branches below rely on that; subtracting one again is
-  // exactly the off-by-a-month this comment exists to prevent.
+  // `Date.UTC`.
   const [year, monthIndex, day] = parts(valid.value);
 
-  if (entry.subtract.months > 0) {
-    // Calendar months, with the same clamping the occurrence itself uses.
-    const targetIndex = monthIndex - entry.subtract.months;
-    const targetYear = year + Math.floor(targetIndex / 12);
-    const targetMonthIndex = ((targetIndex % 12) + 12) % 12;
-    const clamped = Math.min(day, daysInMonth(targetMonthIndex + 1, targetYear));
-    return `${targetYear}-${pad(targetMonthIndex + 1)}-${pad(clamped)}`;
-  }
-
   // Whole calendar days. `Date.UTC` handles the month and year rollover, and
-  // midday is never involved, so no timezone can shift the result.
+  // midday is never involved, so no timezone can shift the result. Both
+  // remaining stages are day counts; there is no calendar-month arithmetic
+  // left to get wrong.
   const shifted = new Date(Date.UTC(year, monthIndex, day - entry.subtract.days));
   return shifted.toISOString().slice(0, 10);
 }

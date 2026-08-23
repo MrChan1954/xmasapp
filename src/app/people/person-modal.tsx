@@ -37,7 +37,33 @@ type Contribution = {
   spentPennies: number;
 };
 
-export function PersonModal({ person, onClose }: { person: Person; onClose: () => void }) {
+/**
+ * One recipient: their budget, contributors, gift ideas and purchases.
+ *
+ * TWO PRESENTATIONS, ONE COMPONENT.
+ *
+ * An event for several people shows this as a dialog over the People list --
+ * choose a person, see their gifts. An event for exactly ONE person has no list
+ * worth showing, so the same thing renders inline as the page itself.
+ *
+ * The difference is the frame and nothing else: identical state, identical
+ * queries, identical writes. Forking this into a second "single recipient
+ * screen" would mean two copies of the budget editor, the contributor editor
+ * and the purchase list, and the day they drifted apart would be the day
+ * somebody's money went missing.
+ *
+ * @param variant "modal" over a list, "inline" as the page. `onClose` is unused
+ *   inline, where there is nothing to close back to.
+ */
+export function PersonModal({
+  person,
+  onClose,
+  variant = "modal",
+}: {
+  person: Person;
+  onClose: () => void;
+  variant?: "modal" | "inline";
+}) {
   const { saveRecipient, archive, isAdmin, setIdeaCount, setPurchaseMetrics, event } = useFamily();
   const [rows, setRows] = useState<Contribution[]>([]);
   const [mode, setMode] = useState<"view" | "contributors" | "person">("view");
@@ -216,17 +242,19 @@ export function PersonModal({ person, onClose }: { person: Person; onClose: () =
     ? parsedBudgetForView.value
     : person.budgetPennies;
 
-  return (
-    <Modal labelledBy="person-dialog-title" onClose={onClose} size="xl" dismissible={!confirmingRemove} className="min-h-[88dvh] sm:min-h-0">
-      <ModalHeader
-        id="person-dialog-title"
-        eyebrow={event?.name ?? "Event"}
-        title={name}
-        onClose={onClose}
-        closeLabel="Close person details"
-        sticky
-      />
-      <div className="px-5 pb-6 sm:px-7 sm:pb-8">
+  const body = (
+    <>
+      {variant === "modal" && (
+        <ModalHeader
+          id="person-dialog-title"
+          eyebrow={event?.name ?? "Event"}
+          title={name}
+          onClose={onClose}
+          closeLabel="Close person details"
+          sticky
+        />
+      )}
+      <div className={variant === "modal" ? "px-5 pb-6 sm:px-7 sm:pb-8" : ""}>
         {error && <Notice tone="danger" className="mt-4">{error}</Notice>}
 
         {mode === "view" && (
@@ -272,7 +300,7 @@ export function PersonModal({ person, onClose }: { person: Person; onClose: () =
       {confirmingRemove && (
         <ConfirmDialog
           title={`Remove ${person.name} from ${event?.name ?? "this event"}?`}
-          body="They will no longer appear in the active Christmas list or budget. You can restore them later."
+          body="They will no longer appear in this event's active list or budget. You can restore them later."
           confirmLabel="Remove person"
           busyLabel="Removing..."
           busy={removing}
@@ -280,6 +308,14 @@ export function PersonModal({ person, onClose }: { person: Person; onClose: () =
           onConfirm={() => void remove()}
         />
       )}
+    </>
+  );
+
+  if (variant === "inline") return body;
+
+  return (
+    <Modal labelledBy="person-dialog-title" onClose={onClose} size="xl" dismissible={!confirmingRemove} className="min-h-[88dvh] sm:min-h-0">
+      {body}
     </Modal>
   );
 }

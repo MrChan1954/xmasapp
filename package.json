@@ -42,7 +42,9 @@
     "test:event-realtime": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/event-realtime.test.mjs",
     "test:birthdays": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/birthdays.test.ts",
     "test:event-administration": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/event-administration.test.mjs",
-    "test:birthday-reminders": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/birthday-reminders.test.mjs"
+    "test:birthday-reminders": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/birthday-reminders.test.mjs",
+    "test:birthday-experience": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/birthday-experience.test.mjs",
+    "test:single-recipient": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/single-recipient-events.test.mjs"
   },
   "dependencies": {
     "@opennextjs/cloudflare": "^1.20.2",

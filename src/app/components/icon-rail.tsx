@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { CalendarDays, ShieldCheck } from "lucide-react";
-import { useFamily } from "../family-context";
+import { useActiveRecipientCount, useFamily } from "../family-context";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventTypeMeta } from "@/lib/events.ts";
 import { cx } from "./cx";
@@ -20,7 +20,7 @@ import { Ornament } from "./festive/ornaments";
 export function IconRail() {
   const pathname = usePathname();
   const { isAdmin, event, eventId } = useFamily();
-  const items = navItemsFor(eventId);
+  const items = navItemsFor(eventId, useActiveRecipientCount());
   const activeSection = activeNavSection(pathname);
 
   return (

@@ -241,6 +241,50 @@ export function eventDisplayName(event: Pick<EventSummary, "name" | "type">): st
 }
 
 // ---------------------------------------------------------------------------
+// How many people an event is for
+// ---------------------------------------------------------------------------
+
+/**
+ * The shape of an event's navigation, decided by how many people it is for.
+ *
+ * "multi"   Two or more active recipients. The People list earns its place:
+ *           there is a choice to make, budgets to compare, and somewhere to
+ *           search. Christmas is always this.
+ *
+ * "single"  Exactly one active recipient. A People list of one card is a tap
+ *           that answers a question nobody asked. Mother's Day, Father's Day, a
+ *           wedding gift, an anniversary — the tab goes straight to that
+ *           person's gifts.
+ *
+ * "empty"   No active recipient yet. There is nothing to buy for, so the
+ *           screens that need a target are not offered at all; the Global Admin
+ *           is asked to add somebody instead.
+ *
+ * DECIDED BY COUNT, NEVER BY TYPE.
+ *
+ * A "custom" event may legitimately be for the whole family, and a Christmas
+ * for one person would be strange but is not the navigation's business. Basing
+ * this on `event_type` would mean every new occasion needed a rule, and the
+ * first one somebody used differently would get the wrong screen. The count is
+ * already the truth, already live, and changes the moment a recipient is added
+ * or removed — with no migration and no reconfiguration.
+ */
+export type EventNavMode = "multi" | "single" | "empty";
+
+/**
+ * @param activeRecipientCount active recipients, or `null` while unknown.
+ *
+ * `null` answers "multi", which is the safe default: it offers every screen
+ * rather than hiding one during a load and making the tab bar jump.
+ */
+export function eventNavMode(activeRecipientCount: number | null): EventNavMode {
+  if (activeRecipientCount === null || !Number.isFinite(activeRecipientCount)) return "multi";
+  if (activeRecipientCount <= 0) return "empty";
+  if (activeRecipientCount === 1) return "single";
+  return "multi";
+}
+
+// ---------------------------------------------------------------------------
 // Dashboard ordering
 // ---------------------------------------------------------------------------
 
@@ -252,6 +296,53 @@ export type PartitionedEvents<T extends EventSummary> = {
   /** Deliberately put away. Never mixed into the primary list. */
   archived: T[];
 };
+
+/**
+ * The events a birthday's planning is kept in are NOT dashboard cards.
+ *
+ * A family with twenty birthdays has twenty rows in `events` the moment
+ * anybody starts planning them, and the root page must not turn into a list of
+ * twenty near-identical cards. The dashboard shows birthdays from the permanent
+ * dates instead — which also means a birthday appears there before anybody has
+ * created anything at all.
+ *
+ * The occurrences are not hidden: they are reached through the person's
+ * birthday workspace, which is where they make sense.
+ */
+export function isBirthdayOccurrence(event: Pick<EventSummary, "type">): boolean {
+  return event.type === "birthday";
+}
+
+/**
+ * The dashboard's three groups.
+ *
+ * Christmas is its own group because it is the thing this app was built for and
+ * the one everybody looks for first. Everything else that is not a birthday is
+ * a "special event" — an anniversary, a wedding, a leaving do.
+ */
+export function groupDashboardEvents<T extends EventSummary>(
+  events: readonly T[],
+  today: string,
+): { christmas: T[]; special: PartitionedEvents<T>; birthdayOccurrences: T[] } {
+  const christmas: T[] = [];
+  const special: T[] = [];
+  const birthdayOccurrences: T[] = [];
+
+  for (const event of events) {
+    if (isBirthdayOccurrence(event)) birthdayOccurrences.push(event);
+    else if (event.type === "christmas") christmas.push(event);
+    else special.push(event);
+  }
+
+  const christmasPartition = partitionEvents(christmas, today);
+  return {
+    // Upcoming Christmases first, then past ones, then anything archived: one
+    // list, newest concern at the top.
+    christmas: [...christmasPartition.upcoming, ...christmasPartition.past, ...christmasPartition.archived],
+    special: partitionEvents(special, today),
+    birthdayOccurrences,
+  };
+}
 
 /**
  * Split events into the three lists a dashboard shows.

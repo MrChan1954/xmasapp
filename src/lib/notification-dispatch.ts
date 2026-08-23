@@ -50,11 +50,15 @@ import { logNotification, pushServiceHost } from "./notification-log.ts";
 import { formatBirthday } from "./birthdays.ts";
 
 /**
- * What each reminder stage says. One place, so the three stages read as one
- * voice and the wording is not scattered across the scheduler.
+ * The two stages a birthday reminder can be, and what each one says. One place,
+ * so both read as one voice and the wording is not scattered across the
+ * scheduler.
+ *
+ * A stage that is not in here produces no notification at all, which is what
+ * retires the one-month reminder for any row that predates Checkpoint 4.1: the
+ * history stays in `birthday_reminders`, and nobody's phone buzzes for it.
  */
 const STAGE_COPY = {
-  one_month: { whenLabel: "in 1 month", advice: "Time to start sorting a present." },
   one_week: { whenLabel: "next week", advice: "Make sure you have their present sorted." },
   one_day: { whenLabel: "tomorrow", advice: "Make sure the present is ready and dropped off." },
 } as const;

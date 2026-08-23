@@ -1,6 +1,6 @@
-import { Gift, House, MoreHorizontal, Scale, Users, type LucideIcon } from "lucide-react";
+import { Gift, House, MoreHorizontal, Scale, Sparkles, UserPlus, Users, type LucideIcon } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { eventIdFromPath, eventPath, eventSectionFromPath, type EventSection } from "@/lib/events.ts";
+import { eventIdFromPath, eventNavMode, eventPath, eventSectionFromPath, type EventNavMode, type EventSection } from "@/lib/events.ts";
 
 export type NavItem = {
   href: string;
@@ -11,8 +11,25 @@ export type NavItem = {
   primary?: boolean;
 };
 
+type NavEntry = { section: EventSection; label: string; icon: LucideIcon; primary?: boolean };
+
 /**
- * The five destinations inside an event, in tab order.
+ * The destinations inside an event, in tab order, for each shape an event can
+ * take.
+ *
+ * SAME ROUTES, DIFFERENT SIGNPOSTS.
+ *
+ * Every mode below points at the same five sections. Nothing is duplicated, no
+ * screen is forked, and no financial path changes -- what changes is the WORD
+ * on the tab and, for an event with nobody in it yet, whether a tab that has no
+ * target is offered at all.
+ *
+ *   multi   Christmas, and any event for two or more people. Unchanged.
+ *   single  Mother's Day, a wedding, an anniversary. "People" becomes "Gifts",
+ *           because a list of one card is a tap that answers nothing.
+ *   empty   Nothing has been set up. "Add" is withheld -- a purchase form with
+ *           no recipient to choose is a dead end -- and the People tab becomes
+ *           the setup step it actually is.
  *
  * Nothing here is a literal path. The rail and the mobile tabs both build their
  * links from `eventPath`, so a link can only ever point at the event the reader
@@ -20,21 +37,42 @@ export type NavItem = {
  * Christmas Owed, because there is nowhere in this file for a bare "/owed" to
  * come from.
  */
-const EVENT_NAV: Array<{ section: EventSection; label: string; icon: LucideIcon; primary?: boolean }> = [
-  { section: "home", label: "Home", icon: House },
-  { section: "people", label: "People", icon: Users },
-  { section: "add-purchase", label: "Add", icon: Gift, primary: true },
-  { section: "owed", label: "Owed", icon: Scale },
-  { section: "more", label: "More", icon: MoreHorizontal },
-];
+const EVENT_NAV: Record<EventNavMode, NavEntry[]> = {
+  multi: [
+    { section: "home", label: "Home", icon: House },
+    { section: "people", label: "People", icon: Users },
+    { section: "add-purchase", label: "Add", icon: Gift, primary: true },
+    { section: "owed", label: "Owed", icon: Scale },
+    { section: "more", label: "More", icon: MoreHorizontal },
+  ],
+  single: [
+    { section: "home", label: "Home", icon: House },
+    // Sparkles is already the app's glyph for a gift idea, and this one tab is
+    // where the ideas and the bought gifts both live.
+    { section: "people", label: "Gifts", icon: Sparkles },
+    { section: "add-purchase", label: "Add", icon: Gift, primary: true },
+    { section: "owed", label: "Owed", icon: Scale },
+    { section: "more", label: "More", icon: MoreHorizontal },
+  ],
+  empty: [
+    { section: "home", label: "Home", icon: House },
+    { section: "people", label: "Set up", icon: UserPlus },
+    { section: "owed", label: "Owed", icon: Scale },
+    { section: "more", label: "More", icon: MoreHorizontal },
+  ],
+};
 
 /**
  * The navigation for one event, or an empty list when the reader is not inside
  * one. An empty list is how the dashboard says "there is no event to navigate".
+ *
+ * @param activeRecipientCount how many people this event is currently for, or
+ *   `null` while that is still loading -- which yields the full set rather than
+ *   a tab bar that changes shape under the reader's thumb.
  */
-export function navItemsFor(eventId: string | null): NavItem[] {
+export function navItemsFor(eventId: string | null, activeRecipientCount: number | null = null): NavItem[] {
   if (!eventId) return [];
-  return EVENT_NAV.flatMap((item) => {
+  return EVENT_NAV[eventNavMode(activeRecipientCount)].flatMap((item) => {
     const href = eventPath(eventId, item.section);
     return href ? [{ ...item, href }] : [];
   });

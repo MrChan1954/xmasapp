@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarDays, Cake, Pencil, Plus } from "lucide-react";
+import { CalendarDays, Cake, Pencil } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { describeDaysAway, formatBirthday, isValidBirthday, isValidBirthYear, peopleWithoutBirthdays, suggestedBirthdayEventName, upcomingBirthdays, type PersonBirthday } from "@/lib/birthdays.ts";
+import { birthdayWorkspacePath, describeDaysAway, formatBirthday, isValidBirthday, isValidBirthYear, peopleWithoutBirthdays, upcomingBirthdays, type PersonBirthday } from "@/lib/birthdays.ts";
 import { createClient } from "@/utils/supabase/client";
 import { AppShell, PageHeader } from "../components/app-shell";
 import { GarlandRule } from "../components/festive/garland";
@@ -69,7 +69,7 @@ export function BirthdaysScreen({
           illustration="star"
           title="No birthdays have been added yet"
           body={isAdmin
-            ? "Add a birthday below and it will appear here, with reminders a month, a week and a day before."
+            ? "Add a birthday below and it will appear here, with reminders a week and a day before."
             : "An admin has not added any birthdays yet."}
         />
       )}
@@ -112,24 +112,12 @@ export function BirthdaysScreen({
                   </div>
 
                   <div className="mt-auto flex flex-wrap items-center gap-2 pt-5">
-                    {event
-                      ? (
-                        <ButtonLink href={`/events/${event.id}`} variant="tonal" className="min-h-11">
-                          Open event
-                        </ButtonLink>
-                      )
-                      : isAdmin
-                        ? (
-                          <ButtonLink
-                            href={createEventHref(person.name, person.next.year, person.next.date, person.personId)}
-                            variant="tonal"
-                            className="min-h-11"
-                          >
-                            <Plus size={16} aria-hidden />
-                            Create birthday event
-                          </ButtonLink>
-                        )
-                        : <p className="text-xs font-medium text-ink-600">No event planned yet.</p>}
+                    {/* Always the person's own workspace. Whether this year's
+                        planning has been started is something that page knows
+                        and says; it is not a different destination. */}
+                    <ButtonLink href={birthdayWorkspacePath(person.personId)} variant="tonal" className="min-h-11">
+                      {event ? "Open planning" : "Open"}
+                    </ButtonLink>
                     {isAdmin && (
                       <Button variant="ghost" className="min-h-11" onClick={() => { setError(null); setEditing(person); }}>
                         <Pencil size={16} aria-hidden />
@@ -176,17 +164,6 @@ export function BirthdaysScreen({
       )}
     </AppShell>
   );
-}
-
-/** Pre-fills the Create Event form from the birthday, so nothing is retyped. */
-function createEventHref(name: string, year: number, date: string, personId: string): string {
-  const query = new URLSearchParams({
-    type: "birthday",
-    celebrant: personId,
-    date,
-    name: suggestedBirthdayEventName(name, year),
-  });
-  return `/events/new?${query.toString()}`;
 }
 
 function BirthdayModal({
@@ -277,8 +254,9 @@ function BirthdayModal({
           />
         </Field>
         <p className="text-xs leading-5 text-ink-600">
-          Saved once and kept for good. Reminders go to the rest of the family a month,
-          a week and a day before — never to {person.name.split(" ")[0]}.
+          Saved once and kept for good. Reminders go to the rest of the family a week
+          and a day before — never to {person.name.split(" ")[0]}. The date itself is
+          on the dashboard from the moment it is saved.
         </p>
       </div>
       <ModalFooter>

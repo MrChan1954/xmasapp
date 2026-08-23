@@ -31,6 +31,10 @@ const eventMigrationName = "202608100025_generalise_christmas_into_events.sql";
 const birthdayMigrationName = "202608100026_add_birthdays_and_event_administration.sql";
 const birthdayMigration = readFileSync(join(migrationsDirectory, birthdayMigrationName), "utf8");
 const birthdayMigrationCode = birthdayMigration.replace(/--[^\n]*/g, "");
+
+const reminderMigrationName = "202608100027_two_stage_birthday_reminders_and_safe_event_deletion.sql";
+const reminderMigration = readFileSync(join(migrationsDirectory, reminderMigrationName), "utf8");
+const reminderMigrationCode = reminderMigration.replace(/--[^\n]*/g, "");
 const eventMigration = readFileSync(join(migrationsDirectory, eventMigrationName), "utf8");
 /** Comments explain the reasoning at length; assertions about CODE must ignore them. */
 const eventMigrationCode = eventMigration.replace(/--[^\n]*/g, "");
@@ -64,25 +68,48 @@ test("migration 026 is the newest migration, and nothing else has been added", (
   // `scripts/event-administration.test.mjs` and
   // `scripts/birthday-reminders.test.mjs`; what THIS file still owns is that
   // 025 remains the Event layer and that 026 did not disturb it.
-  assert.equal(migrationFiles.at(-1), birthdayMigrationName);
-  assert.equal(migrationFiles.length, 26);
+  assert.equal(migrationFiles.at(-1), reminderMigrationName);
+  assert.equal(migrationFiles.length, 27);
   assert.ok(migrationFiles.includes(eventMigrationName), "025 is still present, unedited");
+  assert.ok(migrationFiles.includes(birthdayMigrationName), "026 is still present, unedited");
 });
 
-test("026 leaves the Event layer and the money exactly as 025 left them", () => {
-  // The reason this file can keep making claims about the Event layer after a
-  // later migration landed: 026 adds, and adds only.
-  for (const table of financialTables) {
-    assert.doesNotMatch(
-      birthdayMigrationCode,
-      new RegExp(`(alter table|drop table)\\s+(if exists\\s+)?public\\.${table}\\b`, "i"),
-      `026 must not alter ${table}`,
-    );
+test("026 and 027 leave the Event layer and the money exactly as 025 left them", () => {
+  // The reason this file can keep making claims about the Event layer after
+  // later migrations landed: each one adds, and adds only.
+  for (const [label, code] of [["026", birthdayMigrationCode], ["027", reminderMigrationCode]]) {
+    for (const table of financialTables) {
+      assert.doesNotMatch(
+        code,
+        new RegExp(`(alter table|drop table)\\s+(if exists\\s+)?public\\.${table}\\b`, "i"),
+        `${label} must not alter ${table}`,
+      );
+    }
+    // The two guards 025 installed are not redefined, dropped or disabled.
+    assert.doesNotMatch(code, /drop trigger[^;]*protect_event_scope_identity/i);
+    assert.doesNotMatch(code, /drop trigger[^;]*enforce_event_scope_integrity/i);
+    assert.doesNotMatch(code, /alter table[^;]*disable trigger/i);
   }
-  // The two guards 025 installed are not redefined, dropped or disabled.
-  assert.doesNotMatch(birthdayMigrationCode, /drop trigger[^;]*protect_event_scope_identity/i);
-  assert.doesNotMatch(birthdayMigrationCode, /drop trigger[^;]*enforce_event_scope_integrity/i);
-  assert.doesNotMatch(birthdayMigrationCode, /alter table[^;]*disable trigger/i);
+});
+
+test("027 deletes an event only through the guarded function, never with a bare statement", () => {
+  // The one `delete from public.events` in the repository lives inside
+  // `delete_event_if_empty`, after six count checks and an admin check. A
+  // second one anywhere would be a way round all of it.
+  const deletes = reminderMigrationCode.match(/delete from public\.events/gu) ?? [];
+  assert.equal(deletes.length, 1, "exactly one delete statement");
+
+  const start = reminderMigration.indexOf("function public.delete_event_if_empty(");
+  const body = reminderMigration.slice(start, reminderMigration.indexOf("$;", start));
+  assert.ok(body.includes("delete from public.events"), "and it is inside the guarded function");
+  assert.ok(
+    body.indexOf("is_app_admin()") < body.indexOf("delete from public.events"),
+    "the admin check comes first",
+  );
+  assert.ok(
+    body.indexOf("blocking_count > 0") < body.indexOf("delete from public.events"),
+    "the emptiness check comes before the delete",
+  );
 });
 
 test("no already-applied migration has been edited", () => {

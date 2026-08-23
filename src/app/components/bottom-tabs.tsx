@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Plus } from "lucide-react";
-import { useFamily } from "../family-context";
+import { useActiveRecipientCount, useFamily } from "../family-context";
 import { cx } from "./cx";
 import { activeNavSection, navItemsFor } from "./nav-items";
 
@@ -20,7 +20,7 @@ import { activeNavSection, navItemsFor } from "./nav-items";
 export function BottomTabs() {
   const pathname = usePathname();
   const { eventId } = useFamily();
-  const items = navItemsFor(eventId);
+  const items = navItemsFor(eventId, useActiveRecipientCount());
   const activeSection = activeNavSection(pathname);
 
   if (!items.length) return null;
@@ -30,7 +30,13 @@ export function BottomTabs() {
       aria-label="Main navigation"
       className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-ground/90 pb-[max(8px,env(safe-area-inset-bottom))] backdrop-blur-md lg:hidden"
     >
-      <div className="mx-auto grid max-w-md grid-cols-5 items-end px-2 pt-2">
+      {/* Written out rather than composed: Tailwind scans source text, so a
+          `grid-cols-${n}` would never be generated. An event with nobody in it
+          yet has four tabs, not five. */}
+      <div className={cx(
+        "mx-auto grid max-w-md items-end px-2 pt-2",
+        items.length === 4 ? "grid-cols-4" : "grid-cols-5",
+      )}>
         {items.map((item) => {
           const active = item.section === activeSection;
           const Glyph = item.icon;
