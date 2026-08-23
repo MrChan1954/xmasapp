@@ -40,7 +40,7 @@ export function AuthScreen({ children }: { children: ReactNode }) {
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gold-fill text-gold-fill-contrast shadow-card" aria-hidden>
             <IconSparkle size={22} strokeWidth={1.6} />
           </span>
-          <span className="font-display text-xl font-semibold text-ink-900 dark:text-white">Christmas Budget</span>
+          <span className="font-display text-xl font-semibold text-ink-900 dark:text-white">Family Gift Planner</span>
         </div>
         <section className="mt-6 overflow-hidden rounded-3xl border border-line bg-surface shadow-modal dark:border-transparent dark:bg-surface-2">
           <GarlandRule variant="lights" />

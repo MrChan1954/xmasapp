@@ -154,5 +154,5 @@ export function pageTitleFor(pathname: string): { title: string; parent?: { href
   }
 
   const match = TITLES.find((entry) => entry.test.test(pathname));
-  return match ? { title: match.title, parent: match.parent } : { title: "Christmas Budget" };
+  return match ? { title: match.title, parent: match.parent } : { title: "Family Gift Planner" };
 }

@@ -28,8 +28,8 @@ const fraunces = Fraunces({
 });
 
 export const metadata: Metadata = {
-  title: "Christmas Budget",
-  description: "A simple Christmas gift budget planner.",
+  title: "Family Gift Planner",
+  description: "Plan and share the cost of Christmas, birthdays and every other family occasion.",
   manifest: "/manifest.webmanifest",
   /**
    * `statusBarStyle` is "default", not "black-translucent", on purpose. The
@@ -49,7 +49,7 @@ export const metadata: Metadata = {
    */
   appleWebApp: {
     capable: true,
-    title: "Christmas Budget",
+    title: "Family Gift Planner",
     statusBarStyle: "default",
   },
 };

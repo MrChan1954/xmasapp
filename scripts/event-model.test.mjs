@@ -35,6 +35,14 @@ const birthdayMigrationCode = birthdayMigration.replace(/--[^\n]*/g, "");
 const reminderMigrationName = "202608100027_two_stage_birthday_reminders_and_safe_event_deletion.sql";
 const reminderMigration = readFileSync(join(migrationsDirectory, reminderMigrationName), "utf8");
 const reminderMigrationCode = reminderMigration.replace(/--[^\n]*/g, "");
+
+const occasionMigrationName = "202608100028_add_mothers_and_fathers_day.sql";
+const occasionMigration = readFileSync(join(migrationsDirectory, occasionMigrationName), "utf8");
+const occasionMigrationCode = occasionMigration.replace(/--[^\n]*/g, "");
+
+const budgetMigrationName = "202608100029_add_monthly_birthday_budget_reminder.sql";
+const budgetMigration = readFileSync(join(migrationsDirectory, budgetMigrationName), "utf8");
+const budgetMigrationCode = budgetMigration.replace(/--[^\n]*/g, "");
 const eventMigration = readFileSync(join(migrationsDirectory, eventMigrationName), "utf8");
 /** Comments explain the reasoning at length; assertions about CODE must ignore them. */
 const eventMigrationCode = eventMigration.replace(/--[^\n]*/g, "");
@@ -68,16 +76,22 @@ test("migration 026 is the newest migration, and nothing else has been added", (
   // `scripts/event-administration.test.mjs` and
   // `scripts/birthday-reminders.test.mjs`; what THIS file still owns is that
   // 025 remains the Event layer and that 026 did not disturb it.
-  assert.equal(migrationFiles.at(-1), reminderMigrationName);
-  assert.equal(migrationFiles.length, 27);
-  assert.ok(migrationFiles.includes(eventMigrationName), "025 is still present, unedited");
-  assert.ok(migrationFiles.includes(birthdayMigrationName), "026 is still present, unedited");
+  assert.equal(migrationFiles.at(-1), budgetMigrationName);
+  assert.equal(migrationFiles.length, 29);
+  for (const name of [eventMigrationName, birthdayMigrationName, reminderMigrationName, occasionMigrationName]) {
+    assert.ok(migrationFiles.includes(name), `${name} is still present, unedited`);
+  }
 });
 
 test("026 and 027 leave the Event layer and the money exactly as 025 left them", () => {
   // The reason this file can keep making claims about the Event layer after
   // later migrations landed: each one adds, and adds only.
-  for (const [label, code] of [["026", birthdayMigrationCode], ["027", reminderMigrationCode]]) {
+  for (const [label, code] of [
+    ["026", birthdayMigrationCode],
+    ["027", reminderMigrationCode],
+    ["028", occasionMigrationCode],
+    ["029", budgetMigrationCode],
+  ]) {
     for (const table of financialTables) {
       assert.doesNotMatch(
         code,

@@ -48,6 +48,8 @@ import { shortName, withEvent, type NotificationEvent } from "./notification-con
 import { logNotification, pushServiceHost } from "./notification-log.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { formatBirthday } from "./birthdays.ts";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { planBirthdayBudgetNotifications } from "./notification-audience.ts";
 
 /**
  * The two stages a birthday reminder can be, and what each one says. One place,
@@ -105,7 +107,8 @@ export type NotificationEventKind =
   | "gift_idea"
   | "gift_status"
   | "payment_review"
-  | "birthday_reminder";
+  | "birthday_reminder"
+  | "birthday_budget_month";
 
 /**
  * Kinds that belong to an event, and kinds that may not.
@@ -115,7 +118,13 @@ export type NotificationEventKind =
  * birthdays have no Birthday Event, and the reminder links to the Birthdays
  * page instead.
  */
-export const EVENTLESS_KINDS: readonly NotificationEventKind[] = ["birthday_reminder"];
+export const EVENTLESS_KINDS: readonly NotificationEventKind[] = [
+  "birthday_reminder",
+  // A monthly budget summary can cover several birthdays at once, so it belongs
+  // to no single event. Its link goes to the Birthdays area, which is where the
+  // reader can see all of them.
+  "birthday_budget_month",
+];
 
 /**
  * The bit of a Supabase client this module uses.
@@ -696,6 +705,69 @@ export async function buildPlan(
     };
   }
 
+  if (kind === "birthday_budget_month") {
+    // THE MONEY REMINDER, NOT THE CALENDAR ONE.
+    //
+    // The subject is a claimed `birthday_budget_summaries` row, and everything
+    // said below is re-read from the database through
+    // `birthday_budget_summary_detail` — the same contribution plan the People
+    // screen and the Owed engine read. Nothing here divides a budget, assumes a
+    // split, or trusts a number a caller passed in.
+    const summary = await reader
+      .from("birthday_budget_summaries")
+      .select("id,contributor_person_id,budget_month,total_pennies,lines,queued_at")
+      .eq("id", subjectId)
+      .maybeSingle();
+    if (summary.error || !summary.data) return null;
+    const row = summary.data as {
+      contributor_person_id: string;
+      budget_month: string;
+      total_pennies: number;
+      lines: Array<{ celebrant_name: string; event_date: string; planned_amount_pennies: number }> | null;
+      queued_at: string;
+    };
+
+    const contributor = context.members.find((member) => member.personId === row.contributor_person_id);
+    // No account, nobody to tell. The claim still stands, so this is not retried
+    // into a loop.
+    if (!contributor) return null;
+
+    const claimed = Array.isArray(row.lines) ? row.lines : [];
+    if (claimed.length === 0) return null;
+
+    const lines = claimed.map((line) => ({
+      celebrantName: shortName(String(line.celebrant_name)),
+      dateLabel: formatBirthdayDateLabel(String(line.event_date)),
+      plannedPennies: Number(line.planned_amount_pennies),
+    }));
+    // Summed from the lines that are actually shown, so the total can never
+    // disagree with the list above it. The database checked the same equality
+    // when the claim was made.
+    const totalPennies = lines.reduce((sum, line) => sum + line.plannedPennies, 0);
+    if (totalPennies !== Number(row.total_pennies) || totalPennies <= 0) return null;
+
+    // Nobody acted: this is the calendar turning over, not a person doing
+    // something. The claim row's own timestamp is passed so the live path's
+    // freshness window still applies to it.
+    authorize(null, row.queued_at);
+
+    return {
+      actorAppMemberId: null,
+      // One summary per person per month. The claim row enforces the same thing
+      // in the database, so this and that agree by construction.
+      fingerprint: row.budget_month,
+      planned: planBirthdayBudgetNotifications(
+        {
+          appMemberId: contributor.appMemberId,
+          lines,
+          totalPennies,
+          monthLabel: row.budget_month,
+        },
+        context.members,
+      ),
+    };
+  }
+
   if (kind === "birthday_reminder") {
     const reminder = await reader
       .from("birthday_reminders")
@@ -769,6 +841,12 @@ export async function buildPlan(
       context.members,
     ),
   };
+}
+
+/** "6 November", from a stored `YYYY-MM-DD`. */
+function formatBirthdayDateLabel(isoDate: string): string {
+  const [, month, day] = isoDate.slice(0, 10).split("-").map(Number);
+  return Number.isFinite(month) && Number.isFinite(day) ? formatBirthday(month, day) : isoDate.slice(0, 10);
 }
 
 function nameOf(context: FamilyContext, appMemberId: string | null): string {

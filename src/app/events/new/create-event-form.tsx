@@ -5,7 +5,9 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Check, ChevronLeft } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { EVENT_TYPES, birthdayDateLooksLikeDateOfBirth, eventTypeMeta, formatEventDate, validateEventInput, type EventType } from "@/lib/events.ts";
+import { EVENT_TYPES, SPECIAL_EVENT_TYPES, birthdayDateLooksLikeDateOfBirth, eventTypeMeta, formatEventDate, validateEventInput, type EventType } from "@/lib/events.ts";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { occasionDateExplanation, suggestedOccasionDate } from "@/lib/uk-occasions.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { birthdayOccurrence, suggestedBirthdayEventName } from "@/lib/birthdays.ts";
 import { INPUT_LIMITS } from "@/lib/input-validation";
@@ -76,7 +78,7 @@ export function CreateEventForm({ people, today }: { people: CreatablePerson[]; 
     setType(nextType);
     setError(null);
     const nextMeta = eventTypeMeta(nextType);
-    const year = new Date().getUTCFullYear() + (nextType === "christmas" ? 0 : 0);
+    const year = new Date().getUTCFullYear();
 
     if (nextType === "christmas") {
       setName(`Christmas ${year}`);
@@ -87,10 +89,24 @@ export function CreateEventForm({ people, today }: { people: CreatablePerson[]; 
       setContributorIds(people.map((person) => person.personId));
       return;
     }
+    // The occasions that move every year but move by a RULE. Easter Sunday,
+    // Mothering Sunday (three weeks before it) and the third Sunday in June are
+    // all computable, so the form offers the right date instead of asking
+    // somebody to look it up — which is how "Easter 2026" came to be dated in
+    // 2027. Every one of them stays editable.
+    // Christmas has already returned above, so anything with a suggestion here
+    // is one of the moving occasions.
+    const suggested = suggestedOccasionDate(nextType, year);
+    if (suggested) {
+      setName(`${nextMeta.label} ${year}`);
+      setDate(suggested);
+      setCelebrantId("");
+      setRecipientIds([]);
+      setContributorIds(people.map((person) => person.personId));
+      return;
+    }
     if (nextType === "easter") {
       setName(`Easter ${year}`);
-      // Easter moves every year and no date is guessed: a wrong holiday date is
-      // worse than an empty field.
       setDate("");
       setCelebrantId("");
       setRecipientIds([]);
@@ -212,8 +228,14 @@ export function CreateEventForm({ people, today }: { people: CreatablePerson[]; 
       {step === "type" && (
         <section className="mt-6">
           <h2 className="font-display text-xl font-semibold text-ink-900">What kind of event?</h2>
+          <p className="mt-1.5 text-sm leading-6 text-ink-600">
+            Christmas and birthdays are not here on purpose. The family has one Christmas,
+            and a birthday belongs to a person — start one from{" "}
+            <Link href="/birthdays" className="font-semibold underline">Birthdays</Link>, where the
+            date is already known.
+          </p>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            {EVENT_TYPES.map((option: EventType) => {
+            {SPECIAL_EVENT_TYPES.map((option: EventType) => {
               const optionMeta = eventTypeMeta(option);
               return (
                 <button
@@ -270,7 +292,7 @@ export function CreateEventForm({ people, today }: { people: CreatablePerson[]; 
             />
           </Field>
 
-          <Field label="Date" required hint={type === "easter" ? "Easter moves each year, so choose the date rather than guessing it." : undefined}>
+          <Field label="Date" required hint={occasionDateExplanation(type) ?? undefined}>
             <Input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
           </Field>
 

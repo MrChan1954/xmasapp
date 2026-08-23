@@ -120,6 +120,55 @@ export function birthdayReminderNotification(input: {
   };
 }
 
+/** One birthday's share of a contributor's month. */
+export type BirthdayBudgetLine = {
+  celebrantName: string;
+  /** "6 November". */
+  dateLabel: string;
+  plannedPennies: number;
+};
+
+/**
+ * "🎂 Birthday spending this month".
+ *
+ * A DIFFERENT WARNING FROM THE WEEK AND DAY REMINDERS.
+ *
+ * Those say a birthday is coming, and come from the permanent date. This says
+ * what YOU have put aside, and comes from the contribution plan inside that
+ * year's occurrence. One is about the calendar; the other is about money, and
+ * it is only ever sent to somebody who actually has some planned.
+ *
+ * ONE NOTIFICATION, HOWEVER MANY BIRTHDAYS. Three separate buzzes on the
+ * morning of the 1st is noise; one summary that names each birthday and totals
+ * them is the thing somebody can act on.
+ */
+export function birthdayBudgetMonthNotification(input: {
+  lines: BirthdayBudgetLine[];
+  totalPennies: number;
+  monthLabel: string;
+}): NotificationPayload {
+  const single = input.lines.length === 1 ? input.lines[0] : null;
+
+  const summary = single
+    ? `${single.celebrantName}'s birthday is ${single.dateLabel}. You have ${formatPennies(single.plannedPennies)} planned towards it.`
+    : [
+      `You have ${input.lines.length} birthdays to budget for:`,
+      ...input.lines.map((line) => `${line.celebrantName} — ${formatPennies(line.plannedPennies)}`),
+      `Total planned: ${formatPennies(input.totalPennies)}`,
+    ].join("\n");
+
+  return {
+    title: "🎂 Birthday spending this month",
+    body: summary,
+    inAppBody: summary,
+    url: BIRTHDAYS_URL,
+    // Person and month: one summary each, and next month is a different tag so
+    // it never replaces this one on the device.
+    tag: `birthday-budget:${input.monthLabel}`,
+    category: "birthdays",
+  };
+}
+
 /** The event a notification belongs to, as the dispatcher resolved it. */
 export type NotificationEvent = {
   id: string;

@@ -56,6 +56,12 @@ const birthdayMigration = readFileSync(join(migrationsDirectory, birthdayMigrati
 const reminderMigrationName = "202608100027_two_stage_birthday_reminders_and_safe_event_deletion.sql";
 const reminderMigration = readFileSync(join(migrationsDirectory, reminderMigrationName), "utf8");
 
+const occasionMigrationName = "202608100028_add_mothers_and_fathers_day.sql";
+const occasionMigration = readFileSync(join(migrationsDirectory, occasionMigrationName), "utf8");
+
+const budgetMigrationName = "202608100029_add_monthly_birthday_budget_reminder.sql";
+const budgetMigration = readFileSync(join(migrationsDirectory, budgetMigrationName), "utf8");
+
 const applicationTables = [
   "christmas_events",
   "people",
@@ -73,9 +79,56 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  assert.equal(migrationFiles.at(-1), reminderMigrationName);
+  assert.equal(migrationFiles.at(-1), budgetMigrationName);
+  assert.ok(migrationFiles.includes(occasionMigrationName), "the occasions migration is still present");
+
+  // What 029 introduces, security-wise: one more table nobody may read, and two
+  // more functions no browser session may call. A monthly budget summary says
+  // what ONE person has put aside, so a leak here would tell each family member
+  // what the others are spending.
+  assert.match(budgetMigration, /alter table public\.birthday_budget_summaries enable row level security;/);
+  assert.doesNotMatch(budgetMigration, /create policy[^;]*on public\.birthday_budget_summaries/i);
+  assert.doesNotMatch(
+    budgetMigration,
+    /grant [^;]*on table public\.birthday_budget_summaries to (authenticated|anon)/i,
+  );
+  for (const fn of ["due_birthday_budget_summaries", "claim_birthday_budget_summary"]) {
+    const start = budgetMigration.indexOf(`function public.${fn}(`);
+    assert.ok(start > 0, `${fn} must exist`);
+    const body = budgetMigration.slice(start, budgetMigration.indexOf("$$;", start));
+    assert.match(body, /set search_path = ''/, `${fn} must pin search_path`);
+    assert.match(body, /security definer/, `${fn} runs as definer`);
+    assert.match(
+      budgetMigration,
+      new RegExp(`revoke all on function public\\.${fn}\\([^)]*\\)\\s*\\n?\\s*from public, anon, authenticated`, "s"),
+      `${fn} must be revoked from every browser role`,
+    );
+  }
   assert.ok(migrationFiles.includes(eventLayerMigrationName), "the Event layer migration is still present");
   assert.ok(migrationFiles.includes(birthdayMigrationName), "the birthdays migration is still present");
+  assert.ok(migrationFiles.includes(reminderMigrationName), "the reminder migration is still present");
+
+  // What 028 introduces, security-wise: it REPLACES `create_event`, which is a
+  // Global Admin write path. A replacement that quietly dropped its checks
+  // would be a privilege escalation with no diff worth noticing, so the
+  // replacement is held to the same standard as the original.
+  const createEventAt = occasionMigration.indexOf("create or replace function public.create_event(");
+  assert.ok(createEventAt > 0, "028 replaces create_event");
+  const createEventBody = occasionMigration.slice(createEventAt, occasionMigration.indexOf("$;", createEventAt));
+  assert.match(createEventBody, /is_app_admin\(\)/, "it must still check Global Admin");
+  assert.match(createEventBody, /current_app_member_id\(\)/, "and still require an active membership");
+  assert.match(createEventBody, /set search_path = ''/, "and still pin search_path");
+  assert.match(createEventBody, /security definer/, "and still run as definer");
+  assert.match(
+    occasionMigration,
+    /grant execute on function public\.create_event\(text, text, date, text, uuid, uuid\[\], uuid\[\]\) to authenticated;/,
+    "and be granted to signed-in sessions only",
+  );
+  assert.match(
+    occasionMigration,
+    /revoke all on function public\.create_event\([^)]*\) from public, anon;/,
+    "with anon revoked",
+  );
 
   // What 027 introduces, security-wise: one destructive function, which is the
   // only thing in the whole schema that can remove an event row.

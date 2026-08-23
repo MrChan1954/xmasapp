@@ -2,13 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CalendarDays, ShieldCheck } from "lucide-react";
+import { CalendarDays, Gift, ShieldCheck } from "lucide-react";
 import { useActiveRecipientCount, useFamily } from "../family-context";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventTypeMeta } from "@/lib/events.ts";
 import { cx } from "./cx";
 import { EVENTS_HOME, activeNavSection, navItemsFor } from "./nav-items";
-import { Ornament } from "./festive/ornaments";
 
 /**
  * Desktop navigation: a slim icon rail that expands on hover or keyboard focus.
@@ -39,7 +38,8 @@ export function IconRail() {
           {/* Glyph only, no filled tile: at 40px the tile read as a flat amber
               block and sat directly above the gold active-nav marker. */}
           <span aria-hidden className="flex h-10 w-10 shrink-0 items-center justify-center text-accent">
-            <Ornament name="tree" size={28} strokeWidth={1.6} />
+            {/* The app's mark, not Christmas's. Matches `top-bar.tsx`. */}
+            <Gift size={28} strokeWidth={1.6} aria-hidden />
           </span>
           <span className="min-w-0 opacity-0 transition-opacity duration-200 group-hover/rail:opacity-100 group-has-focus-visible/rail:opacity-100">
             <span className="block truncate font-display text-base font-semibold text-ink-900">Family Budget</span>

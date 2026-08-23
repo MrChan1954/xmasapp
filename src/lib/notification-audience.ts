@@ -25,7 +25,7 @@
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { contributorOwedSummary, pairKey, type NetOwedBalance } from "./owed.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { birthdayReminderNotification, giftIdeaAddedNotification, giftStatusNotification, owedToYouNotification, paymentAdminOverrideNotification, paymentAwaitingConfirmationNotification, paymentClaimedNotification, paymentRecordedNotification, paymentReviewNotification, purchaseAddedNotification, shortName, youOweNotification, type NotificationPayload } from "./notification-content.ts";
+import { birthdayBudgetMonthNotification, birthdayReminderNotification, giftIdeaAddedNotification, giftStatusNotification, owedToYouNotification, paymentAdminOverrideNotification, paymentAwaitingConfirmationNotification, paymentClaimedNotification, paymentRecordedNotification, paymentReviewNotification, purchaseAddedNotification, shortName, youOweNotification, type NotificationPayload } from "./notification-content.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { formatPennies } from "./currency.ts";
 
@@ -344,6 +344,43 @@ export type BirthdayReminderEvent = {
   stage: string;
   eventId: string | null;
 };
+
+export type BirthdayBudgetEvent = {
+  /** The one member this summary belongs to. */
+  appMemberId: string;
+  lines: Array<{ celebrantName: string; dateLabel: string; plannedPennies: number }>;
+  totalPennies: number;
+  monthLabel: string;
+};
+
+/**
+ * One person, and one person only.
+ *
+ * Unlike every other planner here, the audience is not derived by excluding an
+ * actor: a budget summary is about ONE contributor's own money, and the amount
+ * in it is theirs. Sending it to anybody else would be telling one family
+ * member what another has put aside.
+ *
+ * The `birthdays` preference still applies. Somebody who has turned birthday
+ * notifications off has turned this off too.
+ */
+export function planBirthdayBudgetNotifications(
+  event: BirthdayBudgetEvent,
+  members: NotifiableMember[],
+): PlannedNotification[] {
+  const member = members.find((candidate) => candidate.appMemberId === event.appMemberId);
+  if (!member || !member.preferences.birthdays) return [];
+  if (event.lines.length === 0 || event.totalPennies <= 0) return [];
+
+  return [{
+    appMemberId: member.appMemberId,
+    payload: birthdayBudgetMonthNotification({
+      lines: event.lines,
+      totalPennies: event.totalPennies,
+      monthLabel: event.monthLabel,
+    }),
+  }];
+}
 
 /**
  * Everyone active except the birthday person.

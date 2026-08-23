@@ -150,7 +150,7 @@ self.addEventListener("push", (event) => {
     payload = {};
   }
 
-  const title = typeof payload.title === "string" && payload.title ? payload.title : "Christmas Budget";
+  const title = typeof payload.title === "string" && payload.title ? payload.title : "Family Gift Planner";
   const body = typeof payload.body === "string" ? payload.body : "";
   const url = sameOriginPath(payload.url);
 

@@ -219,7 +219,7 @@ function DeviceState({
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm leading-6 text-ink-600">
           <li>Tap the Share button at the bottom of Safari.</li>
           <li>Choose <span className="font-semibold text-ink-900">Add to Home Screen</span>.</li>
-          <li>Open Christmas Budget from your Home Screen, then come back here.</li>
+          <li>Open Family Gift Planner from your Home Screen, then come back here.</li>
         </ol>
       </div>
     );

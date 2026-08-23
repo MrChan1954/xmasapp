@@ -53,7 +53,9 @@ const CATEGORY_ICONS: Record<string, typeof Bell> = {
  * that somehow carries no text at all must still say something, and must never
  * reduce to a bare timestamp.
  */
-const FALLBACK_TITLE = "Something happened in your family Christmas";
+// Event-neutral: this line stands in for a purchase, a payment, a gift idea or
+// a birthday reminder, and only one of those is about Christmas.
+const FALLBACK_TITLE = "Something happened in your family planning";
 
 export function NotificationBell() {
   const router = useRouter();

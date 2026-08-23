@@ -28,6 +28,8 @@ import { INPUT_LIMITS, validateDateInput, validateEnum, validateOptionalText, va
 export const EVENT_TYPES = [
   "christmas",
   "birthday",
+  "mothers_day",
+  "fathers_day",
   "easter",
   "wedding",
   "anniversary",
@@ -35,6 +37,31 @@ export const EVENT_TYPES = [
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];
+
+/**
+ * The occasions the Create Event form offers.
+ *
+ * Christmas and Birthday are deliberately absent.
+ *
+ *   Christmas is its own product area, and the family has one. Offering it here
+ *   invites a second, which would split the year's money across two events that
+ *   both call themselves Christmas.
+ *
+ *   A birthday belongs to a PERSON, and is started from Birthdays → that
+ *   person, where the date is already known and the celebrant cannot be
+ *   mistyped. Offering it here is how an event dated 1995 gets created by
+ *   somebody who meant to record a date of birth.
+ */
+export const SPECIAL_EVENT_TYPES = [
+  "mothers_day",
+  "fathers_day",
+  "easter",
+  "wedding",
+  "anniversary",
+  "other",
+] as const;
+
+export type SpecialEventType = (typeof SPECIAL_EVENT_TYPES)[number];
 
 export const EVENT_STATUSES = ["active", "archived"] as const;
 export type EventStatus = (typeof EVENT_STATUSES)[number];
@@ -81,6 +108,30 @@ const EVENT_TYPE_META: Record<EventType, EventTypeMeta> = {
     celebrantIsRecipient: false,
     celebrantContributes: true,
     usesYear: true,
+  },
+  mothers_day: {
+    type: "mothers_day",
+    label: "Mother's Day",
+    icon: "💐",
+    // Who it is for is DATA, not a rule. A family may buy for a mother, a
+    // grandmother, two of them, or somebody who is neither — the Global Admin
+    // chooses, and one active recipient gets the single-recipient screens
+    // automatically.
+    requiresCelebrant: false,
+    allowsCelebrant: false,
+    celebrantIsRecipient: false,
+    celebrantContributes: true,
+    usesYear: false,
+  },
+  fathers_day: {
+    type: "fathers_day",
+    label: "Father's Day",
+    icon: "🎣",
+    requiresCelebrant: false,
+    allowsCelebrant: false,
+    celebrantIsRecipient: false,
+    celebrantContributes: true,
+    usesYear: false,
   },
   birthday: {
     type: "birthday",
@@ -452,6 +503,23 @@ export type ValidatedEvent = {
  * name. The database still decides; this only decides what to say.
  */
 /**
+ * The four-digit year a name states, if it states exactly one.
+ *
+ * "Easter 2026" -> 2026. "Mum & Dad's 40th" -> null, because 40 is not a year.
+ * "Christmas 2025 and 2026" -> null: two years is somebody describing a span,
+ * not naming an occurrence, and refusing to guess is better than guessing.
+ *
+ * Bounded to plausible occasion years so a house number or a price cannot be
+ * mistaken for one.
+ */
+export function yearStatedInName(name: string): number | null {
+  const matches = [...name.matchAll(/\b(19\d\d|20\d\d|21\d\d)\b/gu)].map((match) => Number(match[1]));
+  if (matches.length !== 1) return null;
+  const [year] = matches;
+  return year >= 1900 && year <= 2200 ? year : null;
+}
+
+/**
  * A birthday event dated long ago is almost certainly a date of birth.
  *
  * @param eventDate the date on the form, `YYYY-MM-DD`
@@ -512,18 +580,34 @@ export function validateEventInput(input: EventInput): ValidationResult<Validate
     return { ok: false, error: `Choose whose ${meta.label.toLowerCase()} this is.` };
   }
 
+  const dateYear = Number(eventDate.value.slice(0, 4));
+
   // Christmas keeps its year because every existing screen, function and saved
   // link finds Christmas by it. Nothing else has one, so nothing else can
   // collide with it.
   let year: number | null = null;
   if (meta.usesYear) {
-    const rawYear = input.year ?? Number(eventDate.value.slice(0, 4));
+    const rawYear = input.year ?? dateYear;
     if (typeof rawYear !== "number" || !Number.isInteger(rawYear) || rawYear < 1900 || rawYear > 2999) {
       return { ok: false, error: "Enter the Christmas year." };
+    }
+    if (rawYear !== dateYear) {
+      return {
+        ok: false,
+        error: `This is Christmas ${rawYear}, but the date is in ${dateYear}. Put the year and the date in the same year.`,
+      };
     }
     year = rawYear;
   } else if (typeof input.year === "number" && Number.isInteger(input.year)) {
     return { ok: false, error: `Only Christmas events are identified by a year.` };
+  }
+
+  const namedYear = yearStatedInName(name.value);
+  if (namedYear !== null && namedYear !== dateYear) {
+    return {
+      ok: false,
+      error: `The name says ${namedYear} but the date is in ${dateYear}. Change one so they agree.`,
+    };
   }
 
   return {

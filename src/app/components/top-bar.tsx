@@ -1,12 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Gift } from "lucide-react";
 import type { ReactNode } from "react";
 import { AccountMenu } from "./account-menu";
 import { CommandPalette, SearchTrigger, useCommandPalette } from "./command-search";
 import { NotificationBell } from "./notification-bell";
-import { Ornament } from "./festive/ornaments";
 
 /**
  * Sticky page chrome. Carries the breadcrumb and title, the search affordance
@@ -33,11 +32,14 @@ export function TopBar({
           0 in a browser and on desktop. */}
       <header className="sticky top-0 z-30 border-b border-line bg-ground/85 pt-[env(safe-area-inset-top)] backdrop-blur-md">
         <div className="flex h-16 items-center gap-3 px-4 sm:px-6 lg:h-[72px] lg:px-8">
-          <Link href="/" className="flex shrink-0 items-center gap-2.5 lg:hidden" aria-label="Christmas Budget home">
+          <Link href="/" className="flex shrink-0 items-center gap-2.5 lg:hidden" aria-label="Family Gift Planner home">
             {/* Matches the desktop rail mark in `icon-rail.tsx`: glyph only, no
-                filled tile, so the logo is the same at every breakpoint. */}
+                filled tile, so the logo is the same at every breakpoint.
+
+                A gift rather than a tree: this button belongs to the app, not
+                to Christmas, and it is on the Birthdays calendar too. */}
             <span aria-hidden className="flex h-9 w-9 items-center justify-center text-accent">
-              <Ornament name="tree" size={26} strokeWidth={1.6} />
+              <Gift size={26} strokeWidth={1.6} aria-hidden />
             </span>
           </Link>
 

@@ -15,10 +15,12 @@ import type { MetadataRoute } from "next";
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
+    // `id` is the app's identity and stays "/". Renaming with the id fixed
+    // relabels the existing installation rather than offering a second one.
     id: "/",
-    name: "Christmas Budget",
-    short_name: "Christmas Budget",
-    description: "A simple Christmas gift budget planner.",
+    name: "Family Gift Planner",
+    short_name: "Family Gift Planner",
+    description: "Plan and share the cost of Christmas, birthdays and every other family occasion.",
     start_url: "/",
     scope: "/",
     display: "standalone",

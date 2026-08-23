@@ -23,6 +23,12 @@ const sql = read("supabase", "migrations", MIGRATION);
 const REMINDER_MIGRATION = "202608100027_two_stage_birthday_reminders_and_safe_event_deletion.sql";
 const reminderSql = read("supabase", "migrations", REMINDER_MIGRATION);
 
+const OCCASION_MIGRATION = "202608100028_add_mothers_and_fathers_day.sql";
+const occasionSql = read("supabase", "migrations", OCCASION_MIGRATION);
+
+const BUDGET_MIGRATION = "202608100029_add_monthly_birthday_budget_reminder.sql";
+const budgetSql = read("supabase", "migrations", BUDGET_MIGRATION);
+
 /** The body of one `create ... function public.<name>(` block. */
 function functionBody(name) {
   const start = sql.indexOf(`function public.${name}(`);
@@ -45,17 +51,52 @@ const ADMIN_WRITES = [
 // 1. Migration hygiene -- the same invariants every applied migration holds
 // ---------------------------------------------------------------------------
 
-test("026 and 027 are the two newest migrations, in that order", () => {
+test("026 to 029 are the four newest migrations, in that order", () => {
   const files = readdirSync(join(root, "supabase", "migrations")).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(files.at(-2), MIGRATION, "026 must be second-newest");
-  assert.equal(files.at(-1), REMINDER_MIGRATION, "027 must be the newest");
-  for (const prefix of ["202608100026", "202608100027"]) {
+  assert.equal(files.at(-4), MIGRATION, "026 must be fourth-newest");
+  assert.equal(files.at(-3), REMINDER_MIGRATION, "027 must be third-newest");
+  assert.equal(files.at(-2), OCCASION_MIGRATION, "028 must be second-newest");
+  assert.equal(files.at(-1), BUDGET_MIGRATION, "029 must be the newest");
+  for (const prefix of ["202608100026", "202608100027", "202608100028", "202608100029"]) {
     assert.equal(
       files.filter((name) => name.startsWith(prefix)).length,
       1,
       `there must be exactly one migration ${prefix.slice(-3)}`,
     );
   }
+});
+
+test("029 adds the budget reminder and touches no admin write path", () => {
+  const redefined = [...budgetSql.matchAll(/create or replace function public\.(\w+)\(/gu)]
+    .map((match) => match[1])
+    .sort();
+  assert.deepEqual(
+    redefined,
+    ["claim_birthday_budget_summary", "due_birthday_budget_summaries"],
+    "029 may define only its own two functions",
+  );
+  for (const untouched of ADMIN_WRITES) {
+    assert.ok(!redefined.includes(untouched), `${untouched} must be left exactly as it was`);
+  }
+  // The week and day reminders are a different feature and stay untouched.
+  assert.ok(!redefined.includes("due_birthday_reminders"), "the week/day sweep is not redefined");
+  assert.ok(!redefined.includes("claim_birthday_reminder"), "nor its claim");
+  assert.doesNotMatch(budgetSql, /drop table|truncate|delete from public\./iu, "it removes nothing");
+});
+
+test("028 adds two occasions and takes nothing away", () => {
+  // The only function it replaces is create_event, and only to widen a list.
+  const redefined = [...occasionSql.matchAll(/create or replace function public\.(\w+)\(/gu)]
+    .map((match) => match[1])
+    .sort();
+  assert.deepEqual(redefined, ["create_event"], "028 may replace create_event and nothing else");
+
+  for (const untouched of ADMIN_WRITES.filter((name) => name !== "create_event")) {
+    assert.ok(!redefined.includes(untouched), `${untouched} must be left exactly as it was`);
+  }
+  assert.doesNotMatch(occasionSql, /drop table|truncate|delete from public\./iu, "it removes nothing");
+  assert.doesNotMatch(occasionSql, /insert into public\.events[^;]*values[^;]*'mothers_day'[^;]*;/iu,
+    "and creates no event of its own outside its own end-state probe rollback");
 });
 
 test("every function it defines is search_path-pinned and explicitly granted", () => {
