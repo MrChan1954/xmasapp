@@ -366,6 +366,28 @@ export function isBirthdayOccurrence(event: Pick<EventSummary, "type">): boolean
 }
 
 /**
+ * Does this event have exactly one recipient, fixed, forever?
+ *
+ * ONLY A BIRTHDAY DOES. It is whose birthday it is: a second recipient is a
+ * mistake rather than a configuration, and the celebrant cannot be swapped out
+ * without the event becoming a different birthday.
+ *
+ * THE TEST IS THE EVENT TYPE, NEVER A POPULATED CELEBRANT. It used to be
+ * `celebrantPersonId !== null`, which quietly locked recipients on any event
+ * that happened to name somebody -- a wedding for the couple, an anniversary,
+ * a leaving do -- and left no way to add the second recipient those events
+ * legitimately have. Christmas, Easter, Halloween and every custom occasion
+ * keep fully editable recipients.
+ *
+ * How the screen READS (Gifts for one, People for several, setup for none) is
+ * a separate question, answered by `eventNavMode` from the recipient COUNT.
+ * This decides only whether the set may change at all.
+ */
+export function hasFixedSingleRecipient(event: Pick<EventSummary, "type">): boolean {
+  return isBirthdayOccurrence(event);
+}
+
+/**
  * The dashboard's three groups.
  *
  * Christmas is its own group because it is the thing this app was built for and

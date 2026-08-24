@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Cake, Plus } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { describeDaysAway, formatBirthday, nextBirthdayOccurrence, suggestedBirthdayEventName, type Birthday } from "@/lib/birthdays.ts";
+import { describeDaysAway, describeTurningAge, formatBirthday, nextBirthdayOccurrence, suggestedBirthdayEventName, type Birthday } from "@/lib/birthdays.ts";
 import { formatPennies } from "@/lib/currency";
 import { INPUT_LIMITS, parseMoneyToPennies } from "@/lib/input-validation";
 import { splitPenniesEqually } from "@/lib/recipient-allocations";
@@ -97,6 +97,11 @@ export function StartPlanningScreen({
   const totalsMatch = budgetPennies !== null && plannedTotal !== null && plannedTotal === budgetPennies;
 
   const next = birthday ? nextBirthdayOccurrence(birthday, `${year}-01-01`) : null;
+  // The age they turn on the occurrence being planned -- so the person setting
+  // a budget can see it is the 30th and not a 31st. Null when no year of birth
+  // is recorded, and then nothing is shown.
+  const turning = birthday ? describeTurningAge(birthday, year) : null;
+  const withTurning = (summary: string) => turning ? `${summary} · ${turning}` : summary;
 
   if (!birthday || !occurrenceDate) {
     return (
@@ -123,7 +128,7 @@ export function StartPlanningScreen({
         <PageHeader
           eyebrow="Birthdays"
           title={personName}
-          description={`${formatBirthday(birthday.month, birthday.day)}${next ? ` · ${describeDaysAway(next.daysAway)}` : ""}`}
+          description={withTurning(`${formatBirthday(birthday.month, birthday.day)}${next ? ` · ${describeDaysAway(next.daysAway)}` : ""}`)}
         />
         <Notice tone="info" className="mt-6">
           Nothing has been planned for {firstName}&apos;s {year} birthday yet. An admin starts the
@@ -193,7 +198,7 @@ export function StartPlanningScreen({
       <PageHeader
         eyebrow="Birthdays"
         title={`Start ${suggestedBirthdayEventName(personName, year)}`}
-        description={`${formatBirthday(birthday.month, birthday.day)} ${year}${next ? ` · ${describeDaysAway(next.daysAway)}` : ""}`}
+        description={withTurning(`${formatBirthday(birthday.month, birthday.day)} ${year}${next ? ` · ${describeDaysAway(next.daysAway)}` : ""}`)}
         actions={<ButtonLink href="/birthdays" variant="secondary" size="lg" className="w-full sm:w-auto">Cancel</ButtonLink>}
       />
 

@@ -363,6 +363,71 @@ test("a share that creates no obligation is never announced as an increase", asy
   assert.match(paige?.body ?? "", /This purchase adds £20\. You now owe Taylor £20 in total\./u);
 });
 
+/**
+ * THE CELEBRANT HEARS NOTHING ABOUT THEIR OWN BIRTHDAY.
+ *
+ * Before this, `planPurchaseNotifications` notified everybody who was not the
+ * ACTOR -- and the birthday person is not the actor. So a purchase for Taylor's
+ * birthday pushed "🎁 New purchase for Taylor — Jade added £45 of gifts for
+ * Taylor" to Taylor's own phone. The reminder planner had always excluded them;
+ * nothing else had.
+ *
+ * The fix is upstream of every planner: the celebrant is removed from the
+ * audience when the event is their birthday, so there is no planner left with a
+ * chance to forget.
+ */
+test("a purchase for somebody's birthday is never announced to them", async () => {
+  const store = familyStore({
+    events: [{ id: "evt", name: "A birthday", event_type: "birthday", event_date: "2027-01-15", celebrant_person_id: "p-paige" }],
+  });
+  const sender = recordingSender();
+  const report = await run(store, { sender });
+
+  // Four members: Taylor acted, Paige is the celebrant. Two remain.
+  assert.equal(report.audience, 2, "the actor AND the celebrant are both out");
+  assert.equal(report.inAppCreated, 2);
+
+  for (const row of store.notifications) {
+    assert.notEqual(row.app_member_id, "m-paige", "the celebrant gets no Notification Centre row");
+  }
+  for (const push of sender.sent) {
+    assert.ok(!push.endpoint.endsWith("/paige"), "and no push");
+  }
+
+  // The others still hear about it normally.
+  assert.deepEqual(
+    [...new Set(store.notifications.map((row) => row.app_member_id))].sort(),
+    ["m-jade", "m-kirsten"],
+  );
+});
+
+test("a gift idea for their own birthday is not announced to them either", async () => {
+  const store = familyStore({
+    events: [{ id: "evt", name: "A birthday", event_type: "birthday", event_date: "2027-01-15", celebrant_person_id: "p-paige" }],
+  });
+  const sender = recordingSender();
+  await run(store, { sender, kind: "gift_idea", subjectId: "idea-1" });
+
+  assert.ok(store.notifications.length > 0, "somebody was told");
+  for (const row of store.notifications) {
+    assert.notEqual(row.app_member_id, "m-paige");
+  }
+});
+
+test("the exclusion is birthday-only: Christmas is unchanged", async () => {
+  // The same fixture, the same person, an event that is not a birthday. A
+  // Christmas recipient is not a secret from themselves in this family, and a
+  // rule that fired on any celebrant would silence people on every other event.
+  const store = familyStore({
+    events: [{ id: "evt", name: "Christmas 2026", event_type: "christmas", year: 2026, celebrant_person_id: "p-paige" }],
+  });
+  const sender = recordingSender();
+  const report = await run(store, { sender });
+
+  assert.equal(report.audience, 3, "only the actor is excluded");
+  assert.ok(store.notifications.some((row) => row.app_member_id === "m-paige"));
+});
+
 test("a ledger whose columns do not exist still delivers to the family", async () => {
   // THE ACTUAL BUG. `notification_events.delivered_count` did not exist,
   // because migration 019 was never applied. The dispatcher read it, threw a

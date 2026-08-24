@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Archive, RotateCcw, Trash2 } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { eventTypeMeta, validateEventInput } from "@/lib/events.ts";
+import { eventTypeMeta, hasFixedSingleRecipient, validateEventInput } from "@/lib/events.ts";
 import { INPUT_LIMITS } from "@/lib/input-validation";
 import { describeSupabaseError, describeThrown } from "@/lib/supabase-error";
 import { createClient } from "@/utils/supabase/client";
@@ -221,11 +221,14 @@ export function EventSettingsScreen({
    * An event that names a celebrant is ABOUT that person.
    *
    * So it shows its one recipient and offers no way to add a second: a
-   * birthday with two recipients is a mistake, not a configuration. The test is
-   * the celebrant rather than the event type, so every single-celebrant event
-   * behaves the same way and no event type is named here.
+   * birthday with two recipients is a mistake, not a configuration.
+   *
+   * THE TEST IS THE EVENT TYPE. It used to be "does this event name a
+   * celebrant", which locked recipients on a wedding or an anniversary too --
+   * events that name somebody and may still legitimately gain a second
+   * recipient. `hasFixedSingleRecipient` is the one place that rule lives.
    */
-  const isAboutOnePerson = event.celebrantPersonId !== null;
+  const isAboutOnePerson = hasFixedSingleRecipient(event);
   const recipientChoices = isAboutOnePerson
     ? people.filter((person) => recipientPersonIds.includes(person.personId))
     : people;

@@ -6,7 +6,7 @@ import { formatPennies } from "@/lib/currency";
 import { purchaseProgressStatus, type PurchaseProgressStatus } from "@/lib/purchases";
 import type { BirthdayPlanning } from "@/utils/supabase/birthdays-server";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { DASHBOARD_BIRTHDAY_LIMIT, birthdayWorkspacePath, describeDaysAway, formatBirthday, type UpcomingBirthday } from "@/lib/birthdays.ts";
+import { SELF_PRIVATE_DETAIL, SELF_PRIVATE_HEADLINE, birthdayCardState, birthdayWorkspacePath, birthdaysWithinWindow, describeDaysAway, describeTurningAge, formatBirthday, type UpcomingBirthday } from "@/lib/birthdays.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventPath, eventTypeMeta, formatEventDate, groupDashboardEvents, type EventSummary } from "@/lib/events.ts";
 import { AppShell, PageHeader } from "./components/app-shell";
@@ -47,6 +47,7 @@ export function EventsDashboard({
   events,
   birthdays = [],
   planningByPerson = {},
+  viewerPersonId = null,
   today,
   isAdmin,
   error,
@@ -60,12 +61,13 @@ export function EventsDashboard({
    * "planning not started", never as a £0 budget somebody chose.
    */
   planningByPerson?: Record<string, BirthdayPlanning>;
+  /** The reader's own person, so their own card can say it is a surprise. */
+  viewerPersonId?: string | null;
   today: string;
   isAdmin: boolean;
   error?: string | null;
 }) {
   const { christmas, special } = groupDashboardEvents(events, today);
-  const nextBirthdays = birthdays.slice(0, DASHBOARD_BIRTHDAY_LIMIT);
   const nothingToShow = christmas.length === 0
     && special.upcoming.length === 0
     && special.past.length === 0
@@ -106,9 +108,10 @@ export function EventsDashboard({
 
       <EventSection title="Christmas" events={christmas} />
       <UpcomingBirthdaysSection
-        birthdays={nextBirthdays}
-        total={birthdays.length}
+        birthdays={birthdays}
+        today={today}
         planningByPerson={planningByPerson}
+        viewerPersonId={viewerPersonId}
         isAdmin={isAdmin}
       />
       <EventSection
@@ -123,24 +126,45 @@ export function EventsDashboard({
 }
 
 /**
- * The glance: the nearest few birthdays, straight from the permanent dates.
+ * The glance: birthdays close enough to do something about.
  *
- * No event is involved. December to January is handled by the ordering the
- * model already does — the next occurrence is computed from today, so on the
- * 30th of December a birthday on the 3rd of January is two entries above one in
- * the following November.
+ * ONE ROLLING CALENDAR MONTH, not the year. The front page answers "is anything
+ * coming up?", and a birthday in five months answers it with a yes that nobody
+ * can act on. `birthdaysWithinWindow` decides the cut, from the family's own
+ * date; the whole calendar stays one tap away behind "All birthdays".
+ *
+ * Filtering here rather than upstream is deliberate. The section is given every
+ * birthday the family has, so:
+ *
+ *   - the "All N birthdays" link can name the REAL total, not the windowed one;
+ *   - a family whose birthdays are all months away can be told that, instead of
+ *     seeing the same empty state as a family that has recorded none;
+ *   - the dashboard's "nothing planned at all" test still sees the truth.
+ *
+ * No event is involved, and December to January needs no special case: the next
+ * occurrence is computed from today, so on the 30th of December a birthday on
+ * the 3rd of January is four days away and inside the window.
  */
 function UpcomingBirthdaysSection({
   birthdays,
-  total,
+  today,
   planningByPerson,
+  viewerPersonId,
   isAdmin,
 }: {
+  /** EVERY birthday the family has recorded, ordered by how soon it falls. */
   birthdays: UpcomingBirthday[];
-  total: number;
+  today: string;
   planningByPerson: Record<string, BirthdayPlanning>;
+  viewerPersonId: string | null;
   isAdmin: boolean;
 }) {
+  // Everything in the window, uncapped: a birthday three weeks away is not
+  // less urgent for being fifth in the list.
+  const shown = birthdaysWithinWindow(birthdays, today);
+  // The next one the family has, whether or not it is close enough to show.
+  const nextOfAll = birthdays[0];
+
   return (
     <section className="mt-10">
       <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-2">
@@ -149,25 +173,30 @@ function UpcomingBirthdaysSection({
           href="/birthdays"
           className="min-h-11 text-xs font-semibold tracking-eyebrow text-accent uppercase inline-flex items-center gap-1"
         >
-          {total > birthdays.length ? `All ${total} birthdays` : "All birthdays"}
+          {birthdays.length > shown.length ? `All ${birthdays.length} birthdays` : "All birthdays"}
           <ChevronRight size={14} aria-hidden />
         </Link>
       </div>
       <GarlandRule className="mt-4" />
 
-      {birthdays.length === 0
+      {shown.length === 0
         ? (
           <p className="mt-5 text-sm text-ink-600">
-            No birthdays saved yet. Add them on the Birthdays page and they appear here.
+            {nextOfAll
+              // Nothing to do this month is worth saying plainly, and saying
+              // WHEN stops it reading as a screen that has failed to load.
+              ? `Nothing in the next month. Next up is ${nextOfAll.name} on ${formatBirthday(nextOfAll.birthday.month, nextOfAll.birthday.day)}.`
+              : "No birthdays saved yet. Add them on the Birthdays page and they appear here."}
           </p>
         )
         : (
           <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {birthdays.map((person) => (
+            {shown.map((person) => (
               <BirthdayCard
                 key={person.personId}
                 person={person}
                 planning={planningByPerson[person.personId]}
+                isSelf={person.personId === viewerPersonId}
                 isAdmin={isAdmin}
               />
             ))}
@@ -191,16 +220,45 @@ function UpcomingBirthdaysSection({
 function BirthdayCard({
   person,
   planning,
+  isSelf,
   isAdmin,
 }: {
   person: UpcomingBirthday;
   planning: BirthdayPlanning | undefined;
+  /**
+   * Is this the reader's own birthday? Then there is nothing to show and
+   * nothing to start, and the card says why.
+   *
+   * `planning` is already undefined here whatever the family has done, because
+   * row level security removed the event before this component existed. Without
+   * this flag the card would say "Planning not started yet" to the one person
+   * who must not be told either way.
+   */
+  isSelf: boolean;
   isAdmin: boolean;
 }) {
-  const status: PurchaseProgressStatus | null = planning
+  /**
+   * ONE STATE, DECIDED ONCE, BEFORE ANY FIGURE IS TOUCHED.
+   *
+   * `birthdayCardState` puts "this is my own birthday" ahead of every planning
+   * question, so there is no arrangement of budgets, gifts or ideas that can
+   * change what the reader's own card says -- and therefore nothing about the
+   * planning that the SHAPE of the card can leak.
+   */
+  const state = birthdayCardState({ isSelf, hasPlanning: planning !== undefined });
+  const isPrivate = state === "self_private";
+
+  // Every derived figure is gated on the state, not merely unused by the JSX.
+  // A badge computed from planning the reader may not see is a leak waiting for
+  // somebody to move one line.
+  const status: PurchaseProgressStatus | null = state === "planned" && planning
     ? purchaseProgressStatus(planning.spentPennies, planning.budgetPennies)
     : null;
-  const hasBudget = (planning?.budgetPennies ?? 0) > 0;
+  const hasBudget = state === "planned" && (planning?.budgetPennies ?? 0) > 0;
+
+  // The age is NOT planning. It follows from the date on the person and the
+  // occurrence already chosen for this card, so the reader sees their own.
+  const turning = describeTurningAge(person.birthday, person.next.year);
 
   return (
     <Link
@@ -224,13 +282,25 @@ function BirthdayCard({
               {describeDaysAway(person.next.daysAway)}
             </span>
           </p>
+          {/* The age they turn on THIS occurrence, and only when the year of
+              birth is recorded. No year means no age -- never a guess. */}
+          {turning && (
+            <p className="mt-1 text-xs font-semibold text-accent">{turning}</p>
+          )}
         </div>
         {person.next.isToday
           ? <Badge tone="success">Today</Badge>
           : status && <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>}
       </div>
 
-      {planning
+      {isPrivate
+        ? (
+          <div className="mt-4">
+            <p className="text-sm font-medium text-ink-700">🎁 {SELF_PRIVATE_HEADLINE}</p>
+            <p className="mt-1 text-xs text-ink-600">{SELF_PRIVATE_DETAIL}</p>
+          </div>
+        )
+        : planning
         ? (
           <div className="mt-4">
             <p className="text-sm font-semibold text-ink-900">
@@ -260,11 +330,18 @@ function BirthdayCard({
           </div>
         )}
 
-      <div className="mt-auto flex items-end justify-end pt-4">
-        <p className="text-xs font-semibold tracking-eyebrow text-accent uppercase">
-          {planning ? "Open →" : isAdmin ? "Start planning →" : "Open →"}
-        </p>
-      </div>
+      {/* NO CALL TO ACTION ON YOUR OWN BIRTHDAY. Not "Start planning", which
+          would invite somebody to buy their own present and would also reveal
+          that nothing had been started; and not "Open" either, which promises
+          something the reader cannot be shown. The card still links to the
+          person, where the privacy screen explains itself properly. */}
+      {!isPrivate && (
+        <div className="mt-auto flex items-end justify-end pt-4">
+          <p className="text-xs font-semibold tracking-eyebrow text-accent uppercase">
+            {planning ? "Open →" : isAdmin ? "Start planning →" : "Open →"}
+          </p>
+        </div>
+      )}
     </Link>
   );
 }

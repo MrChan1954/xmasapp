@@ -35,7 +35,7 @@ export default async function BirthdaysPage() {
       <BirthdaysScreen
         people={[]}
         birthdayEventsByPersonYear={{}}
-        isAdmin={false}
+        canEditBirthdays={false}
         today={londonToday()}
         // Deliberately not the thrown message: a server-side failure can carry
         // connection details, and this page is family-readable.
@@ -48,7 +48,7 @@ export default async function BirthdaysPage() {
     <BirthdaysScreen
       people={data.people}
       birthdayEventsByPersonYear={data.birthdayEventsByPersonYear}
-      isAdmin={data.isAdmin}
+      canEditBirthdays={data.canEditBirthdays}
       today={data.today}
     />
   );

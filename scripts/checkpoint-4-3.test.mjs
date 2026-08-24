@@ -8,6 +8,10 @@ import { fileURLToPath } from "node:url";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
 const APP = ["src", "app"];
+
+// The rule under test is a real function, so it is exercised as one rather than
+// only read as text.
+const { hasFixedSingleRecipient } = await import("../src/lib/events.ts");
 const BIRTHDAY_ROUTE = [...APP, "birthdays", "[personId]"];
 
 /**
@@ -186,16 +190,44 @@ test("no planning means the card says so, and never shows a budget of zero", () 
   const dashboard = read(...APP, "events-dashboard.tsx");
   assert.match(dashboard, /Planning not started yet/);
 
-  // The progress bar and the money line are both inside the `planning ?` arm,
-  // so an unplanned birthday cannot render "£0 of £0" and read like a decision
+  // The progress bar and the money line are both inside the `planning` arm, so
+  // an unplanned birthday cannot render "£0 of £0" and read like a decision
   // somebody made.
-  const card = dashboard.slice(dashboard.indexOf("function BirthdayCard"));
-  const arm = card.slice(card.indexOf("{planning"), card.indexOf("Planning not started yet"));
+  //
+  // Comments are stripped first. They legitimately QUOTE the copy below while
+  // explaining why it exists, and a doc comment that mentions "Planning not
+  // started yet" would otherwise be found before the branch that renders it.
+  const card = dashboard
+    .slice(dashboard.indexOf("function BirthdayCard"))
+    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, "");
+
+  // Sliced in order. The private arm comes first, the planned arm after it, and
+  // the not-started arm last -- searching the whole component for ": planning"
+  // would match the `hasPlanning: planning` argument in the state derivation
+  // and hand back an empty arm that passes every negative assertion.
+  const branch = card.indexOf("{isPrivate");
+  const planned = card.indexOf(": planning", branch);
+  const notStarted = card.indexOf("Planning not started yet", planned);
+  assert.ok(branch > 0 && planned > branch && notStarted > planned, "the card has three arms, in that order");
+
+  const arm = card.slice(planned, notStarted);
   assert.ok(arm.includes("FinancialProgressBar"), "the bar belongs to the planned arm");
   assert.ok(arm.includes("formatPennies"), "so does the money");
 
+  // And the reader's OWN birthday is a third state, ahead of both: not "£0",
+  // and not "not started" either, because saying "not started" to the celebrant
+  // would be a statement about their own presents that may well be false.
+  const privateArm = card.slice(branch, planned);
+  assert.ok(privateArm.includes("SELF_PRIVATE_HEADLINE"), "the celebrant gets the required sentence");
+  assert.ok(!privateArm.includes("Planning not started yet"), "and never the not-started one");
+  assert.ok(!privateArm.includes("formatPennies"), "never shown a figure");
+  assert.ok(!privateArm.includes("FinancialProgressBar"), "nor a progress bar");
+
   // And the bar itself only appears when a budget was actually set.
-  assert.match(card, /const hasBudget = \(planning\?\.budgetPennies \?\? 0\) > 0;/);
+  assert.ok(
+    card.includes('const hasBudget = state === "planned" && (planning?.budgetPennies ?? 0) > 0;'),
+    "the bar's own guard is gated on the state too, not just on a budget being set",
+  );
   assert.match(card, /\{hasBudget && \(\s*\n\s*<div/);
 });
 
@@ -460,20 +492,22 @@ test("removing somebody from the pool changes nothing already planned", () => {
 // An event about one person takes exactly one recipient
 // ---------------------------------------------------------------------------
 
-test("a celebrant event never offers Add recipient", () => {
+test("a BIRTHDAY never offers Add recipient", () => {
   const people = read(...APP, "people", "people-screen.tsx");
-  assert.match(people, /const addButton = isAdmin && celebrantPersonId === null \? \(/);
-  assert.match(people, /const addForm = isAdmin && celebrantPersonId === null && adding \? \(/);
+  assert.match(people, /const addButton = isAdmin && fixedRecipientPersonId === null \? \(/);
+  assert.match(people, /const addForm = isAdmin && fixedRecipientPersonId === null && adding \? \(/);
 
+  // The route supplies that prop from the event TYPE, so an event that merely
+  // names somebody -- a wedding, an anniversary -- does not get locked.
   const route = read(...APP, "events", "[eventId]", "people", "page.tsx");
-  assert.match(route, /celebrantPersonId=\{event\.celebrantPersonId\}/);
+  assert.match(route, /hasFixedSingleRecipient\(event\) \? event\.celebrantPersonId : null/);
 
   const settings = read(...APP, "events", "[eventId]", "settings", "settings-screen.tsx");
-  assert.match(settings, /const isAboutOnePerson = event\.celebrantPersonId !== null;/);
+  assert.match(settings, /const isAboutOnePerson = hasFixedSingleRecipient\(event\);/);
   assert.match(settings, /disabled=\{busy \|\| on \|\| isAboutOnePerson\}/);
 });
 
-test("that rule is decided by the celebrant, never by the event type", () => {
+test("that rule is decided by the event TYPE, and lives in exactly one place", () => {
   // The People screen has no event type at all, so it could not branch on one
   // even if somebody wanted to.
   const people = read(...APP, "people", "people-screen.tsx");
@@ -482,21 +516,33 @@ test("that rule is decided by the celebrant, never by the event type", () => {
     assert.ok(!peopleLogic.includes(literal), `people-screen must not branch on ${literal}`);
   }
 
-  // Settings does read `event.type` — for the delete destination and for a
-  // hint about the person's saved birthday, both of which are genuinely about
-  // birthdays. What must NOT depend on it is the single-recipient rule, so the
-  // derivation itself is pinned to the celebrant.
+  // Nor does Settings decide it locally. It calls the shared helper, so the
+  // string "birthday" appears in exactly one place in the whole application and
+  // both screens cannot drift apart.
   const settings = read(...APP, "events", "[eventId]", "settings", "settings-screen.tsx");
   const derivation = settings.slice(
     settings.indexOf("const isAboutOnePerson"),
     settings.indexOf("const addRecipient"),
   );
   assert.ok(derivation.length > 0, "the derivation must exist");
+  assert.match(derivation, /hasFixedSingleRecipient\(event\)/);
   assert.ok(
-    !/event\.type/u.test(derivation),
-    "isAboutOnePerson and recipientChoices must not consult the event type",
+    !/"birthday"|'birthday'/u.test(derivation),
+    "the derivation must ask the helper, not compare a type string itself",
   );
-  assert.match(derivation, /event\.celebrantPersonId !== null/);
+
+  // And the helper is the single owner of the rule.
+  const events = read("src", "lib", "events.ts");
+  assert.match(events, /export function hasFixedSingleRecipient\(event: Pick<EventSummary, "type">\): boolean \{/);
+  assert.match(events, /return isBirthdayOccurrence\(event\);/);
+
+  // The negative case is the whole reason this changed: an event that names a
+  // celebrant but is NOT a birthday keeps editable recipients.
+  const nonBirthday = { type: "wedding" };
+  assert.equal(hasFixedSingleRecipient(nonBirthday), false, "a wedding may add a second recipient");
+  assert.equal(hasFixedSingleRecipient({ type: "christmas" }), false);
+  assert.equal(hasFixedSingleRecipient({ type: "other" }), false);
+  assert.equal(hasFixedSingleRecipient({ type: "birthday" }), true);
 });
 
 // ---------------------------------------------------------------------------
@@ -754,11 +800,32 @@ function migrationsMatching(number) {
     .filter((file) => (/^\d{8}(\d{4})_/u.exec(file)?.[1] ?? "").endsWith(number));
 }
 
-/** The single migration that introduces `symbol`. */
+/**
+ * The single migration that INTRODUCES `symbol`.
+ *
+ * DEFINITIONS ONLY. This used to match any mention, which quietly turned
+ * "exactly one migration" into a promise that no later migration would ever
+ * refer to the symbol again -- so a preflight check reading
+ * `to_regproc('public.set_family_contributor')`, or a new function whose name
+ * merely begins with an existing one, broke a test about ownership. Referring
+ * to something is not owning it.
+ *
+ * Plain string matching rather than a regex: the three shapes a definition
+ * takes here are fixed, and they read better than an escaped pattern.
+ */
 function ownerOf(symbol) {
+  const name = symbol.toLowerCase();
+  const introduces = (sql) => {
+    const text = sql.toLowerCase();
+    return text.includes(`add column if not exists ${name} `)
+      || text.includes(`add column ${name} `)
+      || text.includes(`create or replace function public.${name}(`)
+      || text.includes(`create function public.${name}(`);
+  };
+
   const files = readdirSync(join(root, "supabase", "migrations"))
     .filter((file) => file.endsWith(".sql"))
-    .filter((file) => read("supabase", "migrations", file).includes(symbol));
+    .filter((file) => introduces(read("supabase", "migrations", file)));
   assert.equal(files.length, 1, `${symbol} must be introduced by exactly one migration, found ${files.length}`);
   return files[0];
 }

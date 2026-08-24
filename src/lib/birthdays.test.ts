@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { REMINDER_STAGES, birthdayOccurrence, describeDaysAway, dueReminderStages, formatBirthday, isValidBirthday, isValidBirthYear, nextBirthdayOccurrence, peopleWithoutBirthdays, suggestedBirthdayEventName, upcomingBirthdays, type PersonBirthday } from "./birthdays.ts";
+import { MILESTONE_AGES, REMINDER_STAGES, SELF_PRIVATE_DETAIL, SELF_PRIVATE_HEADLINE, addCalendarMonths, ageOnOccurrence, birthdayCardState, birthdayOccurrence, birthdaysWithinWindow, describeDaysAway, describeTurningAge, dueReminderStages, formatBirthday, isMilestoneAge, isValidBirthday, isValidBirthYear, nextBirthdayOccurrence, peopleWithoutBirthdays, personBirthdayFromRow, suggestedBirthdayEventName, upcomingBirthdays, type PersonBirthday } from "./birthdays.ts";
 
 // ---------------------------------------------------------------------------
 // What this file is for
@@ -320,6 +320,304 @@ test("a suggested event name says whose birthday and which year", () => {
 // ---------------------------------------------------------------------------
 // 7. The model holds no birthdays of its own
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// A card's state, and the row it starts from
+//
+// Two things are proven here that a helper-only test cannot: that the year of
+// birth survives the conversion the LOADERS actually use, and that "this is my
+// own birthday" is a different state from "nobody has started this".
+// ---------------------------------------------------------------------------
+
+test("the age survives the conversion the loaders actually use", () => {
+  // The live example: a September birthday read from the database on a day in
+  // August, arriving as the sentence on the card. This starts at a `people`
+  // ROW, not at a hand-made object, because the field most easily lost is the
+  // optional one and losing it is silent.
+  const row = { id: "p-1", name: "Ana", birthday_month: 9, birthday_day: 10, birthday_year: 2003 };
+  const [card] = upcomingBirthdays([personBirthdayFromRow(row)], "2026-08-24");
+
+  assert.equal(card.next.date, "2026-09-10");
+  assert.equal(card.next.year, 2026);
+  assert.equal(describeDaysAway(card.next.daysAway), "17 days away");
+  assert.equal(describeTurningAge(card.birthday, card.next.year), "Turning 23");
+  assert.deepEqual(birthdaysWithinWindow([card], "2026-08-24"), [card], "and it is on the dashboard");
+});
+
+test("a row with no year of birth loses the age and nothing else", () => {
+  const row = { id: "p-1", name: "Ana", birthday_month: 9, birthday_day: 10, birthday_year: null };
+  const person = personBirthdayFromRow(row);
+  assert.deepEqual(person.birthday, { month: 9, day: 10, year: null }, "the DATE still arrives");
+
+  const [card] = upcomingBirthdays([person], "2026-08-24");
+  assert.equal(describeTurningAge(card.birthday, card.next.year), null);
+  assert.equal(describeDaysAway(card.next.daysAway), "17 days away", "the rest of the card is unaffected");
+});
+
+test("a row with no month or day is somebody with no birthday, not an error", () => {
+  for (const row of [
+    { id: "p", name: "Ana", birthday_month: null, birthday_day: null, birthday_year: null },
+    { id: "p", name: "Ana", birthday_month: 9, birthday_day: null, birthday_year: 2003 },
+    { id: "p", name: "Ana", birthday_month: undefined, birthday_day: undefined },
+  ]) {
+    assert.equal(personBirthdayFromRow(row).birthday, null, JSON.stringify(row));
+  }
+  // And the identity always survives, so they can still be listed as missing.
+  assert.equal(personBirthdayFromRow({ id: "p-9", name: "Ana", birthday_month: null, birthday_day: null }).personId, "p-9");
+});
+
+test("a birthday already gone this year takes NEXT year's age", () => {
+  const row = { id: "p-1", name: "Ana", birthday_month: 3, birthday_day: 1, birthday_year: 2003 };
+  const person = personBirthdayFromRow(row);
+
+  // Before it: this year's occurrence, so this year's age.
+  const [before] = upcomingBirthdays([person], "2026-02-28");
+  assert.equal(before.next.year, 2026);
+  assert.equal(describeTurningAge(before.birthday, before.next.year), "Turning 23");
+
+  // The day after: next year's occurrence, and one year older. Nothing stored
+  // changed -- only the day the question was asked.
+  const [after] = upcomingBirthdays([person], "2026-03-02");
+  assert.equal(after.next.year, 2027);
+  assert.equal(describeTurningAge(after.birthday, after.next.year), "Turning 24");
+});
+
+test("your own birthday is a different state from one nobody has started", () => {
+  // The distinction this type exists for. Row level security hides the
+  // reader's own planning, so `hasPlanning` is false for them WHATEVER the
+  // family has done -- and read naively that is indistinguishable from nobody
+  // having started.
+  assert.equal(birthdayCardState({ isSelf: false, hasPlanning: false }), "not_started");
+  assert.equal(birthdayCardState({ isSelf: false, hasPlanning: true }), "planned");
+
+  // Self wins over both, so the card cannot leak the planning state by which
+  // branch it renders.
+  assert.equal(birthdayCardState({ isSelf: true, hasPlanning: false }), "self_private");
+  assert.equal(birthdayCardState({ isSelf: true, hasPlanning: true }), "self_private");
+
+  // Stated as the property rather than the four cases: for the reader's own
+  // birthday, planning makes no difference at all.
+  assert.equal(
+    birthdayCardState({ isSelf: true, hasPlanning: true }),
+    birthdayCardState({ isSelf: true, hasPlanning: false }),
+    "self-private must not vary with planning state",
+  );
+});
+
+test("the private copy is the required sentence, and not the not-started one", () => {
+  assert.equal(SELF_PRIVATE_HEADLINE, "You can't view your own birthday gifts");
+  assert.match(SELF_PRIVATE_DETAIL, /surprise/u);
+  assert.doesNotMatch(SELF_PRIVATE_HEADLINE, /not started/iu);
+  assert.doesNotMatch(SELF_PRIVATE_DETAIL, /not started/iu);
+  for (const copy of [SELF_PRIVATE_HEADLINE, SELF_PRIVATE_DETAIL]) {
+    assert.doesNotMatch(copy, /£|budget|spent|gift count|idea/iu, "the copy itself must reveal nothing");
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The age somebody turns
+//
+// The card is about an OCCURRENCE, so the age on it is the age at that
+// occurrence -- not the age today. The two differ for two months of every year,
+// on exactly the card that matters most.
+// ---------------------------------------------------------------------------
+
+test("the age is the one they turn on that occurrence, not their age today", () => {
+  const born = { month: 11, day: 6, year: 1996 };
+
+  // 24 August 2026: they are 29 today, and the coming birthday is their 30th.
+  assert.equal(ageOnOccurrence(born, occurrence(born, "2026-08-24").year), 30);
+
+  // 7 November 2026, the day after: the coming birthday is now next year's, and
+  // the answer moves on by one without any stored value changing.
+  assert.equal(ageOnOccurrence(born, occurrence(born, "2026-11-07").year), 31);
+
+  // On the day itself, it is today's birthday -- still the 30th.
+  assert.equal(ageOnOccurrence(born, occurrence(born, "2026-11-06").year), 30);
+});
+
+test("an unknown year of birth means no age, never a guess", () => {
+  assert.equal(ageOnOccurrence({ month: 11, day: 6, year: null }, 2026), null);
+  assert.equal(describeTurningAge({ month: 11, day: 6, year: null }, 2026), null);
+
+  // And impossible data is unknown too, rather than a negative or absurd age.
+  assert.equal(ageOnOccurrence({ month: 1, day: 1, year: 2030 }, 2026), null, "born in the future");
+  assert.equal(ageOnOccurrence({ month: 1, day: 1, year: 1700 }, 2026), null, "older than anybody");
+  assert.equal(ageOnOccurrence({ month: 1, day: 1, year: 2026 }, 2026), 0, "a first birthday is zero, and is real");
+});
+
+test("milestones get an emoji, and change nothing else", () => {
+  const at = (age: number) => describeTurningAge({ month: 6, day: 1, year: 2026 - age }, 2026);
+
+  assert.equal(at(30), "Turning 30 🎉");
+  assert.equal(at(18), "Turning 18 🎉");
+  assert.equal(at(100), "Turning 100 🎉");
+  assert.equal(at(31), "Turning 31");
+  assert.equal(at(29), "Turning 29");
+
+  // Exactly this list, so a milestone cannot quietly appear or disappear.
+  assert.deepEqual([...MILESTONE_AGES], [18, 21, 30, 40, 50, 60, 70, 80, 90, 100]);
+  for (const age of MILESTONE_AGES) assert.equal(isMilestoneAge(age), true, String(age));
+  for (const age of [0, 17, 19, 25, 35, 99, 101]) assert.equal(isMilestoneAge(age), false, String(age));
+  assert.equal(isMilestoneAge(null), false);
+});
+
+test("a 29 February birthday still gets the right age in a non-leap year", () => {
+  // The occurrence is observed on 28 February 2027, but the YEAR is 2027 and
+  // the age follows the year, not the observed day.
+  const born = { month: 2, day: 29, year: 2000 };
+  const next = occurrence(born, "2027-01-01");
+  assert.equal(next.date, "2027-02-28", "observed on the 28th");
+  assert.equal(next.year, 2027);
+  assert.equal(ageOnOccurrence(born, next.year), 27);
+});
+
+// ---------------------------------------------------------------------------
+// The dashboard's one-month window
+//
+// The front page shows what needs attention now; /birthdays shows everything.
+// The cut is a ROLLING CALENDAR MONTH, which is what somebody means by "the
+// next month" and is not the same as thirty days -- so the arithmetic gets its
+// own tests rather than being trusted.
+// ---------------------------------------------------------------------------
+
+test("one calendar month later is the same day of the month, not thirty days later", () => {
+  // 31 days, and 28: both are one month.
+  assert.equal(addCalendarMonths("2026-08-24", 1), "2026-09-24");
+  assert.equal(addCalendarMonths("2027-02-28", 1), "2027-03-28");
+
+  // Thirty days from 24 August is 23 September, so a 30-day approximation
+  // would silently drop a birthday on the 24th. This is the difference the
+  // window is built on.
+  assert.notEqual(addCalendarMonths("2026-08-24", 1), "2026-09-23");
+
+  // December to January carries the year with no special case.
+  assert.equal(addCalendarMonths("2026-12-15", 1), "2027-01-15");
+  assert.equal(addCalendarMonths("2026-12-31", 1), "2027-01-31");
+
+  // And it is arithmetic, not a lookup: several months, and none at all.
+  assert.equal(addCalendarMonths("2026-08-24", 0), "2026-08-24");
+  assert.equal(addCalendarMonths("2026-11-30", 3), "2027-02-28");
+});
+
+test("a short month clamps to its last day rather than spilling into the next", () => {
+  // The classic bug: Date's own month arithmetic turns 31 January into 3
+  // March, so a month-long window swallows the first days of March and a
+  // February birthday can fall outside a window that starts in January.
+  assert.equal(addCalendarMonths("2027-01-31", 1), "2027-02-28");
+  assert.equal(addCalendarMonths("2028-01-31", 1), "2028-02-29", "leap year gets the 29th");
+  assert.equal(addCalendarMonths("2027-01-30", 1), "2027-02-28");
+  assert.equal(addCalendarMonths("2027-03-31", 1), "2027-04-30");
+
+  // The clamp is the same rule the leap-day policy already uses, so a window
+  // and the occurrences inside it round dates identically.
+  assert.equal(birthdayOccurrence(2, 29, 2027), "2027-02-28");
+});
+
+test("a date that is not a date produces nothing, rather than a guess", () => {
+  for (const bad of ["", "not-a-date", "2026-13-01", "2026-02-30"]) {
+    assert.equal(addCalendarMonths(bad, 1), null, bad);
+  }
+  assert.equal(addCalendarMonths("2026-08-24", 1.5), null, "whole months only");
+});
+
+
+test("the dashboard window includes today and the day exactly one month out", () => {
+  const today = "2026-08-24";
+  const people = [
+    person("a", "Ana", { month: 8, day: 24 }),  // today
+    person("b", "Ben", { month: 8, day: 31 }),  // 7 days away
+    person("c", "Cara", { month: 9, day: 24 }), // exactly one calendar month
+    person("d", "Dev", { month: 9, day: 25 }),  // one day past the window
+    person("e", "Eve", { month: 12, day: 1 }),  // months away
+  ];
+  const shown = birthdaysWithinWindow(upcomingBirthdays(people, today), today)
+    .map((entry: { name: string }) => entry.name);
+
+  // Both ends are inclusive: a birthday today is the most urgent thing on the
+  // page, and the boundary day is the one the window is named after.
+  assert.deepEqual(shown, ["Ana", "Ben", "Cara"]);
+  assert.ok(!shown.includes("Dev"), "one day past the month is past the month");
+  assert.ok(!shown.includes("Eve"));
+});
+
+test("the window follows the calendar across a year boundary", () => {
+  const today = "2026-12-20";
+  const people = [
+    person("a", "Ana", { month: 12, day: 25 }), // 5 days away, this year
+    person("b", "Ben", { month: 1, day: 5 }),   // next year, inside the window
+    person("c", "Cara", { month: 1, day: 20 }), // next year, exactly a month
+    person("d", "Dev", { month: 1, day: 21 }),  // next year, just outside
+    person("e", "Eve", { month: 11, day: 30 }), // eleven months away
+  ];
+  const shown = birthdaysWithinWindow(upcomingBirthdays(people, today), today)
+    .map((entry: { name: string }) => entry.name);
+
+  assert.deepEqual(shown, ["Ana", "Ben", "Cara"], "December into January needs no special case");
+  assert.ok(!shown.includes("Dev"));
+  assert.ok(!shown.includes("Eve"), "a birthday just gone is eleven months off, not last month");
+});
+
+
+test("a window that starts in a long month ends correctly in a short one", () => {
+  // 31 January through 28 February. A 30-day window would end on 2 March and
+  // wrongly include a 1 March birthday; naive month arithmetic would do the
+  // same by landing on 3 March.
+  const today = "2027-01-31";
+  const people = [
+    person("a", "Ana", { month: 2, day: 28 }),  // the last day of the window
+    person("b", "Ben", { month: 3, day: 1 }),   // the day after it
+    person("c", "Cara", { month: 2, day: 29 }), // observed on the 28th in 2027
+  ];
+  const shown = birthdaysWithinWindow(upcomingBirthdays(people, today), today)
+    .map((entry: { name: string }) => entry.name);
+
+  assert.deepEqual(shown, ["Ana", "Cara"], "the 29 February birthday is observed inside the window");
+  assert.ok(!shown.includes("Ben"), "1 March is outside a window ending 28 February");
+
+  // The same start date in a leap year reaches one day further, because
+  // February does.
+  const leap = birthdaysWithinWindow(upcomingBirthdays(people, "2028-01-31"), "2028-01-31")
+    .map((entry: { name: string }) => entry.name);
+  assert.deepEqual(leap, ["Ana", "Cara"], "29 February exists in 2028 and is the window's last day");
+});
+
+test("the window filters a list and changes nothing in it", () => {
+  // The dashboard hides birthdays. It must never be capable of losing one.
+  const today = "2026-08-24";
+  const people = [
+    person("a", "Ana", { month: 8, day: 25 }),
+    person("b", "Ben", { month: 12, day: 1 }),
+  ];
+  const all = upcomingBirthdays(people, today);
+  const before = structuredClone(all);
+
+  const shown = birthdaysWithinWindow(all, today);
+
+  assert.equal(shown.length, 1);
+  assert.deepEqual(all, before, "the source list is untouched");
+  assert.equal(all.length, 2, "and nothing was removed from it");
+  assert.notEqual(shown, all, "a new array, not the same one filtered in place");
+
+  // The people it was built from are unchanged too: no birthday was edited,
+  // cleared or reordered by looking at the dashboard.
+  assert.deepEqual(people.map((entry) => entry.birthday), [
+    { month: 8, day: 25, year: null },
+    { month: 12, day: 1, year: null },
+  ]);
+
+  // And the full list -- what /birthdays renders -- still has everybody.
+  assert.deepEqual(
+    upcomingBirthdays(people, today).map((entry: { name: string }) => entry.name),
+    ["Ana", "Ben"],
+  );
+});
+
+test("an unusable today hides everything rather than showing the wrong month", () => {
+  const people = [person("a", "Ana", { month: 8, day: 25 })];
+  const all = upcomingBirthdays(people, "2026-08-24");
+  assert.deepEqual(birthdaysWithinWindow(all, "nonsense"), []);
+});
 
 test("no real family birthday is hard-coded anywhere in this module", () => {
   // Checkpoint 4's standing instruction: the real dates are entered through

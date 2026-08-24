@@ -124,9 +124,88 @@ export function nextBirthdayOccurrence(
   return { date, year: Number(date.slice(0, 4)), daysAway, isToday: daysAway === 0 };
 }
 
+/**
+ * The age somebody turns on a GIVEN occurrence -- not their age today.
+ *
+ * The distinction is the whole point. On 24 August 2026, somebody born on
+ * 6 November 1996 is 29; the card is about 6 November 2026, when they turn 30.
+ * And once that birthday has passed, the card is about November 2027 and the
+ * answer becomes 31. Taking "current age" would show the wrong number for two
+ * months of every year, and the wrong number on the card that matters most.
+ *
+ * `birthday_year` is optional and stays optional. Unknown means unknown: this
+ * returns null rather than guessing, and every caller omits the age entirely.
+ * A birth year in the future, or one that would make somebody negative, is
+ * treated as unknown too -- it is bad data, not a fact about a person.
+ */
+export function ageOnOccurrence(birthday: Birthday, occurrenceYear: number): number | null {
+  if (birthday.year === null || !Number.isInteger(birthday.year)) return null;
+  if (!Number.isInteger(occurrenceYear)) return null;
+  const age = occurrenceYear - birthday.year;
+  return age >= 0 && age <= 150 ? age : null;
+}
+
+/**
+ * The birthdays a family makes a fuss of.
+ *
+ * Presentation only. Nothing in this list changes a budget, a contribution, a
+ * reminder or any other behaviour -- a milestone is a reason to add an emoji,
+ * not a reason for the software to decide anything about money.
+ */
+export const MILESTONE_AGES: readonly number[] = [18, 21, 30, 40, 50, 60, 70, 80, 90, 100];
+
+export function isMilestoneAge(age: number | null): boolean {
+  return age !== null && MILESTONE_AGES.includes(age);
+}
+
+/**
+ * "Turning 30 🎉", "Turning 31", or nothing at all.
+ *
+ * One place, so the dashboard card, the Birthdays list and the Start Planning
+ * summary cannot drift into three slightly different sentences.
+ */
+export function describeTurningAge(birthday: Birthday, occurrenceYear: number): string | null {
+  const age = ageOnOccurrence(birthday, occurrenceYear);
+  if (age === null) return null;
+  return isMilestoneAge(age) ? `Turning ${age} 🎉` : `Turning ${age}`;
+}
+
 /** Whole days from one calendar date to another. Both are dates, never instants. */
 export function daysBetween(from: string, to: string): number {
   return Math.round((Date.UTC(...parts(to)) - Date.UTC(...parts(from))) / 86_400_000);
+}
+
+/**
+ * The same day-of-month, some whole number of CALENDAR months later.
+ *
+ * NOT "30 days". A rolling month is what somebody means by "the next month",
+ * and the two disagree eight times a year:
+ *
+ *   24 August    + 1 month -> 24 September   (31 days later)
+ *   28 February  + 1 month -> 28 March       (28 days later)
+ *   15 December  + 1 month -> 15 January     (a year rollover, no special case)
+ *
+ * SHORT MONTHS CLAMP, exactly as a birthday does. 31 January + 1 month is 28
+ * February, or the 29th in a leap year -- never 2 or 3 March, which is what
+ * `Date`'s own month arithmetic produces and is the classic way a month-long
+ * window silently swallows the first days of the month after next.
+ *
+ * The clamp is the same rule and the same helper as `birthdayOccurrence`'s leap
+ * policy, so the window and the occurrences it contains round dates the same
+ * way rather than nearly the same way.
+ */
+export function addCalendarMonths(isoDate: string, months: number): string | null {
+  const valid = validateDateInput(isoDate);
+  if (!valid.ok || !Number.isInteger(months)) return null;
+
+  const [year, monthIndex, day] = parts(valid.value);
+
+  // Months since year zero, so December -> January carries with no branch.
+  const absolute = year * 12 + monthIndex + months;
+  const targetYear = Math.floor(absolute / 12);
+  const targetMonth = absolute - targetYear * 12 + 1;
+
+  return `${targetYear}-${pad(targetMonth)}-${pad(Math.min(day, daysInMonth(targetMonth, targetYear)))}`;
 }
 
 /**
@@ -174,15 +253,32 @@ export const REMINDER_STAGES: Array<{
   { stage: "one_day", label: "tomorrow", subtract: { months: 0, days: 1 } },
 ];
 
-/**
- * How many birthdays the dashboard shows at a glance.
+/*
+ * THERE IS DELIBERATELY NO DASHBOARD BIRTHDAY CAP.
  *
- * Four, because that is one row on a wide screen and two on a phone: enough to
- * answer "is anything coming up?" without the front page turning into a list.
- * Everything else is one tap away on the Birthdays page, which is the full
- * system rather than the glance.
+ * There used to be one: four cards, because the front page listed the whole
+ * year and would otherwise have become a list. The one-month window replaced
+ * the reason for it. Everything inside that window is imminent by definition,
+ * and hiding the fifth of five birthdays in the next four weeks would drop the
+ * one somebody had least time to plan for -- which is the opposite of what a
+ * front page is for.
+ *
+ * A count-based cap and a time-based window solve the same problem; keeping
+ * both means the window quietly stops being the rule.
  */
-export const DASHBOARD_BIRTHDAY_LIMIT = 4;
+
+/**
+ * How far ahead the dashboard looks: ONE ROLLING CALENDAR MONTH.
+ *
+ * The front page is for what needs attention now, not for the family's annual
+ * calendar. A birthday five months away is real and worth recording, but it is
+ * not something anybody can act on today, and nineteen people's worth of them
+ * buried the two things that were.
+ *
+ * The whole list stays one tap away behind "All birthdays", which is the full
+ * system rather than the glance -- and nothing is filtered out of THAT.
+ */
+export const DASHBOARD_BIRTHDAY_WINDOW_MONTHS = 1;
 
 /** The person's birthday workspace: their planning, not an event id. */
 export function birthdayWorkspacePath(personId: string): string {
@@ -245,6 +341,85 @@ export type PersonBirthday = {
   birthday: Birthday | null;
 };
 
+/**
+ * One `people` row, as the rest of the application understands it.
+ *
+ * THE LOADERS SHARE THIS ON PURPOSE. Both `loadFamilyBirthdays` and
+ * `loadBirthdayWorkspace` used to inline the same conversion, which meant the
+ * one field most easily dropped -- the optional year of birth, the only input
+ * to the age -- was dropped or kept twice over. It is also why the age could
+ * not be tested along the REAL path: the conversion lived inside a
+ * `server-only` module that no test can import. Here it is a pure function, and
+ * a test can start from a database row and finish at the rendered sentence.
+ *
+ * A missing month or day means no birthday. A missing YEAR is not missing a
+ * birthday -- it is a birthday whose age is unknown, which is a normal state.
+ */
+export function personBirthdayFromRow(row: {
+  id: unknown;
+  name: unknown;
+  birthday_month: unknown;
+  birthday_day: unknown;
+  birthday_year?: unknown;
+}): PersonBirthday {
+  const month = row.birthday_month;
+  const day = row.birthday_day;
+  const year = row.birthday_year;
+
+  return {
+    personId: String(row.id),
+    name: String(row.name),
+    birthday: month === null || month === undefined || day === null || day === undefined
+      ? null
+      : {
+        month: Number(month),
+        day: Number(day),
+        year: year === null || year === undefined ? null : Number(year),
+      },
+  };
+}
+
+/**
+ * What a birthday card is allowed to say.
+ *
+ *   self_private  it is the reader's own birthday. Nothing about the planning
+ *                 may be shown OR implied -- not a budget, not a gift count,
+ *                 and not whether anything has been started.
+ *   planned       somebody is planning it, and the reader may see the money.
+ *   not_started   nobody has started, and the reader may be invited to.
+ *
+ * SELF_PRIVATE IS NOT NOT_STARTED, and conflating them is the bug this type
+ * exists to make impossible.
+ *
+ * Row level security removes the reader's own birthday from every query, so
+ * `hasPlanning` is false for them whatever the family has actually done. Read
+ * naively that is indistinguishable from "nobody has started" -- so the card
+ * said "Planning not started yet" and offered "Start planning" for a birthday
+ * that might already have three presents bought for it. An absence that was
+ * IMPOSED is not an absence that is TRUE, and only the caller knows which it
+ * is.
+ *
+ * `isSelf` is therefore checked FIRST and unconditionally. There is no
+ * combination of planning state that can produce a different answer, which is
+ * what stops the card leaking the state by the shape of what it renders.
+ */
+export type BirthdayCardState = "self_private" | "planned" | "not_started";
+
+export function birthdayCardState(input: { isSelf: boolean; hasPlanning: boolean }): BirthdayCardState {
+  if (input.isSelf) return "self_private";
+  return input.hasPlanning ? "planned" : "not_started";
+}
+
+/**
+ * What the reader's own birthday card says, in one place.
+ *
+ * Pinned as constants because the wording is the requirement: "Planning not
+ * started yet" appearing here would be a privacy failure rather than a typo,
+ * and a test can hold an exact string far more usefully than a shape.
+ */
+export const SELF_PRIVATE_HEADLINE = "You can't view your own birthday gifts";
+export const SELF_PRIVATE_DETAIL = "Your family's plans stay hidden so your presents remain a surprise.";
+
 export type UpcomingBirthday = PersonBirthday & {
   birthday: Birthday;
   next: NextOccurrence;
@@ -266,6 +441,37 @@ export function upcomingBirthdays(people: readonly PersonBirthday[], today: stri
     .sort((left, right) =>
       left.next.daysAway - right.next.daysAway
       || left.name.localeCompare(right.name, "en-GB"));
+}
+
+/**
+ * The ones close enough to act on: today, through one calendar month from today.
+ *
+ * BOTH ENDS ARE INCLUDED. A birthday today belongs on the front page more than
+ * any other, and one exactly a month out is the boundary the window is named
+ * after -- excluding it would make "the next month" mean "the next month, minus
+ * the last day", which is not what anybody reading it would assume.
+ *
+ * A PURE FILTER OVER A LIST SOMEBODY ELSE BUILT. It reads `next.date`, which
+ * `upcomingBirthdays` has already resolved from the permanent date, and returns
+ * a new array. It writes nothing, stores nothing, and cannot change a birthday:
+ * the row on `people` is the only record and this never touches it.
+ *
+ * December to January needs no special case, because `addCalendarMonths` has
+ * none either.
+ */
+export function birthdaysWithinWindow(
+  birthdays: readonly UpcomingBirthday[],
+  today: string,
+  months: number = DASHBOARD_BIRTHDAY_WINDOW_MONTHS,
+): UpcomingBirthday[] {
+  const validToday = validateDateInput(today);
+  const end = addCalendarMonths(today, months);
+  if (!validToday.ok || !end) return [];
+
+  // ISO dates compare correctly as strings, which is why every date in this
+  // module is one. No Date is constructed here and no timezone is involved.
+  return birthdays.filter((entry) =>
+    entry.next.date >= validToday.value && entry.next.date <= end);
 }
 
 /** Everyone who has no birthday saved, so the family can see the gaps. */
