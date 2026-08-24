@@ -6,7 +6,7 @@ import { formatPennies } from "@/lib/currency";
 import { purchaseProgressStatus, type PurchaseProgressStatus } from "@/lib/purchases";
 import type { BirthdayPlanning } from "@/utils/supabase/birthdays-server";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { birthdayWorkspacePath, birthdaysWithinWindow, describeDaysAway, describeTurningAge, formatBirthday, type UpcomingBirthday } from "@/lib/birthdays.ts";
+import { SELF_PRIVATE_DETAIL, SELF_PRIVATE_HEADLINE, birthdayCardState, birthdayWorkspacePath, birthdaysWithinWindow, describeDaysAway, describeTurningAge, formatBirthday, type UpcomingBirthday } from "@/lib/birthdays.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventPath, eventTypeMeta, formatEventDate, groupDashboardEvents, type EventSummary } from "@/lib/events.ts";
 import { AppShell, PageHeader } from "./components/app-shell";
@@ -237,10 +237,27 @@ function BirthdayCard({
   isSelf: boolean;
   isAdmin: boolean;
 }) {
-  const status: PurchaseProgressStatus | null = planning && !isSelf
+  /**
+   * ONE STATE, DECIDED ONCE, BEFORE ANY FIGURE IS TOUCHED.
+   *
+   * `birthdayCardState` puts "this is my own birthday" ahead of every planning
+   * question, so there is no arrangement of budgets, gifts or ideas that can
+   * change what the reader's own card says -- and therefore nothing about the
+   * planning that the SHAPE of the card can leak.
+   */
+  const state = birthdayCardState({ isSelf, hasPlanning: planning !== undefined });
+  const isPrivate = state === "self_private";
+
+  // Every derived figure is gated on the state, not merely unused by the JSX.
+  // A badge computed from planning the reader may not see is a leak waiting for
+  // somebody to move one line.
+  const status: PurchaseProgressStatus | null = state === "planned" && planning
     ? purchaseProgressStatus(planning.spentPennies, planning.budgetPennies)
     : null;
-  const hasBudget = (planning?.budgetPennies ?? 0) > 0;
+  const hasBudget = state === "planned" && (planning?.budgetPennies ?? 0) > 0;
+
+  // The age is NOT planning. It follows from the date on the person and the
+  // occurrence already chosen for this card, so the reader sees their own.
   const turning = describeTurningAge(person.birthday, person.next.year);
 
   return (
@@ -276,13 +293,11 @@ function BirthdayCard({
           : status && <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>}
       </div>
 
-      {isSelf
+      {isPrivate
         ? (
           <div className="mt-4">
-            <p className="text-sm font-medium text-ink-700">🎁 It&apos;s a surprise</p>
-            <p className="mt-1 text-xs text-ink-600">
-              Your own planning is hidden from you.
-            </p>
+            <p className="text-sm font-medium text-ink-700">🎁 {SELF_PRIVATE_HEADLINE}</p>
+            <p className="mt-1 text-xs text-ink-600">{SELF_PRIVATE_DETAIL}</p>
           </div>
         )
         : planning
@@ -315,11 +330,18 @@ function BirthdayCard({
           </div>
         )}
 
-      <div className="mt-auto flex items-end justify-end pt-4">
-        <p className="text-xs font-semibold tracking-eyebrow text-accent uppercase">
-          {isSelf ? "Open →" : planning ? "Open →" : isAdmin ? "Start planning →" : "Open →"}
-        </p>
-      </div>
+      {/* NO CALL TO ACTION ON YOUR OWN BIRTHDAY. Not "Start planning", which
+          would invite somebody to buy their own present and would also reveal
+          that nothing had been started; and not "Open" either, which promises
+          something the reader cannot be shown. The card still links to the
+          person, where the privacy screen explains itself properly. */}
+      {!isPrivate && (
+        <div className="mt-auto flex items-end justify-end pt-4">
+          <p className="text-xs font-semibold tracking-eyebrow text-accent uppercase">
+            {planning ? "Open →" : isAdmin ? "Start planning →" : "Open →"}
+          </p>
+        </div>
+      )}
     </Link>
   );
 }

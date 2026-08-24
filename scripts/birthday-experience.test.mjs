@@ -28,6 +28,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
 
 const { groupDashboardEvents, isBirthdayOccurrence } = await import("../src/lib/events.ts");
+// The card's state rule is a real function, so it is exercised as one.
+const { birthdayCardState } = await import("../src/lib/birthdays.ts");
 const {
   REMINDER_STAGES, birthdayWorkspacePath,
   dueReminderStages, upcomingBirthdays,
@@ -263,6 +265,150 @@ test("the dashboard window is a view, and the Birthdays page is the record", () 
 // instead of showing an empty or misleading one.
 // ---------------------------------------------------------------------------
 
+/**
+ * The reader's own birthday card, field by field.
+ *
+ * The live regression this replaces: the card said "Planning not started yet"
+ * and offered "START PLANNING →" for the reader's own birthday -- an invitation
+ * to buy your own present, and a statement about your own presents that might
+ * well have been false.
+ *
+ * These read the card's SOURCE and slice it into its three arms, so each
+ * assertion is about the branch that actually renders, not about the file
+ * happening to contain a word somewhere.
+ */
+function birthdayCardArms() {
+  const dashboard = read("src", "app", "events-dashboard.tsx");
+  const card = dashboard
+    .slice(dashboard.indexOf("function BirthdayCard"))
+    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, "");
+
+  // Sliced in ORDER, each arm found after the one before it. Searching the
+  // whole component for ": planning" matched the `hasPlanning: planning`
+  // argument up in the state derivation and silently produced an empty arm --
+  // which every "must not contain" assertion would then have passed.
+  const branch = card.indexOf("{isPrivate");
+  const planned = card.indexOf(": planning", branch);
+  const notStarted = card.indexOf("Planning not started yet", planned);
+  const cta = card.indexOf("{!isPrivate &&", notStarted);
+  assert.ok(branch > 0 && planned > branch && notStarted > planned && cta > notStarted,
+    "the card must still have a private arm, a planned arm, a not-started arm and a gated call to action");
+
+  return {
+    card,
+    header: card.slice(card.indexOf('<div className="flex items-start gap-3">'), branch),
+    privateArm: card.slice(branch, planned),
+    plannedArm: card.slice(planned, notStarted),
+    action: card.slice(cta),
+  };
+}
+
+test("the self card says the required sentence, and never the not-started one", () => {
+  const { privateArm } = birthdayCardArms();
+  assert.match(privateArm, /SELF_PRIVATE_HEADLINE/u, "the headline is the shared constant");
+  assert.match(privateArm, /SELF_PRIVATE_DETAIL/u);
+  assert.ok(!privateArm.includes("Planning not started yet"), "and never the not-started sentence");
+});
+
+test("the self card offers nothing to press", () => {
+  const { action, privateArm } = birthdayCardArms();
+
+  // The whole action row is inside `!isPrivate`, so there is no "Start
+  // planning" AND no "Open" on the reader's own birthday.
+  assert.match(action, /\{!isPrivate && \(/u, "the call to action is gated on the state");
+  assert.ok(!privateArm.includes("Start planning"), "no invitation to plan your own present");
+  assert.ok(!privateArm.includes("Open →"), "and nothing that promises what cannot be shown");
+});
+
+test("the self card hides every financial figure", () => {
+  const { privateArm } = birthdayCardArms();
+  for (const forbidden of [
+    "formatPennies", "budgetPennies", "spentPennies", "FinancialProgressBar",
+    "giftCount", "ideaCount", "purchaseProgressStatus", "Badge",
+  ]) {
+    assert.ok(!privateArm.includes(forbidden), `the private card must not render ${forbidden}`);
+  }
+});
+
+test("nothing financial is even COMPUTED for the reader's own card", () => {
+  // Stronger than "the JSX does not use it". A badge derived from planning the
+  // reader may not see is a leak waiting for somebody to move one line.
+  const { card } = birthdayCardArms();
+  assert.match(card, /const state = birthdayCardState\(\{ isSelf, hasPlanning: planning !== undefined \}\)/u);
+  assert.match(card, /const status: PurchaseProgressStatus \| null = state === "planned" && planning/u);
+  assert.match(card, /const hasBudget = state === "planned" &&/u);
+});
+
+test("the self card still shows the date, the days away and the age", () => {
+  // These are not gift-planning data. The date is on the family calendar and
+  // the age follows from it, so keeping them from the reader would be pointless
+  // as well as unfriendly.
+  const { header, card } = birthdayCardArms();
+  assert.match(header, /formatBirthday\(person\.birthday\.month, person\.birthday\.day\)/u);
+  assert.match(header, /describeDaysAway\(person\.next\.daysAway\)/u);
+  assert.match(header, /\{turning &&/u, "the age is rendered in the shared header");
+
+  // The header is ABOVE the private/planned branch, so all three appear
+  // whatever the state -- which is exactly why they are asserted here.
+  assert.ok(card.indexOf("{turning &&") < card.indexOf("{isPrivate"), "the age precedes the state branch");
+  assert.match(card, /const turning = describeTurningAge\(person\.birthday, person\.next\.year\);/u,
+    "and it comes from the occurrence chosen for this card, not from today");
+});
+
+test("the private card is identical whether or not planning exists", () => {
+  // The point of the state: for the reader's own birthday, planning makes no
+  // difference at all, so the card cannot leak it by the branch it takes.
+  const { privateArm } = birthdayCardArms();
+  assert.ok(!privateArm.includes("planning"), "the private arm must not consult planning at all");
+
+  // And the model agrees, which is what the component relies on.
+  assert.equal(
+    birthdayCardState({ isSelf: true, hasPlanning: true }),
+    birthdayCardState({ isSelf: true, hasPlanning: false }),
+  );
+});
+
+test("the rule is the linked person id, never a name, an email or a position", () => {
+  const dashboard = read("src", "app", "events-dashboard.tsx");
+  assert.match(dashboard, /isSelf=\{person\.personId === viewerPersonId\}/u);
+
+  const card = dashboard.slice(dashboard.indexOf("function BirthdayCard"));
+  for (const wrong of ["person.name ===", "email", "index === 0", '=== "Taylor"']) {
+    assert.ok(!card.includes(wrong), `self must not be identified by ${wrong}`);
+  }
+
+  // And the id comes from the membership row on the server.
+  const loader = read("src", "utils", "supabase", "birthdays-server.ts");
+  assert.match(loader, /select\("role,person_id"\)/u);
+  assert.match(loader, /const viewerPersonId = \(membership\.data\.person_id as string \| null\) \?\? null;/u);
+});
+
+test("the loader will not carry the reader's own planning even if RLS let it through", () => {
+  // Two independent locks. Row level security is the authority, but it has
+  // nobody to hide the birthday FROM when a membership has no person linked --
+  // and that is precisely when the dashboard also cannot tell it is self. This
+  // guard fails in the safe direction in that case.
+  const loader = read("src", "utils", "supabase", "birthdays-server.ts");
+  assert.match(loader, /if \(row\.celebrant_person_id === viewerPersonId\) continue;/u);
+
+  const guard = loader.indexOf("if (row.celebrant_person_id === viewerPersonId) continue;");
+  const assignment = loader.indexOf("planningByPerson[row.celebrant_person_id as string] = {");
+  assert.ok(guard > 0 && assignment > guard, "the guard must come before the assignment");
+});
+
+test("everybody else's card is untouched by all of this", () => {
+  const { plannedArm, action, card } = birthdayCardArms();
+
+  // Planned: the money is still there in full.
+  for (const shown of ["formatPennies", "budgetPennies", "spentPennies", "FinancialProgressBar", "giftCount", "ideaCount"]) {
+    assert.ok(plannedArm.includes(shown), `a planned birthday must still show ${shown}`);
+  }
+
+  // Unplanned: still says so, and still invites an admin to start it.
+  assert.match(card, /Planning not started yet/u);
+  assert.match(action, /planning \? "Open →" : isAdmin \? "Start planning →" : "Open →"/u);
+});
+
 test("the resolver shows a privacy screen for your own birthday, and never redirects into it", () => {
   const page = read("src", "app", "birthdays", "[personId]", "page.tsx");
 
@@ -312,7 +458,7 @@ test("the dashboard card says it is a surprise rather than 'not started'", () =>
   const dashboard = read("src", "app", "events-dashboard.tsx");
 
   assert.match(dashboard, /isSelf=\{person\.personId === viewerPersonId\}/u);
-  assert.match(dashboard, /It&apos;s a surprise/u);
+  assert.match(dashboard, /SELF_PRIVATE_HEADLINE/u, "the required sentence, from the shared constant");
 
   // "Planning not started yet" would be a claim about their own presents that
   // may well be false, so the surprise arm comes first.
@@ -322,7 +468,7 @@ test("the dashboard card says it is a surprise rather than 'not started'", () =>
   assert.ok(card.indexOf("{isSelf") < card.indexOf("Planning not started yet"));
 
   // And the status badge cannot be computed from planning they must not see.
-  assert.match(dashboard, /const status: PurchaseProgressStatus \| null = planning && !isSelf/u);
+  assert.match(dashboard, /const status: PurchaseProgressStatus | null = state === "planned" && planning/u);
 });
 
 test("the viewer's own person is read on the server, never guessed in the browser", () => {

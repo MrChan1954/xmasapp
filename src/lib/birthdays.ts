@@ -341,6 +341,85 @@ export type PersonBirthday = {
   birthday: Birthday | null;
 };
 
+/**
+ * One `people` row, as the rest of the application understands it.
+ *
+ * THE LOADERS SHARE THIS ON PURPOSE. Both `loadFamilyBirthdays` and
+ * `loadBirthdayWorkspace` used to inline the same conversion, which meant the
+ * one field most easily dropped -- the optional year of birth, the only input
+ * to the age -- was dropped or kept twice over. It is also why the age could
+ * not be tested along the REAL path: the conversion lived inside a
+ * `server-only` module that no test can import. Here it is a pure function, and
+ * a test can start from a database row and finish at the rendered sentence.
+ *
+ * A missing month or day means no birthday. A missing YEAR is not missing a
+ * birthday -- it is a birthday whose age is unknown, which is a normal state.
+ */
+export function personBirthdayFromRow(row: {
+  id: unknown;
+  name: unknown;
+  birthday_month: unknown;
+  birthday_day: unknown;
+  birthday_year?: unknown;
+}): PersonBirthday {
+  const month = row.birthday_month;
+  const day = row.birthday_day;
+  const year = row.birthday_year;
+
+  return {
+    personId: String(row.id),
+    name: String(row.name),
+    birthday: month === null || month === undefined || day === null || day === undefined
+      ? null
+      : {
+        month: Number(month),
+        day: Number(day),
+        year: year === null || year === undefined ? null : Number(year),
+      },
+  };
+}
+
+/**
+ * What a birthday card is allowed to say.
+ *
+ *   self_private  it is the reader's own birthday. Nothing about the planning
+ *                 may be shown OR implied -- not a budget, not a gift count,
+ *                 and not whether anything has been started.
+ *   planned       somebody is planning it, and the reader may see the money.
+ *   not_started   nobody has started, and the reader may be invited to.
+ *
+ * SELF_PRIVATE IS NOT NOT_STARTED, and conflating them is the bug this type
+ * exists to make impossible.
+ *
+ * Row level security removes the reader's own birthday from every query, so
+ * `hasPlanning` is false for them whatever the family has actually done. Read
+ * naively that is indistinguishable from "nobody has started" -- so the card
+ * said "Planning not started yet" and offered "Start planning" for a birthday
+ * that might already have three presents bought for it. An absence that was
+ * IMPOSED is not an absence that is TRUE, and only the caller knows which it
+ * is.
+ *
+ * `isSelf` is therefore checked FIRST and unconditionally. There is no
+ * combination of planning state that can produce a different answer, which is
+ * what stops the card leaking the state by the shape of what it renders.
+ */
+export type BirthdayCardState = "self_private" | "planned" | "not_started";
+
+export function birthdayCardState(input: { isSelf: boolean; hasPlanning: boolean }): BirthdayCardState {
+  if (input.isSelf) return "self_private";
+  return input.hasPlanning ? "planned" : "not_started";
+}
+
+/**
+ * What the reader's own birthday card says, in one place.
+ *
+ * Pinned as constants because the wording is the requirement: "Planning not
+ * started yet" appearing here would be a privacy failure rather than a typo,
+ * and a test can hold an exact string far more usefully than a shape.
+ */
+export const SELF_PRIVATE_HEADLINE = "You can't view your own birthday gifts";
+export const SELF_PRIVATE_DETAIL = "Your family's plans stay hidden so your presents remain a surprise.";
+
 export type UpcomingBirthday = PersonBirthday & {
   birthday: Birthday;
   next: NextOccurrence;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { MILESTONE_AGES, REMINDER_STAGES, addCalendarMonths, ageOnOccurrence, birthdayOccurrence, birthdaysWithinWindow, describeDaysAway, describeTurningAge, dueReminderStages, formatBirthday, isMilestoneAge, isValidBirthday, isValidBirthYear, nextBirthdayOccurrence, peopleWithoutBirthdays, suggestedBirthdayEventName, upcomingBirthdays, type PersonBirthday } from "./birthdays.ts";
+import { MILESTONE_AGES, REMINDER_STAGES, SELF_PRIVATE_DETAIL, SELF_PRIVATE_HEADLINE, addCalendarMonths, ageOnOccurrence, birthdayCardState, birthdayOccurrence, birthdaysWithinWindow, describeDaysAway, describeTurningAge, dueReminderStages, formatBirthday, isMilestoneAge, isValidBirthday, isValidBirthYear, nextBirthdayOccurrence, peopleWithoutBirthdays, personBirthdayFromRow, suggestedBirthdayEventName, upcomingBirthdays, type PersonBirthday } from "./birthdays.ts";
 
 // ---------------------------------------------------------------------------
 // What this file is for
@@ -320,6 +320,99 @@ test("a suggested event name says whose birthday and which year", () => {
 // ---------------------------------------------------------------------------
 // 7. The model holds no birthdays of its own
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// A card's state, and the row it starts from
+//
+// Two things are proven here that a helper-only test cannot: that the year of
+// birth survives the conversion the LOADERS actually use, and that "this is my
+// own birthday" is a different state from "nobody has started this".
+// ---------------------------------------------------------------------------
+
+test("the age survives the conversion the loaders actually use", () => {
+  // The live example: a September birthday read from the database on a day in
+  // August, arriving as the sentence on the card. This starts at a `people`
+  // ROW, not at a hand-made object, because the field most easily lost is the
+  // optional one and losing it is silent.
+  const row = { id: "p-1", name: "Ana", birthday_month: 9, birthday_day: 10, birthday_year: 2003 };
+  const [card] = upcomingBirthdays([personBirthdayFromRow(row)], "2026-08-24");
+
+  assert.equal(card.next.date, "2026-09-10");
+  assert.equal(card.next.year, 2026);
+  assert.equal(describeDaysAway(card.next.daysAway), "17 days away");
+  assert.equal(describeTurningAge(card.birthday, card.next.year), "Turning 23");
+  assert.deepEqual(birthdaysWithinWindow([card], "2026-08-24"), [card], "and it is on the dashboard");
+});
+
+test("a row with no year of birth loses the age and nothing else", () => {
+  const row = { id: "p-1", name: "Ana", birthday_month: 9, birthday_day: 10, birthday_year: null };
+  const person = personBirthdayFromRow(row);
+  assert.deepEqual(person.birthday, { month: 9, day: 10, year: null }, "the DATE still arrives");
+
+  const [card] = upcomingBirthdays([person], "2026-08-24");
+  assert.equal(describeTurningAge(card.birthday, card.next.year), null);
+  assert.equal(describeDaysAway(card.next.daysAway), "17 days away", "the rest of the card is unaffected");
+});
+
+test("a row with no month or day is somebody with no birthday, not an error", () => {
+  for (const row of [
+    { id: "p", name: "Ana", birthday_month: null, birthday_day: null, birthday_year: null },
+    { id: "p", name: "Ana", birthday_month: 9, birthday_day: null, birthday_year: 2003 },
+    { id: "p", name: "Ana", birthday_month: undefined, birthday_day: undefined },
+  ]) {
+    assert.equal(personBirthdayFromRow(row).birthday, null, JSON.stringify(row));
+  }
+  // And the identity always survives, so they can still be listed as missing.
+  assert.equal(personBirthdayFromRow({ id: "p-9", name: "Ana", birthday_month: null, birthday_day: null }).personId, "p-9");
+});
+
+test("a birthday already gone this year takes NEXT year's age", () => {
+  const row = { id: "p-1", name: "Ana", birthday_month: 3, birthday_day: 1, birthday_year: 2003 };
+  const person = personBirthdayFromRow(row);
+
+  // Before it: this year's occurrence, so this year's age.
+  const [before] = upcomingBirthdays([person], "2026-02-28");
+  assert.equal(before.next.year, 2026);
+  assert.equal(describeTurningAge(before.birthday, before.next.year), "Turning 23");
+
+  // The day after: next year's occurrence, and one year older. Nothing stored
+  // changed -- only the day the question was asked.
+  const [after] = upcomingBirthdays([person], "2026-03-02");
+  assert.equal(after.next.year, 2027);
+  assert.equal(describeTurningAge(after.birthday, after.next.year), "Turning 24");
+});
+
+test("your own birthday is a different state from one nobody has started", () => {
+  // The distinction this type exists for. Row level security hides the
+  // reader's own planning, so `hasPlanning` is false for them WHATEVER the
+  // family has done -- and read naively that is indistinguishable from nobody
+  // having started.
+  assert.equal(birthdayCardState({ isSelf: false, hasPlanning: false }), "not_started");
+  assert.equal(birthdayCardState({ isSelf: false, hasPlanning: true }), "planned");
+
+  // Self wins over both, so the card cannot leak the planning state by which
+  // branch it renders.
+  assert.equal(birthdayCardState({ isSelf: true, hasPlanning: false }), "self_private");
+  assert.equal(birthdayCardState({ isSelf: true, hasPlanning: true }), "self_private");
+
+  // Stated as the property rather than the four cases: for the reader's own
+  // birthday, planning makes no difference at all.
+  assert.equal(
+    birthdayCardState({ isSelf: true, hasPlanning: true }),
+    birthdayCardState({ isSelf: true, hasPlanning: false }),
+    "self-private must not vary with planning state",
+  );
+});
+
+test("the private copy is the required sentence, and not the not-started one", () => {
+  assert.equal(SELF_PRIVATE_HEADLINE, "You can't view your own birthday gifts");
+  assert.match(SELF_PRIVATE_DETAIL, /surprise/u);
+  assert.doesNotMatch(SELF_PRIVATE_HEADLINE, /not started/iu);
+  assert.doesNotMatch(SELF_PRIVATE_DETAIL, /not started/iu);
+  for (const copy of [SELF_PRIVATE_HEADLINE, SELF_PRIVATE_DETAIL]) {
+    assert.doesNotMatch(copy, /£|budget|spent|gift count|idea/iu, "the copy itself must reveal nothing");
+  }
+});
 
 // ---------------------------------------------------------------------------
 // The age somebody turns

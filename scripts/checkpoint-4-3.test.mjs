@@ -200,20 +200,34 @@ test("no planning means the card says so, and never shows a budget of zero", () 
   const card = dashboard
     .slice(dashboard.indexOf("function BirthdayCard"))
     .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, "");
-  const arm = card.slice(card.indexOf(": planning"), card.indexOf("Planning not started yet"));
+
+  // Sliced in order. The private arm comes first, the planned arm after it, and
+  // the not-started arm last -- searching the whole component for ": planning"
+  // would match the `hasPlanning: planning` argument in the state derivation
+  // and hand back an empty arm that passes every negative assertion.
+  const branch = card.indexOf("{isPrivate");
+  const planned = card.indexOf(": planning", branch);
+  const notStarted = card.indexOf("Planning not started yet", planned);
+  assert.ok(branch > 0 && planned > branch && notStarted > planned, "the card has three arms, in that order");
+
+  const arm = card.slice(planned, notStarted);
   assert.ok(arm.includes("FinancialProgressBar"), "the bar belongs to the planned arm");
   assert.ok(arm.includes("formatPennies"), "so does the money");
 
   // And the reader's OWN birthday is a third state, ahead of both: not "£0",
   // and not "not started" either, because saying "not started" to the celebrant
   // would be a statement about their own presents that may well be false.
-  const surprise = card.slice(card.indexOf("{isSelf"), card.indexOf(": planning"));
-  assert.ok(surprise.includes("surprise"), "the celebrant is told it is a surprise");
-  assert.ok(!surprise.includes("formatPennies"), "and never shown a figure");
-  assert.ok(!surprise.includes("FinancialProgressBar"), "nor a progress bar");
+  const privateArm = card.slice(branch, planned);
+  assert.ok(privateArm.includes("SELF_PRIVATE_HEADLINE"), "the celebrant gets the required sentence");
+  assert.ok(!privateArm.includes("Planning not started yet"), "and never the not-started one");
+  assert.ok(!privateArm.includes("formatPennies"), "never shown a figure");
+  assert.ok(!privateArm.includes("FinancialProgressBar"), "nor a progress bar");
 
   // And the bar itself only appears when a budget was actually set.
-  assert.match(card, /const hasBudget = \(planning\?\.budgetPennies \?\? 0\) > 0;/);
+  assert.ok(
+    card.includes('const hasBudget = state === "planned" && (planning?.budgetPennies ?? 0) > 0;'),
+    "the bar's own guard is gated on the state too, not just on a budget being set",
+  );
   assert.match(card, /\{hasBudget && \(\s*\n\s*<div/);
 });
 

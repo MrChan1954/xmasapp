@@ -1,7 +1,7 @@
 import "server-only";
 
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { nextBirthdayOccurrence, type Birthday, type PersonBirthday } from "@/lib/birthdays.ts";
+import { nextBirthdayOccurrence, personBirthdayFromRow, type PersonBirthday } from "@/lib/birthdays.ts";
 import { createClient } from "./server";
 
 /**
@@ -109,17 +109,12 @@ export async function loadFamilyBirthdays(): Promise<FamilyBirthdays> {
   }
   if (peopleResult.error) throw new Error("The family's birthdays could not be loaded.");
 
+  // The shared conversion, not a second copy of it. The year of birth is the
+  // only input to "Turning 30", and it is exactly the field a hand-written
+  // mapping drops.
   const people: FamilyPerson[] = (peopleResult.data ?? []).map((row) => ({
-    personId: row.id as string,
-    name: row.name as string,
+    ...personBirthdayFromRow(row),
     isFamilyContributor: Boolean(row.is_family_contributor),
-    birthday: row.birthday_month === null || row.birthday_day === null
-      ? null
-      : {
-        month: Number(row.birthday_month),
-        day: Number(row.birthday_day),
-        year: row.birthday_year === null ? null : Number(row.birthday_year),
-      } satisfies Birthday,
   }));
 
   const viewerPersonId = (membership.data.person_id as string | null) ?? null;
@@ -215,6 +210,14 @@ export async function loadFamilyBirthdays(): Promise<FamilyBirthdays> {
 
     for (const row of wantedEvents) {
       const id = row.id as string;
+      // BELT AND BRACES. Migration 031 already removed the reader's own
+      // birthday from `eventResult`, so this cannot normally be reached. It is
+      // here because the consequence of it being reached -- somebody being
+      // shown their own presents -- is bad enough to be worth two locks, and
+      // because the two locks fail independently: this one holds even if the
+      // membership has no person linked and row level security therefore has
+      // nobody to hide the birthday from.
+      if (row.celebrant_person_id === viewerPersonId) continue;
       planningByPerson[row.celebrant_person_id as string] = {
         eventId: id,
         eventName: row.name as string,
@@ -367,17 +370,7 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
   if (!membership.data || personResult.error || !personResult.data) return null;
 
   const row = personResult.data;
-  const person: PersonBirthday = {
-    personId: row.id as string,
-    name: row.name as string,
-    birthday: row.birthday_month === null || row.birthday_day === null
-      ? null
-      : {
-        month: Number(row.birthday_month),
-        day: Number(row.birthday_day),
-        year: row.birthday_year === null ? null : Number(row.birthday_year),
-      } satisfies Birthday,
-  };
+  const person: PersonBirthday = personBirthdayFromRow(row);
 
   const next = person.birthday ? nextBirthdayOccurrence(person.birthday, today) : null;
   const currentYear = next ? next.year : currentYearOf(today);
