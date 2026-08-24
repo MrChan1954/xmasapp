@@ -40,7 +40,14 @@ const PURCHASE = {
   christmasRecipientId: "recipient-mum",
   amountPennies: 2499,
   checkoutPayerContributorId: JADE.contributor,
-  allocatedContributorIds: [JADE.contributor, TAYLOR.contributor, PAIGE.contributor],
+  // £24.99 split three ways: £8.33 each, and the shares are what a "you owe"
+  // notification quotes as the increase. Jade's own share is present because
+  // the allocation row is -- she paid, so it creates no obligation for her.
+  shares: [
+    { contributorId: JADE.contributor, responsibilityPennies: 833 },
+    { contributorId: TAYLOR.contributor, responsibilityPennies: 833 },
+    { contributorId: PAIGE.contributor, responsibilityPennies: 833 },
+  ],
 };
 
 /** Jade paid £24.99 and split it three ways: Taylor and Paige owe £8.33 each. */
@@ -73,9 +80,20 @@ test("one purchase produces exactly one notification per person", () => {
   assert.deepEqual([...new Set(perMember.values())], [1]);
 });
 
-test("an owed notification quotes the authoritative engine, not the raw allocation", () => {
+test("an owed notification carries BOTH the increase and the authoritative total", () => {
   // Taylor's £8.33 share lands on top of an existing £20 debt to Jade, so the
-  // engine's answer is £28.33. Quoting the allocation would contradict Owed.
+  // engine's answer is £28.33.
+  //
+  // The two figures come from two different places on purpose, and neither may
+  // stand in for the other:
+  //
+  //   £8.33   Taylor's own allocation row for THIS purchase -- what it added.
+  //   £28.33  calculateNetOwedBalances over every obligation and settlement --
+  //           what he owes now. Quoting the allocation as the total would
+  //           contradict the Owed screen; quoting the total as the increase
+  //           would tell him one purchase cost him £28.33.
+  //
+  // And £24.99 -- the purchase itself -- is neither, so it must not appear.
   const balances = calculateNetOwedBalances(
     [
       { debtorContributorId: TAYLOR.contributor, creditorContributorId: JADE.contributor, amountPennies: 2000 },
@@ -88,10 +106,106 @@ test("an owed notification quotes the authoritative engine, not the raw allocati
     .find((row) => row.appMemberId === TAYLOR.member)!;
 
   assert.equal(taylorNote.payload.category, "money_i_owe");
+  // The title still says what to do about it, and still names the creditor.
   assert.equal(taylorNote.payload.title, "💷 You owe Jade");
-  assert.match(taylorNote.payload.body, /£28\.33/);
-  assert.doesNotMatch(taylorNote.payload.body, /£8\.33/);
+  assert.equal(taylorNote.payload.body, "This purchase adds £8.33. You now owe Jade £28.33 in total.");
+
+  // The purchase-wide figure is not the reader's increase.
+  assert.doesNotMatch(taylorNote.payload.body, /£24\.99/, "£24.99 is the purchase, not Taylor's share");
   assert.equal(taylorNote.payload.url, "/owed");
+});
+
+test("each contributor is told their OWN increase, from an unequal split", () => {
+  // One £12 purchase, three unequal shares, Kirsten paying at the checkout.
+  // £4 / £5 / £3 -- three readers, three different sentences, one purchase.
+  const unequal = {
+    ...PURCHASE,
+    actorAppMemberId: "m-nobody",
+    amountPennies: 1200,
+    checkoutPayerContributorId: KIRSTEN.contributor,
+    shares: [
+      { contributorId: TAYLOR.contributor, responsibilityPennies: 400 },
+      { contributorId: JADE.contributor, responsibilityPennies: 500 },
+      { contributorId: PAIGE.contributor, responsibilityPennies: 300 },
+    ],
+  };
+  const balances = calculateNetOwedBalances(
+    [
+      { debtorContributorId: TAYLOR.contributor, creditorContributorId: KIRSTEN.contributor, amountPennies: 400 },
+      { debtorContributorId: JADE.contributor, creditorContributorId: KIRSTEN.contributor, amountPennies: 500 },
+      { debtorContributorId: PAIGE.contributor, creditorContributorId: KIRSTEN.contributor, amountPennies: 300 },
+    ],
+    [],
+  );
+  const byMember = new Map(
+    planPurchaseNotifications(unequal, FAMILY, balances).map((row) => [row.appMemberId, row.payload]),
+  );
+
+  assert.equal(byMember.get(TAYLOR.member)?.body, "This purchase adds £4. You now owe Kirsten £4 in total.");
+  assert.equal(byMember.get(JADE.member)?.body, "This purchase adds £5. You now owe Kirsten £5 in total.");
+  assert.equal(byMember.get(PAIGE.member)?.body, "This purchase adds £3. You now owe Kirsten £3 in total.");
+
+  // Nobody was handed one purchase-wide delta.
+  for (const payload of byMember.values()) {
+    assert.doesNotMatch(payload.body, /adds £12\b/u, "£12 is the purchase, not anybody's share");
+  }
+});
+
+test("the increase is this purchase's share; the total carries the history", () => {
+  // The worked example from live use, in integer pennies throughout.
+  // Taylor already owes Paige £20.35; this purchase adds £1.66; £22.01 total.
+  const paigePaid = {
+    ...PURCHASE,
+    actorAppMemberId: PAIGE.member,
+    actorName: PAIGE.name,
+    amountPennies: 664,
+    checkoutPayerContributorId: PAIGE.contributor,
+    shares: [{ contributorId: TAYLOR.contributor, responsibilityPennies: 166 }],
+  };
+  const balances = calculateNetOwedBalances(
+    [
+      { debtorContributorId: TAYLOR.contributor, creditorContributorId: PAIGE.contributor, amountPennies: 2035 },
+      { debtorContributorId: TAYLOR.contributor, creditorContributorId: PAIGE.contributor, amountPennies: 166 },
+    ],
+    [],
+  );
+  // Engine sanity: 2035 + 166 = 2201, in pennies, with no rounding anywhere.
+  assert.equal(
+    balances.find((balance) => balance.debtorContributorId === TAYLOR.contributor)?.amountPennies,
+    2201,
+  );
+
+  const taylorNote = planPurchaseNotifications(paigePaid, FAMILY, balances)
+    .find((row) => row.appMemberId === TAYLOR.member)!;
+
+  assert.equal(taylorNote.payload.title, "💷 You owe Paige");
+  assert.equal(taylorNote.payload.body, "This purchase adds £1.66. You now owe Paige £22.01 in total.");
+});
+
+test("a purchase that creates no obligation never claims to add £0", () => {
+  // Kirsten carries no share of this purchase, so she reads the ordinary
+  // purchase notice. "This purchase adds £0" would assert an obligation that
+  // was never created.
+  const planned = planPurchaseNotifications(PURCHASE, FAMILY, PURCHASE_BALANCES);
+  for (const row of planned) {
+    assert.doesNotMatch(row.payload.body, /adds £0\b/u, row.appMemberId);
+  }
+  assert.equal(
+    planned.find((row) => row.appMemberId === KIRSTEN.member)?.payload.category,
+    "purchases",
+  );
+
+  // And an allocation row that exists but carries nothing is not a share.
+  const zeroShare = {
+    ...PURCHASE,
+    shares: [
+      { contributorId: JADE.contributor, responsibilityPennies: 2499 },
+      { contributorId: TAYLOR.contributor, responsibilityPennies: 0 },
+    ],
+  };
+  const taylorNote = planPurchaseNotifications(zeroShare, FAMILY, PURCHASE_BALANCES)
+    .find((row) => row.appMemberId === TAYLOR.member)!;
+  assert.equal(taylorNote.payload.category, "purchases", "a £0 share is not an owed alert");
 });
 
 test("a share absorbed by an existing debt in the other direction is not an owed alert", () => {
@@ -130,7 +244,10 @@ test("the checkout payer hears what they are owed, summarised when several peopl
   const kirstenPaid = {
     ...PURCHASE,
     checkoutPayerContributorId: KIRSTEN.contributor,
-    allocatedContributorIds: [TAYLOR.contributor, PAIGE.contributor],
+    shares: [
+      { contributorId: TAYLOR.contributor, responsibilityPennies: 1250 },
+      { contributorId: PAIGE.contributor, responsibilityPennies: 1249 },
+    ],
   };
   const balances = calculateNetOwedBalances(
     [
@@ -152,7 +269,7 @@ test("a single debtor is named rather than summarised", () => {
   const kirstenPaid = {
     ...PURCHASE,
     checkoutPayerContributorId: KIRSTEN.contributor,
-    allocatedContributorIds: [TAYLOR.contributor],
+    shares: [{ contributorId: TAYLOR.contributor, responsibilityPennies: 2499 }],
   };
   const balances = calculateNetOwedBalances(
     [{ debtorContributorId: TAYLOR.contributor, creditorContributorId: KIRSTEN.contributor, amountPennies: 2499 }],

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Cake, CalendarDays, ChevronRight, Plus } from "lucide-react";
+import { CalendarDays, ChevronRight, Plus } from "lucide-react";
 import { formatPennies } from "@/lib/currency";
 import { purchaseProgressStatus, type PurchaseProgressStatus } from "@/lib/purchases";
 import type { BirthdayPlanning } from "@/utils/supabase/birthdays-server";
@@ -78,23 +78,17 @@ export function EventsDashboard({
         eyebrow="Family gift planner"
         title="Events"
         description="Every occasion the family plans and pays for together. Open one to see its people, purchases and balances."
-        actions={(
-          <>
-            {/* Birthdays sit beside the events rather than inside one, because
-                a birthday belongs to a person all year round whether or not
-                anybody has planned an event for it. Everybody can look. */}
-            <ButtonLink href="/birthdays" variant="secondary" size="lg" className="w-full sm:w-auto">
-              <Cake size={18} aria-hidden />
-              Birthdays
-            </ButtonLink>
-            {isAdmin ? (
+        // Birthdays are NOT a header button. The dashboard already has one
+        // route into them -- the Upcoming birthdays section below, and its
+        // "All birthdays" link -- and a second, larger control at the top of
+        // the same screen was two doors into one room. Removed on desktop and
+        // on mobile alike; the dedicated /birthdays page is unchanged.
+        actions={isAdmin ? (
           <ButtonLink href="/events/new" size="lg" className="w-full sm:w-auto">
             <Plus size={18} aria-hidden />
             Create event
           </ButtonLink>
-            ) : null}
-          </>
-        )}
+        ) : null}
       />
 
       {error && <Notice tone="danger" className="mt-6">{error}</Notice>}

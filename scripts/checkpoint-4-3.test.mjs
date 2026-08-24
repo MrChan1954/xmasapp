@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -48,6 +49,122 @@ test("the birthday card shows this event's own money, from the shared loader", (
   assert.match(dashboard, /formatPennies\(planning\.budgetPennies\)/);
   assert.match(dashboard, /planning\.giftCount/);
   assert.match(dashboard, /planning\.ideaCount/);
+});
+
+/**
+ * THE WIRING, not the rendering.
+ *
+ * The test above proves the card CAN show the money. It passed 33/33 while the
+ * dashboard showed "Planning not started yet" for every fully planned birthday,
+ * because nothing asserted that the page SUPPLIED the figures: page.tsx called
+ * the loader, used only `.people`, and let `planningByPerson` fall back to its
+ * `{}` default. Type-clean, lint-clean, test-clean, and silently wrong.
+ *
+ * So this walks the actual path -- loader result -> local -> prop -- and fails
+ * if any link in it is cut.
+ */
+test("the dashboard page SUPPLIES the birthday money, it does not just render it", () => {
+  const page = read(...APP, "page.tsx");
+
+  // 1. The figures are READ off the loader result. Recomputing them here would
+  //    be a second financial reader, free to disagree with Event Home.
+  const assignment = page.match(/(\w+)\s*=\s*birthdayResult\.value\.planningByPerson\s*;/u);
+  assert.ok(
+    assignment,
+    "page.tsx must take planningByPerson off the loader result; without it every "
+      + 'birthday card silently reads "Planning not started yet"',
+  );
+  const carrier = assignment[1];
+
+  // 2. It is read in the same fulfilled branch as the birthdays, so a birthday
+  //    can never arrive on the page with its planning left behind.
+  const start = page.indexOf('if (birthdayResult.status === "fulfilled")');
+  assert.ok(start !== -1, "the birthdays are still read from a settled result");
+  const fulfilled = page.slice(start, page.indexOf("} else", start));
+  assert.ok(
+    fulfilled.includes(carrier + " = birthdayResult.value.planningByPerson"),
+    "the planning must be taken in the branch that took the birthdays",
+  );
+
+  // 3. And it actually reaches the dashboard. The signed-out render is excluded
+  //    by name: it passes no birthdays, so it has no planning to pass either.
+  const renders = [...page.matchAll(/<EventsDashboard\b[\s\S]*?\/>/gu)].map((match) => match[0]);
+  assert.ok(renders.length > 0, "the page still renders the dashboard");
+  const withBirthdays = renders.filter((render) => !/birthdays=\{\[\]\}/u.test(render));
+  assert.equal(withBirthdays.length, 1, "exactly one render carries the family's birthdays");
+
+  const bound = withBirthdays[0].match(/planningByPerson=\{([A-Za-z_$][\w$]*)\}/u);
+  assert.ok(
+    bound,
+    "<EventsDashboard> must be passed planningByPerson; the prop defaults to {}, "
+      + "so omitting it is not neutral -- it blanks every card's money",
+  );
+  assert.equal(
+    bound[1],
+    carrier,
+    "the prop must be bound to the value the loader filled, not to a fresh empty object",
+  );
+});
+
+test("the loader still returns the planning the page carries", () => {
+  const loader = read("src", "utils", "supabase", "birthdays-server.ts");
+
+  // The other half of the contract, so a rename cannot quietly satisfy the
+  // regex above against a field nothing fills.
+  assert.match(loader, /planningByPerson: Record<string, BirthdayPlanning>;/);
+  assert.match(loader, /export type BirthdayPlanning = \{/);
+  assert.match(loader, /planningByPerson\[row\.celebrant_person_id as string\] = \{/);
+  for (const field of ["eventId", "budgetPennies", "spentPennies", "giftCount", "ideaCount"]) {
+    assert.ok(loader.includes(field + ":"), "BirthdayPlanning needs " + field);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// One route into Birthdays, not two
+// ---------------------------------------------------------------------------
+
+test("the dashboard header has no second Birthdays button", () => {
+  const dashboard = read(...APP, "events-dashboard.tsx");
+  const header = dashboard.slice(dashboard.indexOf("<PageHeader"), dashboard.indexOf("{error &&"));
+
+  // The large secondary button in the header actions was a second door into the
+  // room the Upcoming birthdays section below already opens -- on desktop AND
+  // on mobile, since it carried `w-full sm:w-auto`.
+  assert.doesNotMatch(header, /href="\/birthdays"/u, "the header must not link to /birthdays");
+
+  // Create event is the header's remaining action, and stays admin-only.
+  assert.match(header, /href="\/events\/new"/u);
+  assert.match(header, /isAdmin \?/u);
+
+  // No dead import left behind.
+  assert.doesNotMatch(dashboard, /\bCake\b/u, "the Cake icon import goes with the button");
+});
+
+test("the Upcoming birthdays section and its All birthdays link both stay", () => {
+  const dashboard = read(...APP, "events-dashboard.tsx");
+  assert.match(dashboard, /<UpcomingBirthdaysSection/u);
+  assert.match(dashboard, /Upcoming birthdays<\/h2>/u);
+
+  const section = dashboard.slice(
+    dashboard.indexOf("function UpcomingBirthdaysSection"),
+    dashboard.indexOf("function BirthdayCard"),
+  );
+  assert.match(section, /href="\/birthdays"/u, "the section keeps the only route to the list");
+  assert.ok(section.includes("All birthdays"), "the All birthdays link stays");
+});
+
+test("birthday navigation stays where it genuinely belongs", () => {
+  // Removing the duplicate must not strip Birthdays out of the app. The More
+  // screen is a menu, not a second copy of the dashboard.
+  const more = read(...APP, "more", "more-screen.tsx");
+  assert.match(more, /href="\/birthdays"/u);
+  assert.match(more, /IconCake/u);
+
+  // And a birthday's own More screen still reaches that person's history.
+  assert.ok(more.includes("/history"), "Previous birthdays stays on a birthday's More screen");
+
+  // The dedicated page is untouched.
+  assert.equal(existsSync(join(root, ...APP, "birthdays", "page.tsx")), true);
 });
 
 test("the card reuses the app's progress and status engines rather than its own", () => {
@@ -510,6 +627,88 @@ test("the Owed engine, allocation snapshots and payment rules are untouched", ()
   for (const word of ["owedPennies", "confirmPayment", "purchase_allocations", "settlements"]) {
     assert.ok(!dashboard.includes(word), `the dashboard must not reimplement ${word}`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// The money engines, fingerprinted
+// ---------------------------------------------------------------------------
+
+/**
+ * The three modules that decide what anybody owes, pinned by content hash.
+ *
+ * This continuation changed what a notification SAYS about money. It changed
+ * nothing about how that money is worked out -- and "nothing" is a claim worth
+ * proving rather than asserting, because the new copy quotes two figures from
+ * two engines and the tempting shortcut would have been to adjust one of them
+ * to make the sentence tidier.
+ *
+ * The repository already uses this discipline for migrations 001-024
+ * (`scripts/event-model.test.mjs`). The same reasoning applies here: these
+ * files are load-bearing for real family money, so an edit to one should be a
+ * deliberate act that updates a fingerprint, never a quiet diff nobody notices.
+ *
+ * Hashed over LF-normalised content, so a checkout with different line endings
+ * is not reported as a change to the arithmetic.
+ */
+test("the Owed engine and the payment rules are byte-for-byte unchanged", () => {
+  const fingerprints = {
+    "owed.ts": "429c11a3be054c51030b793018596c38404ec4c354d95b58a6d206fdbb230c9f",
+    "payment-confirmation.ts": "ccbdc1a1b24e2a3f01c2aafaaf63f9c2e520ac210f519be9b05e4a00df8657d8",
+    "recipient-allocations.ts": "147398a98033d567ea55d0aa498987159f4553261541de509d641e02044b5eed",
+  };
+
+  for (const [file, expected] of Object.entries(fingerprints)) {
+    const source = read("src", "lib", file).replace(/\r\n/gu, "\n");
+    assert.equal(
+      createHash("sha256").update(source).digest("hex"),
+      expected,
+      `src/lib/${file} changed. If that was deliberate, say so and update the `
+        + "fingerprint; if it was not, the arithmetic behind real money just moved.",
+    );
+  }
+});
+
+test("the notification layer reads money and never computes it", () => {
+  const audience = read("src", "lib", "notification-audience.ts");
+  const content = read("src", "lib", "notification-content.ts");
+  const dispatch = read("src", "lib", "notification-dispatch.ts");
+
+  // The increase is READ from the allocation row. The moment it is added,
+  // subtracted, split or scaled here, it has stopped being authoritative.
+  for (const [name, source] of [["audience", audience], ["content", content], ["dispatch", dispatch]]) {
+    assert.doesNotMatch(source, /responsibility_?[Pp]ennies\s*[-+*/]/u, `${name} manipulates a share`);
+    assert.doesNotMatch(source, /increasePennies\s*[-+*/]/u, `${name} manipulates the increase`);
+    assert.doesNotMatch(source, /amountPennies\s*[-+*/](?!\/)/u, `${name} manipulates a balance`);
+  }
+
+  // Nor is the increase guessed from the purchase total by dividing it up.
+  assert.doesNotMatch(audience, /event\.amountPennies\s*\/|\.length\s*\)?\s*\)?\s*;?\s*\/\s*/u);
+  assert.ok(
+    !audience.includes("splitPenniesEqually"),
+    "an equal split would be a guess; the allocation row is the fact",
+  );
+
+  // And the delta reaches the copy from the event, not from a fresh read.
+  assert.match(audience, /increasePennies: share/u);
+  assert.match(dispatch, /responsibilityPennies: allocation\.responsibility_pennies/u);
+});
+
+test("payment notifications were not touched by the owed-increase change", () => {
+  const content = read("src", "lib", "notification-content.ts");
+
+  // The four payment builders keep their exact sentences. The new requirement
+  // was about a purchase increasing what somebody owes; a confirmation, a
+  // rejection and an admin override are different events with settled wording.
+  assert.match(content, /`\$\{input\.reviewerName\} rejected your \$\{claimed\} payment\.`/u);
+  assert.match(content, /`\$\{input\.reviewerName\} confirmed your \$\{claimed\} payment\.`/u);
+  assert.match(content, /`\$\{input\.payerName\} says they paid you \$\{formatPennies\(input\.amountPennies\)\}\.`/u);
+  assert.match(content, /`\$\{input\.actorName\} recorded your \$\{formatPennies\(input\.amountPennies\)\} payment\.`/u);
+
+  // No payment builder learned about an increase: a payment REDUCES a balance,
+  // and "this payment adds" would be exactly backwards.
+  const paymentBuilders = content.slice(content.indexOf("export function paymentRecordedNotification"));
+  assert.doesNotMatch(paymentBuilders, /increasePennies/u);
+  assert.doesNotMatch(paymentBuilders, /This purchase adds/u);
 });
 
 test("the backup proves it carried contributor eligibility", () => {

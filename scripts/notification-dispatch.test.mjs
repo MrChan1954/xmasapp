@@ -275,6 +275,94 @@ test("a real purchase reaches every other member, and only them", async () => {
   assert.ok(store.notifications.every((row) => row.event_kind === "purchase" && row.event_subject_id === "pur-1"));
 });
 
+/**
+ * The whole path, end to end: allocation row -> Owed engine -> copy ->
+ * notifications row -> Web Push body.
+ *
+ * Three things are proven here that no unit test can prove on its own:
+ *
+ *   1. Each contributor is told THEIR OWN increase. The shares below are
+ *      deliberately unequal, so a purchase-wide figure would be wrong for two
+ *      of the three readers and right for one -- the exact bug that would slip
+ *      past a fixture where everybody pays the same.
+ *   2. The in-app record and the push carry the SAME sentence. They are built
+ *      once and consumed twice; if that ever forks, the Notification Centre and
+ *      the lock screen start quoting different money.
+ *   3. The event stays in the body as context. The title still says what to do.
+ */
+test("each contributor's own increase reaches both the inbox and the push, identically", async () => {
+  const store = familyStore({
+    // £40, paid by Taylor at the checkout, split unequally. Taylor's own £10
+    // creates no obligation for Taylor -- he paid it.
+    purchase_allocations: [
+      { purchase_id: "pur-1", contributor_id: "c-taylor", responsibility_pennies: 1000 },
+      { purchase_id: "pur-1", contributor_id: "c-paige", responsibility_pennies: 1500 },
+      { purchase_id: "pur-1", contributor_id: "c-jade", responsibility_pennies: 1000 },
+      { purchase_id: "pur-1", contributor_id: "c-kirsten", responsibility_pennies: 500 },
+    ],
+  });
+  const sender = recordingSender();
+  await run(store, { sender });
+
+  const expected = new Map([
+    ["paige", "Christmas 2026 · This purchase adds £15. You now owe Taylor £15 in total."],
+    ["jade", "Christmas 2026 · This purchase adds £10. You now owe Taylor £10 in total."],
+    ["kirsten", "Christmas 2026 · This purchase adds £5. You now owe Taylor £5 in total."],
+  ]);
+
+  for (const [key, body] of expected) {
+    const push = sender.sent.find((row) => row.endpoint.endsWith(`/${key}`));
+    const inApp = store.notifications.find((row) => row.app_member_id === `m-${key}`);
+
+    assert.ok(push, `${key} was pushed to`);
+    assert.ok(inApp, `${key} has a Notification Centre row`);
+
+    // 1. Their own delta, and the authoritative total.
+    assert.equal(push.payload.body, body, key);
+
+    // 2. One set of figures, two consumers.
+    assert.equal(inApp.body, push.payload.body, `${key}: inbox and push must agree`);
+    assert.equal(inApp.title, push.payload.title, `${key}: inbox and push must agree`);
+
+    // 3. The action survives in the title; the event is context in the body.
+    assert.equal(push.payload.title, "💷 You owe Taylor");
+    assert.doesNotMatch(push.payload.title, /Christmas/u, "the event must not replace the title");
+    assert.ok(push.payload.body.startsWith("Christmas 2026 · "), "the event stays a body prefix");
+
+    // Nobody is handed the £40 purchase total as their own increase.
+    assert.doesNotMatch(push.payload.body, /adds £40\b/u, key);
+  }
+
+  // Three different deltas from one purchase, which is the point.
+  assert.equal(new Set([...expected.values()]).size, 3);
+});
+
+test("a share that creates no obligation is never announced as an increase", async () => {
+  // Kirsten is allocated nothing, so she reads the ordinary purchase notice.
+  const store = familyStore({
+    purchase_allocations: [
+      { purchase_id: "pur-1", contributor_id: "c-taylor", responsibility_pennies: 2000 },
+      { purchase_id: "pur-1", contributor_id: "c-paige", responsibility_pennies: 2000 },
+      { purchase_id: "pur-1", contributor_id: "c-kirsten", responsibility_pennies: 0 },
+    ],
+  });
+  const sender = recordingSender();
+  await run(store, { sender });
+
+  for (const row of store.notifications) {
+    assert.doesNotMatch(row.body, /adds £0\b/u, row.app_member_id);
+  }
+
+  const kirsten = store.notifications.find((row) => row.app_member_id === "m-kirsten");
+  assert.equal(kirsten?.category, "purchases", "no allocation means no owed alert");
+  assert.doesNotMatch(kirsten?.body ?? "", /This purchase adds/u);
+
+  // And the person who does carry a share still gets theirs.
+  const paige = store.notifications.find((row) => row.app_member_id === "m-paige");
+  assert.equal(paige?.category, "money_i_owe");
+  assert.match(paige?.body ?? "", /This purchase adds £20\. You now owe Taylor £20 in total\./u);
+});
+
 test("a ledger whose columns do not exist still delivers to the family", async () => {
   // THE ACTUAL BUG. `notification_events.delivered_count` did not exist,
   // because migration 019 was never applied. The dispatcher read it, threw a

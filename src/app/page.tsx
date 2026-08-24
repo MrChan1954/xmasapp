@@ -1,6 +1,6 @@
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { upcomingBirthdays, type UpcomingBirthday } from "@/lib/birthdays.ts";
-import { loadFamilyBirthdays, londonToday } from "@/utils/supabase/birthdays-server";
+import { loadFamilyBirthdays, londonToday, type BirthdayPlanning } from "@/utils/supabase/birthdays-server";
 import { getCurrentMember } from "@/utils/supabase/current-member";
 import { listEvents } from "@/utils/supabase/events-server";
 import { EventsDashboard, type DashboardEvent } from "./events-dashboard";
@@ -37,6 +37,13 @@ export default async function EventsPage() {
   const today = londonToday();
   let events: DashboardEvent[] = [];
   let birthdays: UpcomingBirthday[] = [];
+  // The money on each birthday card. `loadFamilyBirthdays` has already
+  // aggregated it from the same rows Event Home reads, so this page carries
+  // that record through untouched. It must never recompute a figure here, or a
+  // card and the screen it opens could disagree. Omitting it is not a neutral
+  // default: the prop falls back to {} and every card silently reads
+  // "Planning not started yet", however much has actually been planned.
+  let planningByPerson: Record<string, BirthdayPlanning> = {};
   let error: string | null = null;
 
   // A birthday list that fails to load must not take the events with it, and
@@ -51,6 +58,7 @@ export default async function EventsPage() {
 
   if (birthdayResult.status === "fulfilled") {
     birthdays = upcomingBirthdays(birthdayResult.value.people, today);
+    planningByPerson = birthdayResult.value.planningByPerson;
   } else if (!error) {
     error = "The family's birthdays could not be loaded. Check your connection and try again.";
   }
@@ -59,6 +67,7 @@ export default async function EventsPage() {
     <EventsDashboard
       events={events}
       birthdays={birthdays}
+      planningByPerson={planningByPerson}
       today={today}
       isAdmin={member.role === "admin"}
       error={error}

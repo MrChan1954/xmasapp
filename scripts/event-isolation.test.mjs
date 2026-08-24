@@ -440,7 +440,7 @@ test("one person's summary is per event and the two never add themselves togethe
 const SAME_ACTION_IN_BOTH_EVENTS = [
   {
     label: "you owe",
-    build: () => youOweNotification({ creditorName: "Taylor", amountPennies: 2_000 }),
+    build: () => youOweNotification({ creditorName: "Taylor", amountPennies: 2_000, increasePennies: 500 }),
   },
   {
     label: "purchase added",
@@ -519,9 +519,9 @@ test("two notifications from different events keep distinct links and collapse k
 });
 
 test("an event name long enough to overflow shrinks, and never truncates the sentence", () => {
-  const sentence = youOweNotification({ creditorName: "Taylor", amountPennies: 2_000 }).body;
+  const sentence = youOweNotification({ creditorName: "Taylor", amountPennies: 2_000, increasePennies: 500 }).body;
   const huge = withEvent(
-    youOweNotification({ creditorName: "Taylor", amountPennies: 2_000 }),
+    youOweNotification({ creditorName: "Taylor", amountPennies: 2_000, increasePennies: 500 }),
     { id: EVENT_A.id, name: "N".repeat(400), type: "other" },
   );
   assert.ok(huge.body.length <= 300, "the body must still fit its column");
@@ -538,8 +538,8 @@ test("an event name long enough to overflow shrinks, and never truncates the sen
 
 test("a family-wide payload that is never stamped stays exactly as written", () => {
   // A notification that genuinely belongs to no event must remain valid.
-  const plain = youOweNotification({ creditorName: "Taylor", amountPennies: 2_000 });
-  assert.equal(plain.body, "A new purchase means you now owe Taylor £20.");
+  const plain = youOweNotification({ creditorName: "Taylor", amountPennies: 2_000, increasePennies: 500 });
+  assert.equal(plain.body, "This purchase adds £5. You now owe Taylor £20 in total.");
   assert.equal(plain.url, "/owed");
   assert.ok(!plain.tag.includes(EVENT_A.id));
 });
