@@ -76,16 +76,20 @@ const filters = ["All", "Not started", "In progress", "Budget reached", "Over bu
 export function PeopleScreen({
   eventId,
   eventName,
-  celebrantPersonId = null,
+  fixedRecipientPersonId = null,
 }: {
   eventId: string;
   eventName: string;
   /** Set when the event is ABOUT one person; that person is its only recipient. */
-  celebrantPersonId?: string | null;
+  /**
+   * The one recipient this event can ever have, when it is a birthday.
+   * Null for every other event, which may add and remove recipients freely.
+   */
+  fixedRecipientPersonId?: string | null;
 }) {
   return (
     <Suspense fallback={null}>
-      <PeopleView eventId={eventId} eventName={eventName} celebrantPersonId={celebrantPersonId} />
+      <PeopleView eventId={eventId} eventName={eventName} fixedRecipientPersonId={fixedRecipientPersonId} />
     </Suspense>
   );
 }
@@ -93,11 +97,11 @@ export function PeopleScreen({
 function PeopleView({
   eventId,
   eventName,
-  celebrantPersonId,
+  fixedRecipientPersonId,
 }: {
   eventId: string;
   eventName: string;
-  celebrantPersonId: string | null;
+  fixedRecipientPersonId: string | null;
 }) {
   const { people, saveRecipient, restore, loading, error, isAdmin } = useFamily();
   const { budgetPennies } = useTotals();
@@ -153,14 +157,14 @@ function PeopleView({
   const mode = eventNavMode(loading || error ? null : active.length);
   const soleRecipient = mode === "single" ? active[0] : null;
 
-  const addButton = isAdmin && celebrantPersonId === null ? (
+  const addButton = isAdmin && fixedRecipientPersonId === null ? (
     <Button size="lg" onClick={() => setAdding(true)} className="w-full sm:w-auto">
       <IconPlus size={18} />
       {mode === "multi" ? "Add person" : "Add recipient"}
     </Button>
   ) : undefined;
 
-  const addForm = isAdmin && celebrantPersonId === null && adding ? (
+  const addForm = isAdmin && fixedRecipientPersonId === null && adding ? (
     <AddForm
       eventId={eventId}
       eventName={eventName}

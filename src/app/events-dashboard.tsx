@@ -6,7 +6,7 @@ import { formatPennies } from "@/lib/currency";
 import { purchaseProgressStatus, type PurchaseProgressStatus } from "@/lib/purchases";
 import type { BirthdayPlanning } from "@/utils/supabase/birthdays-server";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { DASHBOARD_BIRTHDAY_LIMIT, birthdayWorkspacePath, birthdaysWithinWindow, describeDaysAway, formatBirthday, type UpcomingBirthday } from "@/lib/birthdays.ts";
+import { birthdayWorkspacePath, birthdaysWithinWindow, describeDaysAway, describeTurningAge, formatBirthday, type UpcomingBirthday } from "@/lib/birthdays.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventPath, eventTypeMeta, formatEventDate, groupDashboardEvents, type EventSummary } from "@/lib/events.ts";
 import { AppShell, PageHeader } from "./components/app-shell";
@@ -47,6 +47,7 @@ export function EventsDashboard({
   events,
   birthdays = [],
   planningByPerson = {},
+  viewerPersonId = null,
   today,
   isAdmin,
   error,
@@ -60,6 +61,8 @@ export function EventsDashboard({
    * "planning not started", never as a £0 budget somebody chose.
    */
   planningByPerson?: Record<string, BirthdayPlanning>;
+  /** The reader's own person, so their own card can say it is a surprise. */
+  viewerPersonId?: string | null;
   today: string;
   isAdmin: boolean;
   error?: string | null;
@@ -108,6 +111,7 @@ export function EventsDashboard({
         birthdays={birthdays}
         today={today}
         planningByPerson={planningByPerson}
+        viewerPersonId={viewerPersonId}
         isAdmin={isAdmin}
       />
       <EventSection
@@ -145,16 +149,19 @@ function UpcomingBirthdaysSection({
   birthdays,
   today,
   planningByPerson,
+  viewerPersonId,
   isAdmin,
 }: {
   /** EVERY birthday the family has recorded, ordered by how soon it falls. */
   birthdays: UpcomingBirthday[];
   today: string;
   planningByPerson: Record<string, BirthdayPlanning>;
+  viewerPersonId: string | null;
   isAdmin: boolean;
 }) {
-  const withinWindow = birthdaysWithinWindow(birthdays, today);
-  const shown = withinWindow.slice(0, DASHBOARD_BIRTHDAY_LIMIT);
+  // Everything in the window, uncapped: a birthday three weeks away is not
+  // less urgent for being fifth in the list.
+  const shown = birthdaysWithinWindow(birthdays, today);
   // The next one the family has, whether or not it is close enough to show.
   const nextOfAll = birthdays[0];
 
@@ -189,6 +196,7 @@ function UpcomingBirthdaysSection({
                 key={person.personId}
                 person={person}
                 planning={planningByPerson[person.personId]}
+                isSelf={person.personId === viewerPersonId}
                 isAdmin={isAdmin}
               />
             ))}
@@ -212,16 +220,28 @@ function UpcomingBirthdaysSection({
 function BirthdayCard({
   person,
   planning,
+  isSelf,
   isAdmin,
 }: {
   person: UpcomingBirthday;
   planning: BirthdayPlanning | undefined;
+  /**
+   * Is this the reader's own birthday? Then there is nothing to show and
+   * nothing to start, and the card says why.
+   *
+   * `planning` is already undefined here whatever the family has done, because
+   * row level security removed the event before this component existed. Without
+   * this flag the card would say "Planning not started yet" to the one person
+   * who must not be told either way.
+   */
+  isSelf: boolean;
   isAdmin: boolean;
 }) {
-  const status: PurchaseProgressStatus | null = planning
+  const status: PurchaseProgressStatus | null = planning && !isSelf
     ? purchaseProgressStatus(planning.spentPennies, planning.budgetPennies)
     : null;
   const hasBudget = (planning?.budgetPennies ?? 0) > 0;
+  const turning = describeTurningAge(person.birthday, person.next.year);
 
   return (
     <Link
@@ -245,13 +265,27 @@ function BirthdayCard({
               {describeDaysAway(person.next.daysAway)}
             </span>
           </p>
+          {/* The age they turn on THIS occurrence, and only when the year of
+              birth is recorded. No year means no age -- never a guess. */}
+          {turning && (
+            <p className="mt-1 text-xs font-semibold text-accent">{turning}</p>
+          )}
         </div>
         {person.next.isToday
           ? <Badge tone="success">Today</Badge>
           : status && <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>}
       </div>
 
-      {planning
+      {isSelf
+        ? (
+          <div className="mt-4">
+            <p className="text-sm font-medium text-ink-700">🎁 It&apos;s a surprise</p>
+            <p className="mt-1 text-xs text-ink-600">
+              Your own planning is hidden from you.
+            </p>
+          </div>
+        )
+        : planning
         ? (
           <div className="mt-4">
             <p className="text-sm font-semibold text-ink-900">
@@ -283,7 +317,7 @@ function BirthdayCard({
 
       <div className="mt-auto flex items-end justify-end pt-4">
         <p className="text-xs font-semibold tracking-eyebrow text-accent uppercase">
-          {planning ? "Open →" : isAdmin ? "Start planning →" : "Open →"}
+          {isSelf ? "Open →" : planning ? "Open →" : isAdmin ? "Start planning →" : "Open →"}
         </p>
       </div>
     </Link>

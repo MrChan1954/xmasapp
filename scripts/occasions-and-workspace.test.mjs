@@ -50,9 +50,12 @@ test("1. a permanent birthday with no occurrence at all is a valid page", () => 
   assert.doesNotMatch(resolverPage, /requireEvent/u, "the route must not need an event id");
 
   // The loader returns a complete workspace before it looks at any event.
+  // `isSelf` now shares that early return: the reader's own birthday has no
+  // occurrences it is allowed to see, so it takes the same ordinary path rather
+  // than a failure path.
   assert.ok(
-    workspaceServer.includes("if (events.length === 0) {")
-    && workspaceServer.includes("previous: [], unused: [], isAdmin, today,"),
+    workspaceServer.includes("if (isSelf || events.length === 0) {")
+    && workspaceServer.includes("previous: [], unused: [], isSelf, isAdmin, today,"),
     "no occurrences is an ordinary return, not a failure",
   );
 

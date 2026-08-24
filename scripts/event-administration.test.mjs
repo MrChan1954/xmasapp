@@ -30,6 +30,7 @@ const BUDGET_MIGRATION = "202608100029_add_monthly_birthday_budget_reminder.sql"
 const budgetSql = read("supabase", "migrations", BUDGET_MIGRATION);
 
 const CONTRIBUTOR_MIGRATION = "202608100030_family_contributors_and_atomic_setup.sql";
+const PRIVACY_MIGRATION = "202608100031_birthday_privacy_and_contributor_birthday_edits.sql";
 const contributorSql = read("supabase", "migrations", CONTRIBUTOR_MIGRATION);
 
 /** The body of one `create ... function public.<name>(` block. */
@@ -54,14 +55,15 @@ const ADMIN_WRITES = [
 // 1. Migration hygiene -- the same invariants every applied migration holds
 // ---------------------------------------------------------------------------
 
-test("026 to 030 are the five newest migrations, in that order", () => {
+test("026 to 031 are the six newest migrations, in that order", () => {
   const files = readdirSync(join(root, "supabase", "migrations")).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(files.at(-5), MIGRATION, "026 must be fifth-newest");
-  assert.equal(files.at(-4), REMINDER_MIGRATION, "027 must be fourth-newest");
-  assert.equal(files.at(-3), OCCASION_MIGRATION, "028 must be third-newest");
-  assert.equal(files.at(-2), BUDGET_MIGRATION, "029 must be second-newest");
-  assert.equal(files.at(-1), CONTRIBUTOR_MIGRATION, "030 must be the newest");
-  for (const prefix of ["202608100026", "202608100027", "202608100028", "202608100029", "202608100030"]) {
+  assert.equal(files.at(-6), MIGRATION, "026 must be sixth-newest");
+  assert.equal(files.at(-5), REMINDER_MIGRATION, "027 must be fifth-newest");
+  assert.equal(files.at(-4), OCCASION_MIGRATION, "028 must be fourth-newest");
+  assert.equal(files.at(-3), BUDGET_MIGRATION, "029 must be third-newest");
+  assert.equal(files.at(-2), CONTRIBUTOR_MIGRATION, "030 must be second-newest");
+  assert.equal(files.at(-1), PRIVACY_MIGRATION, "031 must be the newest");
+  for (const prefix of ["202608100026", "202608100027", "202608100028", "202608100029", "202608100030", "202608100031"]) {
     assert.equal(
       files.filter((name) => name.startsWith(prefix)).length,
       1,
@@ -282,10 +284,20 @@ test("every Checkpoint 4 screen gates on the server before it renders", () => {
   assert.doesNotMatch(settingsPage, /eq\("year"/u, "settings must not resolve an event by year");
 
   // Birthdays is family-wide and readable by everyone; only the EDITING is
-  // admin-only, and the flag it passes is a courtesy over the RPC's own check.
+  // restricted, and the flag it passes is a courtesy over the RPC's own check.
+  //
+  // That flag is no longer `isAdmin`. Migration 031 widened birthday-date
+  // maintenance to family contributors, so the screen is told the answer to the
+  // question it actually asks -- "may this reader edit a date" -- rather than a
+  // role it would have to translate. The database checks the same two things
+  // itself, so a stale flag can only cost a button, never a write.
   const birthdaysPage = read("src", "app", "birthdays", "page.tsx");
-  assert.match(birthdaysPage, /isAdmin=\{|isAdmin:/u, "the screen is told whether to offer editing");
+  assert.match(birthdaysPage, /canEditBirthdays=\{/u, "the screen is told whether to offer editing");
+  assert.match(birthdaysPage, /canEditBirthdays=\{data\.canEditBirthdays\}/u, "and told it by the server");
   assert.doesNotMatch(birthdaysPage, /redirect\("\/"\)/u, "reading birthdays is not admin-only");
+
+  // The signed-out render offers nothing, rather than defaulting to permitted.
+  assert.match(birthdaysPage, /canEditBirthdays=\{false\}/u, "a failed load may not offer editing");
 });
 
 test("no screen writes to an event, a recipient or a contributor except through the RPCs", () => {

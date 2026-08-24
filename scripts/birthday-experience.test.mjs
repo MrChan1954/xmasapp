@@ -29,7 +29,7 @@ const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
 
 const { groupDashboardEvents, isBirthdayOccurrence } = await import("../src/lib/events.ts");
 const {
-  DASHBOARD_BIRTHDAY_LIMIT, REMINDER_STAGES, birthdayWorkspacePath,
+  REMINDER_STAGES, birthdayWorkspacePath,
   dueReminderStages, upcomingBirthdays,
 } = await import("../src/lib/birthdays.ts");
 
@@ -175,11 +175,16 @@ test("December rolls into January without anything being recreated", () => {
   assert.equal(onTheDay.next.isToday, true);
 });
 
-test("the dashboard shows a small fixed number, and says where the rest are", () => {
-  assert.equal(DASHBOARD_BIRTHDAY_LIMIT, 4);
+test("the dashboard shows everything in the window, and says where the rest are", () => {
   const dashboard = read("src", "app", "events-dashboard.tsx");
-  assert.match(dashboard, /\.slice\(0, DASHBOARD_BIRTHDAY_LIMIT\)/, "the glance is capped");
-  assert.match(dashboard, /href="\/birthdays"/, "and the full list is one tap away");
+
+  // THE CAP IS GONE, and must stay gone. A count-based cap and a time-based
+  // window solve the same problem; keeping both meant the fifth birthday in a
+  // busy month -- the one with least time left to plan for -- was the one
+  // hidden. The window is the only rule now.
+  assert.ok(!dashboard.includes("DASHBOARD_BIRTHDAY_LIMIT"), "the four-card cap must not come back");
+  assert.doesNotMatch(dashboard, /shown\.slice\(|withinWindow\.slice\(/u, "and nor may a new one");
+  assert.match(dashboard, /href="\/birthdays"/, "the full list is one tap away");
   assert.match(
     dashboard,
     /All \$\{birthdays\.length\} birthdays/,
@@ -205,8 +210,7 @@ test("the dashboard shows one rolling calendar month, not the whole year", () =>
   // The cut is the shared helper, applied to the family's own date. A local
   // day-count here would be a second calendar, free to disagree with the model
   // about what "one month" means in February.
-  assert.match(dashboard, /birthdaysWithinWindow\(birthdays, today\)/u);
-  assert.match(dashboard, /const shown = withinWindow\.slice\(0, DASHBOARD_BIRTHDAY_LIMIT\)/u);
+  assert.match(dashboard, /const shown = birthdaysWithinWindow\(birthdays, today\);/u);
 
   // No hand-rolled window. Scoped to the SECTION, because the card below it
   // legitimately compares daysAway to highlight a birthday inside a week --
@@ -248,6 +252,90 @@ test("the dashboard window is a view, and the Birthdays page is the record", () 
   }
   const loader = read("src", "utils", "supabase", "birthdays-server.ts");
   assert.ok(!/\.(insert|update|delete|upsert)\(/u.test(loader), "the birthday loader only reads");
+});
+
+// ---------------------------------------------------------------------------
+// Your own birthday
+//
+// The rule: the celebrant never sees the planning for their own birthday, and
+// admin does not beat it. Migration 031 enforces it in row level security --
+// these pin the APPLICATION half, which is that the app explains the state
+// instead of showing an empty or misleading one.
+// ---------------------------------------------------------------------------
+
+test("the resolver shows a privacy screen for your own birthday, and never redirects into it", () => {
+  const page = read("src", "app", "birthdays", "[personId]", "page.tsx");
+
+  // Checked BEFORE the redirect. Sending the celebrant to their own Event Home
+  // is precisely the disclosure the rule exists to prevent.
+  const selfCheck = page.indexOf("workspace.isSelf");
+  const redirectCall = page.indexOf("redirect(destination)");
+  assert.ok(selfCheck > 0, "the resolver must ask whether this is the reader's own birthday");
+  assert.ok(redirectCall > 0, "and still redirect for everybody else's");
+  assert.ok(selfCheck < redirectCall, "the privacy check must come first");
+
+  assert.match(page, /<OwnBirthdayScreen/u);
+
+  // A 404 would read as a broken app to the one person certain to try it.
+  const selfArm = page.slice(selfCheck, redirectCall);
+  assert.ok(!selfArm.includes("notFound()"), "their own birthday is not an error");
+  assert.ok(!selfArm.includes("redirect("), "and not a redirect");
+});
+
+test("the privacy screen says why, and shows only what is not a secret", () => {
+  const screen = read("src", "app", "birthdays", "[personId]", "own-birthday-screen.tsx");
+
+  assert.match(screen, /can&apos;t see what you&apos;re getting/u);
+  assert.match(screen, /so your presents stay a surprise/u);
+  assert.match(screen, /applies to admins too/iu, "the rule outranks admin, and says so");
+
+  // The date and the age are theirs. The money is not.
+  assert.match(screen, /formatBirthday\(birthday\.month, birthday\.day\)/u);
+  assert.match(screen, /describeTurningAge\(/u);
+  for (const forbidden of ["formatPennies", "budgetPennies", "spentPennies", "FinancialProgressBar", "giftCount", "ideaCount"]) {
+    assert.ok(!screen.includes(forbidden), `the privacy screen must not render ${forbidden}`);
+  }
+  assert.ok(!screen.includes("StartPlanningScreen"), "and must not offer to start it");
+});
+
+test("the loader refuses to hand the celebrant a workspace or a contributor list", () => {
+  const loader = read("src", "utils", "supabase", "birthdays-server.ts");
+
+  assert.match(loader, /const isSelf = membership\.data\.person_id !== null && membership\.data\.person_id === person\.personId;/u);
+  assert.match(loader, /if \(isSelf \|\| events\.length === 0\) \{/u,
+    "their own birthday takes the same empty path as an unplanned one");
+  assert.match(loader, /eligibleContributors: isSelf \? \[\] : eligibleContributors/u,
+    "nobody is offered as a contributor to the reader's own birthday");
+});
+
+test("the dashboard card says it is a surprise rather than 'not started'", () => {
+  const dashboard = read("src", "app", "events-dashboard.tsx");
+
+  assert.match(dashboard, /isSelf=\{person\.personId === viewerPersonId\}/u);
+  assert.match(dashboard, /It&apos;s a surprise/u);
+
+  // "Planning not started yet" would be a claim about their own presents that
+  // may well be false, so the surprise arm comes first.
+  const card = dashboard
+    .slice(dashboard.indexOf("function BirthdayCard"))
+    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, "");
+  assert.ok(card.indexOf("{isSelf") < card.indexOf("Planning not started yet"));
+
+  // And the status badge cannot be computed from planning they must not see.
+  assert.match(dashboard, /const status: PurchaseProgressStatus \| null = planning && !isSelf/u);
+});
+
+test("the viewer's own person is read on the server, never guessed in the browser", () => {
+  const loader = read("src", "utils", "supabase", "birthdays-server.ts");
+  assert.match(loader, /viewerPersonId: string \| null;/u);
+  assert.match(loader, /select\("role,person_id"\)/u, "the membership row is the source");
+
+  const page = read("src", "app", "page.tsx");
+  assert.match(page, /viewerPersonId = birthdayResult\.value\.viewerPersonId;/u);
+  assert.match(page, /viewerPersonId=\{viewerPersonId\}/u);
+
+  // A signed-out or membership-less render must not default to "somebody".
+  assert.match(loader, /viewerPersonId: null, canEditBirthdays: false, isAdmin: false, today,/u);
 });
 
 test("the root page reads birthdays and events independently", () => {

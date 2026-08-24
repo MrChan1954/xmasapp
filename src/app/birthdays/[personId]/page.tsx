@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventPath } from "@/lib/events.ts";
 import { loadBirthdayWorkspace } from "@/utils/supabase/birthdays-server";
+import { OwnBirthdayScreen } from "./own-birthday-screen";
 import { StartPlanningScreen } from "./start-planning-screen";
 
 export const dynamic = "force-dynamic";
@@ -36,6 +37,29 @@ export default async function BirthdayPage({ params }: PageProps<"/birthdays/[pe
   const { personId } = await params;
   const workspace = await loadBirthdayWorkspace(personId);
   if (!workspace) notFound();
+
+  /**
+   * YOUR OWN BIRTHDAY IS THE ONE YOU CANNOT OPEN.
+   *
+   * Checked before anything else, and deliberately not as a redirect: sending
+   * the celebrant to their own Event Home is precisely the disclosure the rule
+   * exists to prevent, and a 404 would read as a broken app to the one person
+   * certain to try it. They get a screen that says so, with their own date and
+   * age on it -- which were never the secret.
+   *
+   * The lock itself is migration 031's row level security. `isSelf` is how this
+   * page knows to explain rather than to show an empty workspace.
+   */
+  if (workspace.isSelf) {
+    return (
+      <OwnBirthdayScreen
+        personName={workspace.person.name}
+        birthday={workspace.person.birthday}
+        year={workspace.currentYear}
+        today={workspace.today}
+      />
+    );
+  }
 
   // The occurrence for the birthday that is COMING. A past year's planning is
   // history and must never stand in for it.

@@ -124,6 +124,52 @@ export function nextBirthdayOccurrence(
   return { date, year: Number(date.slice(0, 4)), daysAway, isToday: daysAway === 0 };
 }
 
+/**
+ * The age somebody turns on a GIVEN occurrence -- not their age today.
+ *
+ * The distinction is the whole point. On 24 August 2026, somebody born on
+ * 6 November 1996 is 29; the card is about 6 November 2026, when they turn 30.
+ * And once that birthday has passed, the card is about November 2027 and the
+ * answer becomes 31. Taking "current age" would show the wrong number for two
+ * months of every year, and the wrong number on the card that matters most.
+ *
+ * `birthday_year` is optional and stays optional. Unknown means unknown: this
+ * returns null rather than guessing, and every caller omits the age entirely.
+ * A birth year in the future, or one that would make somebody negative, is
+ * treated as unknown too -- it is bad data, not a fact about a person.
+ */
+export function ageOnOccurrence(birthday: Birthday, occurrenceYear: number): number | null {
+  if (birthday.year === null || !Number.isInteger(birthday.year)) return null;
+  if (!Number.isInteger(occurrenceYear)) return null;
+  const age = occurrenceYear - birthday.year;
+  return age >= 0 && age <= 150 ? age : null;
+}
+
+/**
+ * The birthdays a family makes a fuss of.
+ *
+ * Presentation only. Nothing in this list changes a budget, a contribution, a
+ * reminder or any other behaviour -- a milestone is a reason to add an emoji,
+ * not a reason for the software to decide anything about money.
+ */
+export const MILESTONE_AGES: readonly number[] = [18, 21, 30, 40, 50, 60, 70, 80, 90, 100];
+
+export function isMilestoneAge(age: number | null): boolean {
+  return age !== null && MILESTONE_AGES.includes(age);
+}
+
+/**
+ * "Turning 30 🎉", "Turning 31", or nothing at all.
+ *
+ * One place, so the dashboard card, the Birthdays list and the Start Planning
+ * summary cannot drift into three slightly different sentences.
+ */
+export function describeTurningAge(birthday: Birthday, occurrenceYear: number): string | null {
+  const age = ageOnOccurrence(birthday, occurrenceYear);
+  if (age === null) return null;
+  return isMilestoneAge(age) ? `Turning ${age} 🎉` : `Turning ${age}`;
+}
+
 /** Whole days from one calendar date to another. Both are dates, never instants. */
 export function daysBetween(from: string, to: string): number {
   return Math.round((Date.UTC(...parts(to)) - Date.UTC(...parts(from))) / 86_400_000);
@@ -207,15 +253,19 @@ export const REMINDER_STAGES: Array<{
   { stage: "one_day", label: "tomorrow", subtract: { months: 0, days: 1 } },
 ];
 
-/**
- * How many birthdays the dashboard shows at a glance.
+/*
+ * THERE IS DELIBERATELY NO DASHBOARD BIRTHDAY CAP.
  *
- * Four, because that is one row on a wide screen and two on a phone: enough to
- * answer "is anything coming up?" without the front page turning into a list.
- * Everything else is one tap away on the Birthdays page, which is the full
- * system rather than the glance.
+ * There used to be one: four cards, because the front page listed the whole
+ * year and would otherwise have become a list. The one-month window replaced
+ * the reason for it. Everything inside that window is imminent by definition,
+ * and hiding the fifth of five birthdays in the next four weeks would drop the
+ * one somebody had least time to plan for -- which is the opposite of what a
+ * front page is for.
+ *
+ * A count-based cap and a time-based window solve the same problem; keeping
+ * both means the window quietly stops being the rule.
  */
-export const DASHBOARD_BIRTHDAY_LIMIT = 4;
 
 /**
  * How far ahead the dashboard looks: ONE ROLLING CALENDAR MONTH.

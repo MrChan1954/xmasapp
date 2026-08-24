@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { REMINDER_STAGES, addCalendarMonths, birthdayOccurrence, birthdaysWithinWindow, describeDaysAway, dueReminderStages, formatBirthday, isValidBirthday, isValidBirthYear, nextBirthdayOccurrence, peopleWithoutBirthdays, suggestedBirthdayEventName, upcomingBirthdays, type PersonBirthday } from "./birthdays.ts";
+import { MILESTONE_AGES, REMINDER_STAGES, addCalendarMonths, ageOnOccurrence, birthdayOccurrence, birthdaysWithinWindow, describeDaysAway, describeTurningAge, dueReminderStages, formatBirthday, isMilestoneAge, isValidBirthday, isValidBirthYear, nextBirthdayOccurrence, peopleWithoutBirthdays, suggestedBirthdayEventName, upcomingBirthdays, type PersonBirthday } from "./birthdays.ts";
 
 // ---------------------------------------------------------------------------
 // What this file is for
@@ -320,6 +320,64 @@ test("a suggested event name says whose birthday and which year", () => {
 // ---------------------------------------------------------------------------
 // 7. The model holds no birthdays of its own
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// The age somebody turns
+//
+// The card is about an OCCURRENCE, so the age on it is the age at that
+// occurrence -- not the age today. The two differ for two months of every year,
+// on exactly the card that matters most.
+// ---------------------------------------------------------------------------
+
+test("the age is the one they turn on that occurrence, not their age today", () => {
+  const born = { month: 11, day: 6, year: 1996 };
+
+  // 24 August 2026: they are 29 today, and the coming birthday is their 30th.
+  assert.equal(ageOnOccurrence(born, occurrence(born, "2026-08-24").year), 30);
+
+  // 7 November 2026, the day after: the coming birthday is now next year's, and
+  // the answer moves on by one without any stored value changing.
+  assert.equal(ageOnOccurrence(born, occurrence(born, "2026-11-07").year), 31);
+
+  // On the day itself, it is today's birthday -- still the 30th.
+  assert.equal(ageOnOccurrence(born, occurrence(born, "2026-11-06").year), 30);
+});
+
+test("an unknown year of birth means no age, never a guess", () => {
+  assert.equal(ageOnOccurrence({ month: 11, day: 6, year: null }, 2026), null);
+  assert.equal(describeTurningAge({ month: 11, day: 6, year: null }, 2026), null);
+
+  // And impossible data is unknown too, rather than a negative or absurd age.
+  assert.equal(ageOnOccurrence({ month: 1, day: 1, year: 2030 }, 2026), null, "born in the future");
+  assert.equal(ageOnOccurrence({ month: 1, day: 1, year: 1700 }, 2026), null, "older than anybody");
+  assert.equal(ageOnOccurrence({ month: 1, day: 1, year: 2026 }, 2026), 0, "a first birthday is zero, and is real");
+});
+
+test("milestones get an emoji, and change nothing else", () => {
+  const at = (age: number) => describeTurningAge({ month: 6, day: 1, year: 2026 - age }, 2026);
+
+  assert.equal(at(30), "Turning 30 🎉");
+  assert.equal(at(18), "Turning 18 🎉");
+  assert.equal(at(100), "Turning 100 🎉");
+  assert.equal(at(31), "Turning 31");
+  assert.equal(at(29), "Turning 29");
+
+  // Exactly this list, so a milestone cannot quietly appear or disappear.
+  assert.deepEqual([...MILESTONE_AGES], [18, 21, 30, 40, 50, 60, 70, 80, 90, 100]);
+  for (const age of MILESTONE_AGES) assert.equal(isMilestoneAge(age), true, String(age));
+  for (const age of [0, 17, 19, 25, 35, 99, 101]) assert.equal(isMilestoneAge(age), false, String(age));
+  assert.equal(isMilestoneAge(null), false);
+});
+
+test("a 29 February birthday still gets the right age in a non-leap year", () => {
+  // The occurrence is observed on 28 February 2027, but the YEAR is 2027 and
+  // the age follows the year, not the observed day.
+  const born = { month: 2, day: 29, year: 2000 };
+  const next = occurrence(born, "2027-01-01");
+  assert.equal(next.date, "2027-02-28", "observed on the 28th");
+  assert.equal(next.year, 2027);
+  assert.equal(ageOnOccurrence(born, next.year), 27);
+});
 
 // ---------------------------------------------------------------------------
 // The dashboard's one-month window

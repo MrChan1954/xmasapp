@@ -375,11 +375,18 @@ export async function loadFamilyContext(
   // who is active, and what they have asked to hear about — is what a birthday
   // reminder needs, and that is family-wide.
   const empty = { data: [] as never[], error: null };
-  const [contributors, recipients, memberships, preferences] = await Promise.all([
+  const [contributors, recipients, memberships, preferences, subject] = await Promise.all([
     eventId ? reader.from("contributors").select("id,person_id,active").eq("christmas_event_id", eventId) : empty,
     eventId ? reader.from("christmas_recipients").select("id,person_id").eq("christmas_event_id", eventId) : empty,
     admin.from("app_members").select("id,person_id,contributor_id,active").eq("active", true),
     admin.from("notification_preferences").select("*"),
+    // Read through the ADMIN client, deliberately. This decides who is left
+    // OUT, and a read that came back empty because of the caller's own row
+    // level security would fail open -- which for this rule means telling
+    // somebody what they are getting for their birthday.
+    eventId
+      ? admin.from("events").select("event_type,celebrant_person_id").eq("id", eventId).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
   ]);
   if (contributors.error || recipients.error) throw new NotificationError(503, "Christmas contributors could not be loaded.");
   if (memberships.error) throw new NotificationError(503, "Family membership could not be loaded.");
@@ -408,7 +415,32 @@ export async function loadFamilyContext(
     preferences.data.map((row: { app_member_id: string }) => [row.app_member_id, row as unknown as Record<string, boolean>]),
   );
 
-  const members: NotifiableMember[] = memberships.data.map((membership: { id: string; person_id: string | null; contributor_id: string | null }) => {
+  /**
+   * THE BIRTHDAY PERSON IS NOT IN THE AUDIENCE FOR THEIR OWN BIRTHDAY.
+   *
+   * Not "gets a quieter message" -- removed, before any planner runs. Every
+   * kind that flows through this pipeline is about the planning: a purchase, a
+   * gift idea, a gift marked wrapped, a balance, a payment. There is no message
+   * about somebody's own birthday event that they are allowed to receive.
+   *
+   * Excluding here rather than in each planner is the point. Six planners with
+   * six chances to forget is how the celebrant ends up being told "Jade added
+   * £45 of gifts for you" -- which is exactly what happened before this: the
+   * purchase planner notified everybody who was not the actor, and the
+   * celebrant is not the actor.
+   *
+   * Only birthdays. A Christmas recipient is not a secret from themselves in
+   * this family, and nothing here changes who hears about any other event.
+   */
+  const subjectRow = (subject as { data: { event_type?: string; celebrant_person_id?: string | null } | null }).data;
+  const hiddenFromPersonId = subjectRow?.event_type === "birthday"
+    ? subjectRow.celebrant_person_id ?? null
+    : null;
+
+  const members: NotifiableMember[] = memberships.data
+    .filter((membership: { person_id: string | null }) =>
+      hiddenFromPersonId === null || membership.person_id !== hiddenFromPersonId)
+    .map((membership: { id: string; person_id: string | null; contributor_id: string | null }) => {
     const contributor = contributors.data.find((row: { id: string; person_id: string; active: boolean }) =>
       row.active && (row.id === membership.contributor_id || row.person_id === membership.person_id),
     );
