@@ -174,7 +174,7 @@ export function Purchases({
     }
     await loadPurchases();
     setConfirming(null);
-    setNotice(`“${purchase.description}” was removed from Christmas spending. Its history was preserved.`);
+    setNotice(`“${purchase.description}” was removed from this event's spending. Its history was preserved.`);
     setBusy(null);
   };
 
@@ -265,7 +265,7 @@ export function Purchases({
                 {confirming?.id === purchase.id && (
                   <div className="mt-3 rounded-xl border border-berry-soft-border bg-berry-soft p-3.5">
                     <p className="text-sm font-semibold">Remove “{purchase.description}”?</p>
-                    <p className="mt-1 text-xs leading-5 text-ink-600">This removes {formatPennies(purchase.actual_price_pennies)} from Christmas spending. Financial history will be preserved.</p>
+                    <p className="mt-1 text-xs leading-5 text-ink-600">This removes {formatPennies(purchase.actual_price_pennies)} from this event&apos;s spending. Financial history will be preserved.</p>
                     <div className="mt-3 grid grid-cols-2 gap-2">
                       <Button variant="secondary" disabled={busy === purchase.id} onClick={() => setConfirming(null)}>Cancel</Button>
                       <Button variant="danger" disabled={busy === purchase.id} onClick={() => void removePurchase(purchase)}>{busy === purchase.id ? "Removing..." : "Remove purchase"}</Button>

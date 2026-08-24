@@ -32,7 +32,9 @@ const {
   validateEventInput, yearStatedInName, eventNavMode,
 } = await import("../src/lib/events.ts");
 
-const workspaceScreen = read("src", "app", "birthdays", "[personId]", "workspace-screen.tsx");
+const resolverPage = read("src", "app", "birthdays", "[personId]", "page.tsx");
+const setupScreen = read("src", "app", "birthdays", "[personId]", "start-planning-screen.tsx");
+const historyScreen = read("src", "app", "birthdays", "[personId]", "history", "history-screen.tsx");
 const workspaceServer = read("src", "utils", "supabase", "birthdays-server.ts");
 const createForm = read("src", "app", "events", "new", "create-event-form.tsx");
 const migration28 = read("supabase", "migrations", "202608100028_add_mothers_and_fathers_day.sql");
@@ -43,40 +45,37 @@ const migration28 = read("supabase", "migrations", "202608100028_add_mothers_and
 
 test("1. a permanent birthday with no occurrence at all is a valid page", () => {
   // The route is the PERSON. It must never need an event to exist — most
-  // birthdays have no planning started, and that is the normal state, not an
-  // error.
-  const page = read("src", "app", "birthdays", "[personId]", "page.tsx");
-  assert.match(page, /loadBirthdayWorkspace\(personId\)/u);
-  assert.doesNotMatch(page, /eventId|requireEvent/u, "the route must not need an event id");
+  // birthdays have no planning started, and that is the normal state.
+  assert.match(resolverPage, /loadBirthdayWorkspace\(personId\)/u);
+  assert.doesNotMatch(resolverPage, /requireEvent/u, "the route must not need an event id");
 
   // The loader returns a complete workspace before it looks at any event.
   assert.ok(
     workspaceServer.includes("if (events.length === 0) {")
-    && workspaceServer.includes("return { person, current: null, currentYear, previous: [], unused: [], isAdmin, today };"),
+    && workspaceServer.includes("previous: [], unused: [], isAdmin, today,"),
     "no occurrences is an ordinary return, not a failure",
   );
 
-  // And the screen says so, with the admin's way forward.
-  assert.match(workspaceScreen, /Nothing planned for \{currentYear\} yet/u);
-  assert.match(workspaceScreen, /Start planning/u);
-  assert.match(workspaceScreen, /\{isAdmin && next && \(/u, "offered to the Global Admin only");
+  // And the setup screen says so, with the admin's way forward.
+  assert.match(setupScreen, /Start planning/u);
+  assert.match(setupScreen, /Nothing has been planned for/u, "a member is told plainly");
 });
 
 test("2-4. opening, leaving, reopening, reloading and pasting the URL are the same request", () => {
-  // There is no client state to get stale: the page is a Server Component that
-  // reads from the person id in the URL every time. Whatever made the second
-  // visit differ from the first cannot live here.
-  const page = read("src", "app", "birthdays", "[personId]", "page.tsx");
-  assert.match(page, /export const dynamic = "force-dynamic";/u, "never served from a cache");
-  // The DIRECTIVE, not the words: this file's comments explain the client
-  // boundary, so a bare search for the phrase finds its own documentation.
+  // There is no client state to get stale: the resolver is a Server Component
+  // that reads from the person id in the URL every time, on every entry.
+  assert.match(resolverPage, /export const dynamic = "force-dynamic";/u, "never served from a cache");
   assert.ok(
-    !workspaceScreen.trimStart().startsWith('"use client"')
-    && !workspaceScreen.trimStart().startsWith("'use client'"),
-    "the screen renders on the server",
+    !resolverPage.trimStart().startsWith('"use client"')
+    && !resolverPage.trimStart().startsWith("'use client'"),
+    "the resolver runs on the server",
   );
-  assert.doesNotMatch(workspaceScreen, /useState|useEffect|useRouter|useSearchParams/u,
+  assert.doesNotMatch(resolverPage, /useState|useEffect|useRouter|useSearchParams/u,
     "and holds no state that could differ between visits");
+
+  // `redirect` and `notFound` throw. Catching either would turn a redirect
+  // into a crash, so neither may sit inside a try.
+  assert.doesNotMatch(resolverPage, /try\s*\{/u, "no try/catch around thrown control flow");
 });
 
 test("5. reading the page creates nothing", () => {
@@ -86,7 +85,15 @@ test("5. reading the page creates nothing", () => {
     /\.(insert|update|upsert|delete)\(|rpc\(/u,
     "the loader only reads",
   );
-  assert.doesNotMatch(workspaceScreen, /rpc\(|\.insert\(|\.update\(/u, "and so does the screen");
+  assert.doesNotMatch(resolverPage, /rpc\(|\.insert\(|\.update\(/u, "and so does the resolver");
+
+  // The setup screen writes — but only when submitted, never on render.
+  assert.match(setupScreen, /const start = async \(\) => \{/u, "creation is an explicit action");
+  assert.match(setupScreen, /rpc\("start_birthday_planning"/u);
+  assert.ok(
+    setupScreen.indexOf("const start = async () => {") < setupScreen.indexOf('rpc("start_birthday_planning"'),
+    "the only write is inside that handler",
+  );
 });
 
 test("6. a historical occurrence is never mistaken for this year's planning", () => {
@@ -102,25 +109,21 @@ test("6. a historical occurrence is never mistaken for this year's planning", ()
 
 test("7. an occurrence dated in a birth year cannot become current planning", () => {
   // Production holds a birthday occurrence dated in a birth YEAR — somebody
-  // typed a date of birth into Create Event, where the date field means the day
-  // the event is for. It must never present itself as this year's plan.
+  // typed a date of birth into Create Event. It must never present itself as
+  // this year's plan.
   const occurrences = [
-    { year: 1995, status: "active", gifts: [], openIdeas: [] },
-    { year: 2026, status: "active", gifts: [], openIdeas: [] },
+    { year: 1995, status: "active" },
+    { year: 2027, status: "active" },
   ];
-  const currentYear = 2026;
-  const current = occurrences.find((o) => o.year === currentYear && o.status === "active");
-  assert.equal(current?.year, 2026);
-
-  // With only the 1995 row, there is no current planning at all.
-  const only1995 = [occurrences[0]];
-  assert.equal(only1995.find((o) => o.year === currentYear && o.status === "active"), undefined);
+  const currentYear = 2027;
+  assert.equal(occurrences.find((o) => o.year === currentYear && o.status === "active")?.year, 2027);
+  assert.equal([occurrences[0]].find((o) => o.year === currentYear && o.status === "active"), undefined);
 
   // It is not history either — nothing happened in it — so it is listed as
-  // unused, for the admin, and only for the admin.
+  // unused, on the history page, for the Global Admin only.
   assert.match(workspaceServer, /const unused = occurrences/u);
   assert.match(workspaceServer, /occurrence !== current && !hasActivity\(occurrence\)/u);
-  assert.match(workspaceScreen, /\{isAdmin && unused\.length > 0 && \(/u);
+  assert.match(historyScreen, /\{isAdmin && unused\.length > 0 && \(/u);
 });
 
 // ---------------------------------------------------------------------------
@@ -249,25 +252,30 @@ test("15-16. both group under Special events, and neither is a birthday", () => 
   assert.ok(!grouped.special.upcoming.some((e) => e.type === "birthday"));
 });
 
-test("Create Event offers the special occasions and not the two that belong elsewhere", () => {
+test("Create Event offers Christmas, and still not Birthday", () => {
+  // Christmas is back: a family needs 2027 after 2026, and a new household
+  // starts with none. A duplicate is refused by the database, not by hiding
+  // the option.
   assert.deepEqual(
     [...SPECIAL_EVENT_TYPES],
-    ["mothers_day", "fathers_day", "easter", "wedding", "anniversary", "other"],
+    ["christmas", "mothers_day", "fathers_day", "easter", "wedding", "anniversary", "other"],
   );
-  assert.ok(!SPECIAL_EVENT_TYPES.includes("christmas"), "the family has one Christmas");
+  assert.ok(SPECIAL_EVENT_TYPES.includes("christmas"), "Christmas must be creatable");
   assert.ok(!SPECIAL_EVENT_TYPES.includes("birthday"), "a birthday belongs to a person");
 
   assert.match(createForm, /SPECIAL_EVENT_TYPES\.map\(\(option: EventType\) => \{/u);
   assert.match(createForm, /href="\/birthdays"/u, "and it says where a birthday is started");
 
-  // The date is suggested, and explained, and still editable.
+  // The date is suggested for the NEXT occurrence, explained, and editable.
+  assert.match(createForm, /nextOccurrenceYear\(nextType, today, takenYears\[nextType\] \?\? \[\]\)/u);
   assert.match(createForm, /suggestedOccasionDate\(nextType, year\)/u);
   assert.match(createForm, /occasionDateExplanation\(type\)/u);
   assert.match(createForm, /<Input type="date" value=\{date\} onChange=/u, "the admin can change it");
 
-  assert.equal(suggestedOccasionDate("mothers_day", 2026), "2026-03-15");
-  assert.equal(suggestedOccasionDate("fathers_day", 2026), "2026-06-21");
-  assert.equal(suggestedOccasionDate("easter", 2026), "2026-04-05");
+  assert.equal(suggestedOccasionDate("mothers_day", 2027), "2027-03-07");
+  assert.equal(suggestedOccasionDate("fathers_day", 2027), "2027-06-20");
+  assert.equal(suggestedOccasionDate("easter", 2027), "2027-03-28");
+  assert.equal(suggestedOccasionDate("christmas", 2026), "2026-12-25");
   assert.equal(suggestedOccasionDate("wedding", 2026), null, "a wedding has no formula");
 });
 
@@ -378,9 +386,18 @@ test("no server component calls a value imported from a client module", () => {
   assert.ok(files.length > 50, "the walk must actually have found the source tree");
 });
 
-test("the birthday workspace takes cx from the module server components may call", () => {
-  assert.match(workspaceScreen, /import \{ cx \} from "\.\.\/\.\.\/components\/cx";/u);
-  assert.doesNotMatch(workspaceScreen, /import \{[^}]*\bcx\b[^}]*\} from "\.\.\/\.\.\/components\/ui";/u);
-  // And the module it now uses says why it exists.
+test("every birthday Server Component takes cx from the module they may call", () => {
+  // The Eden bug: a Server Component called `cx` imported from a "use client"
+  // module, which arrives as a client reference and throws when invoked.
+  for (const [label, source] of [
+    ["history screen", historyScreen],
+  ]) {
+    if (!/\bcx\(/u.test(source)) continue;
+    assert.match(source, /import \{ cx \} from "[^"]*components\/cx";/u,
+      `${label} must take cx from the server-safe module`);
+    assert.doesNotMatch(source, /import \{[^}]*\bcx\b[^}]*\} from "[^"]*components\/ui";/u,
+      `${label} must not take cx from the client module`);
+  }
+  // And the module it uses says why it exists.
   assert.match(read("src", "app", "components", "cx.ts"), /server components can call it/u);
 });

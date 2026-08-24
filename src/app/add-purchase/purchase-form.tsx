@@ -194,7 +194,7 @@ export function PurchaseForm({ eventId }: { eventId: string }) {
         .sort((left, right) => left.name.localeCompare(right.name)));
 
       if (requestedRecipientId && !nextRecipients.some((row) => row.id === requestedRecipientId)) {
-        setError("The selected Christmas recipient could not be found.");
+        setError("The selected recipient could not be found.");
         setLoading(false);
         return;
       }
@@ -330,7 +330,7 @@ export function PurchaseForm({ eventId }: { eventId: string }) {
     event.preventDefault();
     setError(null);
     const validRecipientId = validateUuid(recipientId, "Choose who this gift is for.");
-    if (!validRecipientId.ok || !recipients.some((row) => row.id === validRecipientId.value)) { setError(validRecipientId.ok ? "Choose a valid Christmas recipient." : validRecipientId.error); return; }
+    if (!validRecipientId.ok || !recipients.some((row) => row.id === validRecipientId.value)) { setError(validRecipientId.ok ? "Choose a valid recipient." : validRecipientId.error); return; }
     const title = validateRequiredText(description, { field: "the gift or item", maxLength: INPUT_LIMITS.title });
     if (!title.ok) { setError(title.error); return; }
     if (!parsedPrice.ok) { setError(parsedPrice.error); return; }

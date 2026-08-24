@@ -66,7 +66,7 @@ function describe(entry: AuditEntry) {
     return `Account for ${subject ?? "someone"}${context ? ` (${context})` : ""}`;
   }
   if (kind === "christmas_recipients") {
-    return `${subject ?? "Someone"} on the Christmas list${money ? ` (${money} budget)` : ""}`;
+    return `${subject ?? "Someone"} as a recipient${money ? ` (${money} budget)` : ""}`;
   }
   return subject ?? KINDS[kind as keyof typeof KINDS] ?? kind;
 }

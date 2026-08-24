@@ -14,7 +14,12 @@ import {
   Badge, Button, ConfirmDialog, Field, Input, Notice, Textarea, cx,
 } from "../../../components/ui";
 
-export type SettingsPerson = { personId: string; name: string };
+export type SettingsPerson = {
+  personId: string;
+  name: string;
+  /** In the family's contributor pool — may be OFFERED as a contributor. */
+  isFamilyContributor: boolean;
+};
 
 export type EventSettings = {
   id: string;
@@ -201,6 +206,30 @@ export function EventSettingsScreen({
     }
   };
 
+  /**
+   * Who to offer as a contributor.
+   *
+   * The family's contributor pool, PLUS anybody already contributing to this
+   * event. That second half matters: taking somebody out of the pool must not
+   * make an existing contributor vanish from the one screen that can remove
+   * them — their money would stay assigned with no way to see it.
+   */
+  const contributorChoices = people.filter((person) =>
+    person.isFamilyContributor || contributorPersonIds.includes(person.personId));
+
+  /**
+   * An event that names a celebrant is ABOUT that person.
+   *
+   * So it shows its one recipient and offers no way to add a second: a
+   * birthday with two recipients is a mistake, not a configuration. The test is
+   * the celebrant rather than the event type, so every single-celebrant event
+   * behaves the same way and no event type is named here.
+   */
+  const isAboutOnePerson = event.celebrantPersonId !== null;
+  const recipientChoices = isAboutOnePerson
+    ? people.filter((person) => recipientPersonIds.includes(person.personId))
+    : people;
+
   const addRecipient = (personId: string) =>
     void run(() => createClient().rpc("add_event_recipient", {
       p_event_id: event.id,
@@ -268,19 +297,19 @@ export function EventSettingsScreen({
       <section className="mt-12">
         <h2 className="font-display text-xl font-semibold text-ink-900">Recipients</h2>
         <p className="mt-1.5 text-sm leading-6 text-ink-600">
-          Who this event is buying for. Adding somebody here uses the family member who already
-          exists — it never creates a second copy of them. Removing a recipient is done from the
-          People screen, which keeps their purchases.
+          {isAboutOnePerson
+            ? "This event is about one person, so its recipient is fixed. Everything else — budget, contributors, gifts and Owed — works exactly as it does anywhere else."
+            : "Who this event is buying for. Adding somebody here uses the family member who already exists — it never creates a second copy of them. Removing a recipient is done from the People screen, which keeps their purchases."}
         </p>
         <GarlandRule className="mt-4" />
         <div className="mt-5 flex flex-wrap gap-2">
-          {people.map((person) => {
+          {recipientChoices.map((person) => {
             const on = recipientPersonIds.includes(person.personId);
             return (
               <button
                 key={person.personId}
                 type="button"
-                disabled={busy || on}
+                disabled={busy || on || isAboutOnePerson}
                 aria-pressed={on}
                 onClick={() => addRecipient(person.personId)}
                 className={cx(
@@ -303,7 +332,7 @@ export function EventSettingsScreen({
         </p>
         <GarlandRule className="mt-4" />
         <div className="mt-5 flex flex-wrap gap-2">
-          {people.map((person) => {
+          {contributorChoices.map((person) => {
             const on = contributorPersonIds.includes(person.personId);
             const isCelebrant = person.personId === event.celebrantPersonId;
             return (

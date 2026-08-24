@@ -47,7 +47,8 @@
     "test:single-recipient": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/single-recipient-events.test.mjs",
     "test:live-regressions": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/birthday-and-delete-regressions.test.mjs",
     "test:occasions": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/occasions-and-workspace.test.mjs",
-    "test:birthday-budget": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/birthday-budget-reminder.test.mjs"
+    "test:birthday-budget": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/birthday-budget-reminder.test.mjs",
+    "test:checkpoint-4-3": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/checkpoint-4-3.test.mjs"
   },
   "dependencies": {
     "@opennextjs/cloudflare": "^1.20.2",

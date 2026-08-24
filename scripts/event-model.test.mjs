@@ -43,6 +43,10 @@ const occasionMigrationCode = occasionMigration.replace(/--[^\n]*/g, "");
 const budgetMigrationName = "202608100029_add_monthly_birthday_budget_reminder.sql";
 const budgetMigration = readFileSync(join(migrationsDirectory, budgetMigrationName), "utf8");
 const budgetMigrationCode = budgetMigration.replace(/--[^\n]*/g, "");
+
+const contributorMigrationName = "202608100030_family_contributors_and_atomic_setup.sql";
+const contributorMigration = readFileSync(join(migrationsDirectory, contributorMigrationName), "utf8");
+const contributorMigrationCode = contributorMigration.replace(/--[^\n]*/g, "");
 const eventMigration = readFileSync(join(migrationsDirectory, eventMigrationName), "utf8");
 /** Comments explain the reasoning at length; assertions about CODE must ignore them. */
 const eventMigrationCode = eventMigration.replace(/--[^\n]*/g, "");
@@ -76,9 +80,9 @@ test("migration 026 is the newest migration, and nothing else has been added", (
   // `scripts/event-administration.test.mjs` and
   // `scripts/birthday-reminders.test.mjs`; what THIS file still owns is that
   // 025 remains the Event layer and that 026 did not disturb it.
-  assert.equal(migrationFiles.at(-1), budgetMigrationName);
-  assert.equal(migrationFiles.length, 29);
-  for (const name of [eventMigrationName, birthdayMigrationName, reminderMigrationName, occasionMigrationName]) {
+  assert.equal(migrationFiles.at(-1), contributorMigrationName);
+  assert.equal(migrationFiles.length, 30);
+  for (const name of [eventMigrationName, birthdayMigrationName, reminderMigrationName, occasionMigrationName, budgetMigrationName]) {
     assert.ok(migrationFiles.includes(name), `${name} is still present, unedited`);
   }
 });
@@ -91,6 +95,7 @@ test("026 and 027 leave the Event layer and the money exactly as 025 left them",
     ["027", reminderMigrationCode],
     ["028", occasionMigrationCode],
     ["029", budgetMigrationCode],
+    ["030", contributorMigrationCode],
   ]) {
     for (const table of financialTables) {
       assert.doesNotMatch(

@@ -31,6 +31,13 @@ const {
 const REMINDER_MIGRATION = "202608100027_two_stage_birthday_reminders_and_safe_event_deletion.sql";
 const sql = read("supabase", "migrations", REMINDER_MIGRATION);
 
+// The birthday journey as it stands: a resolver, a focused setup screen, and
+// the history page. The financial landing screen that used to sit between the
+// dashboard and Event Home is gone.
+const resolverPage = read("src", "app", "birthdays", "[personId]", "page.tsx");
+const setupScreen = read("src", "app", "birthdays", "[personId]", "start-planning-screen.tsx");
+const historyScreen = read("src", "app", "birthdays", "[personId]", "history", "history-screen.tsx");
+
 /** A family of `count` people, each with a birthday, none of them planned. */
 function familyWithBirthdays(count) {
   return Array.from({ length: count }, (_, index) => ({
@@ -173,7 +180,13 @@ test("the dashboard shows a small fixed number, and says where the rest are", ()
   // The section renders the person's own numbers: date, distance, and Today.
   assert.match(dashboard, /formatBirthday\(person\.birthday\.month, person\.birthday\.day\)/);
   assert.match(dashboard, /describeDaysAway\(person\.next\.daysAway\)/);
-  assert.match(dashboard, /person\.next\.isToday && <Badge tone="success">Today<\/Badge>/);
+  assert.match(dashboard, /person\.next\.isToday\s*\n?\s*\? <Badge tone="success">Today<\/Badge>/u);
+
+  // And the financial snapshot, built from the app's existing helpers rather
+  // than a second progress engine.
+  assert.match(dashboard, /purchaseProgressStatus\(planning\.spentPennies, planning\.budgetPennies\)/u);
+  assert.match(dashboard, /<FinancialProgressBar/u);
+  assert.match(dashboard, /Planning not started yet/u, "a clean state when there is no plan");
   assert.match(dashboard, /birthdayWorkspacePath\(person\.personId\)/, "a card opens the PERSON");
 });
 
@@ -189,18 +202,30 @@ test("the root page reads birthdays and events independently", () => {
 // 3. The birthday workspace
 // ---------------------------------------------------------------------------
 
-test("a birthday opens the person's workspace, not an event", () => {
+test("a birthday link resolves straight to Event Home, with nothing in between", () => {
   assert.equal(birthdayWorkspacePath("abc"), "/birthdays/abc");
 
-  const page = read("src", "app", "birthdays", "[personId]", "page.tsx");
-  assert.match(page, /loadBirthdayWorkspace\(personId\)/);
-  assert.match(page, /if \(!workspace\) notFound\(\)/, "an unknown person is a plain 404");
+  assert.match(resolverPage, /loadBirthdayWorkspace\(personId\)/u);
+  assert.match(resolverPage, /if \(!workspace\) notFound\(\)/u, "an unknown person is a plain 404");
 
-  const screen = read("src", "app", "birthdays", "[personId]", "workspace-screen.tsx");
-  assert.match(screen, /eyebrow="Birthdays"/, "the breadcrumb is Birthdays, not Events");
-  // The generic event vocabulary stays out of what the reader sees.
-  const visibleText = [...screen.matchAll(/>([^<>{}]{4,})</gu)].map((match) => match[1]).join(" ");
-  assert.doesNotMatch(visibleText, /\bevent\b/iu, "the word \"event\" must not appear on this page");
+  // THE REDIRECT. Where this year's planning exists, the person route hands
+  // straight over to Event Home. There is no second financial screen in the
+  // way, because there is only one place the money lives.
+  assert.match(resolverPage, /if \(workspace\.current\) \{/u);
+  assert.match(resolverPage, /redirect\(destination\)/u);
+  assert.match(resolverPage, /eventPath\(workspace\.current\.eventId\)/u);
+
+  // The removed screen's shortcuts went with it.
+  // The removed screen's shortcuts went with it. Comments are stripped first:
+  // the resolver's own doc comment explains what used to be there, and a bare
+  // search would find its own documentation.
+  const BLOCK_COMMENT = new RegExp(String.raw`/\*[\s\S]*?\*/`, "gu");
+  const LINE_COMMENT = new RegExp(String.raw`//[^\n]*`, "gu");
+  const resolverCode = resolverPage.replace(BLOCK_COMMENT, "").replace(LINE_COMMENT, "");
+  assert.doesNotMatch(resolverCode, /Ideas & budget|Add a purchase|Payments/u, "no landing page remains");
+
+  // Birthdays vocabulary, not event vocabulary, on what is left.
+  assert.match(setupScreen, /eyebrow="Birthdays"/u);
 });
 
 test("history is genuine activity only, so an accidental occurrence never becomes a year", () => {
@@ -227,7 +252,7 @@ test("an empty occurrence is still reachable, or it could never be tidied up", (
     "unused is exactly: not this year's planning, and nothing in it",
   );
 
-  const screen = read("src", "app", "birthdays", "[personId]", "workspace-screen.tsx");
+  const screen = historyScreen;
   assert.ok(screen.includes("{isAdmin && unused.length > 0 && ("), "shown to the Global Admin only");
   assert.ok(screen.includes('eventPath(occurrence.eventId, "settings")'), "and it links somewhere useful");
 });
@@ -384,7 +409,8 @@ test("nothing else in the application can delete an event", () => {
     ["src", "app", "events", "[eventId]", "settings", "settings-screen.tsx"],
     ["src", "app", "events", "[eventId]", "settings", "page.tsx"],
     ["src", "utils", "supabase", "events-server.ts"],
-    ["src", "app", "birthdays", "[personId]", "workspace-screen.tsx"],
+    ["src", "app", "birthdays", "[personId]", "start-planning-screen.tsx"],
+    ["src", "app", "birthdays", "[personId]", "history", "history-screen.tsx"],
   ]) {
     const source = read(...parts);
     assert.doesNotMatch(

@@ -83,7 +83,7 @@ export function RecipientAllocationEditor({
 
   const splitEqually = () => {
     if (budgetPennies === null) {
-      setActionError("Enter a valid Christmas budget before splitting it.");
+      setActionError("Enter a valid budget before splitting it.");
       return;
     }
     const selectedIds = rows.filter((row) => row.selected).map((row) => row.contributorId);

@@ -7,7 +7,7 @@ import { Check, ChevronLeft } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { EVENT_TYPES, SPECIAL_EVENT_TYPES, birthdayDateLooksLikeDateOfBirth, eventTypeMeta, formatEventDate, validateEventInput, type EventType } from "@/lib/events.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { occasionDateExplanation, suggestedOccasionDate } from "@/lib/uk-occasions.ts";
+import { nextOccurrenceYear, occasionDateExplanation, suggestedOccasionDate } from "@/lib/uk-occasions.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { birthdayOccurrence, suggestedBirthdayEventName } from "@/lib/birthdays.ts";
 import { INPUT_LIMITS } from "@/lib/input-validation";
@@ -22,6 +22,14 @@ export type CreatablePerson = {
   personId: string;
   name: string;
   birthday: { month: number; day: number } | null;
+  /**
+   * May be offered as a contributor.
+   *
+   * Recipients come from EVERYBODY: anyone in the family can receive a gift.
+   * Contributors come from the pool the Global Admin maintains, because being
+   * in the family and sharing the cost are different facts.
+   */
+  isFamilyContributor: boolean;
 };
 
 type Step = "type" | "details" | "people" | "review";
@@ -45,7 +53,16 @@ const STEPS: Array<{ step: Step; label: string }> = [
  * database; this calls `create_event`, which checks Global Admin itself and
  * creates the event, its recipients and its contributors in one transaction.
  */
-export function CreateEventForm({ people, today }: { people: CreatablePerson[]; today: string }) {
+export function CreateEventForm({
+  people,
+  today,
+  takenYears = {},
+}: {
+  people: CreatablePerson[];
+  today: string;
+  /** Years each recurring occasion already has an active event for. */
+  takenYears?: Record<string, number[]>;
+}) {
   const router = useRouter();
   const params = useSearchParams();
 
@@ -74,11 +91,18 @@ export function CreateEventForm({ people, today }: { people: CreatablePerson[]; 
    * Sensible defaults, offered rather than imposed: everything below is a
    * starting point the admin can overwrite before saving.
    */
+  // Everyone can receive; only the pool can contribute.
+  const contributorPool = people.filter((person) => person.isFamilyContributor);
+
   const applyTypeDefaults = (nextType: EventType) => {
     setType(nextType);
     setError(null);
     const nextMeta = eventTypeMeta(nextType);
-    const year = new Date().getUTCFullYear();
+    // The NEXT occurrence that has not happened and is not already planned.
+    // Defaulting to the current calendar year is wrong for most of the year:
+    // on the 24th of August, Mother's Day was five months ago.
+    const year = nextOccurrenceYear(nextType, today, takenYears[nextType] ?? [])
+      ?? Number(today.slice(0, 4));
 
     if (nextType === "christmas") {
       setName(`Christmas ${year}`);
@@ -86,7 +110,7 @@ export function CreateEventForm({ people, today }: { people: CreatablePerson[]; 
       setCelebrantId("");
       // Christmas does not assume everybody receives: the admin chooses.
       setRecipientIds([]);
-      setContributorIds(people.map((person) => person.personId));
+      setContributorIds(contributorPool.map((person) => person.personId));
       return;
     }
     // The occasions that move every year but move by a RULE. Easter Sunday,
@@ -102,7 +126,7 @@ export function CreateEventForm({ people, today }: { people: CreatablePerson[]; 
       setDate(suggested);
       setCelebrantId("");
       setRecipientIds([]);
-      setContributorIds(people.map((person) => person.personId));
+      setContributorIds(contributorPool.map((person) => person.personId));
       return;
     }
     if (nextType === "easter") {
@@ -110,14 +134,14 @@ export function CreateEventForm({ people, today }: { people: CreatablePerson[]; 
       setDate("");
       setCelebrantId("");
       setRecipientIds([]);
-      setContributorIds(people.map((person) => person.personId));
+      setContributorIds(contributorPool.map((person) => person.personId));
       return;
     }
     if (!nextMeta.allowsCelebrant) setCelebrantId("");
     setName("");
     setDate("");
     setRecipientIds([]);
-    setContributorIds(people.map((person) => person.personId));
+    setContributorIds(contributorPool.map((person) => person.personId));
   };
 
   /**
@@ -132,7 +156,7 @@ export function CreateEventForm({ people, today }: { people: CreatablePerson[]; 
     if (!person || type !== "birthday") return;
 
     if (person.birthday) {
-      const year = nextOccurrenceYear(person.birthday);
+      const year = nextBirthdayYear(person.birthday, today);
       setDate(birthdayOccurrence(person.birthday.month, person.birthday.day, year));
       setName(suggestedBirthdayEventName(person.name, year));
     } else if (!name) {
@@ -334,12 +358,16 @@ export function CreateEventForm({ people, today }: { people: CreatablePerson[]; 
             selected={recipientIds}
             onChange={setRecipientIds}
           />
+          {/* Only the family's contributor pool. The recipient picker above
+              comes from everybody, because anyone can receive a gift. */}
           <PeoplePicker
             title="Who is chipping in?"
-            hint={celebrant
-              ? `${celebrant.name.split(" ")[0]} is left out by default — nobody pays for their own present. You can change that.`
-              : "Contributors share the cost of every purchase in this event."}
-            people={people}
+            hint={contributorPool.length === 0
+              ? "Nobody is set up as a family contributor yet. Add somebody in Family access first."
+              : celebrant
+                ? `${celebrant.name.split(" ")[0]} is left out by default — nobody pays for their own present. You can change that.`
+                : "Contributors share the cost of every purchase in this event."}
+            people={contributorPool}
             selected={contributorIds}
             onChange={setContributorIds}
           />
@@ -443,13 +471,19 @@ function describePeople(people: CreatablePerson[], ids: string[]): string {
   return people.filter((person) => ids.includes(person.personId)).map((person) => person.name).join(", ");
 }
 
-/** This year's birthday if it is still to come, otherwise next year's. */
-function nextOccurrenceYear(birthday: { month: number; day: number }): number {
-  const now = new Date();
-  const year = now.getUTCFullYear();
-  const thisYear = birthdayOccurrence(birthday.month, birthday.day, year);
-  const today = now.toISOString().slice(0, 10);
-  return thisYear >= today ? year : year + 1;
+/**
+ * This year's birthday if it is still to come, otherwise next year's.
+ *
+ * Takes the family's own date rather than reading the clock: a UTC instant is
+ * the wrong day for part of every evening in British Summer Time, and this
+ * decides which YEAR somebody is planning.
+ *
+ * Named for birthdays specifically. `nextOccurrenceYear` in `uk-occasions`
+ * answers the same question for the recurring occasions that move by a rule.
+ */
+function nextBirthdayYear(birthday: { month: number; day: number }, today: string): number {
+  const year = Number(today.slice(0, 4));
+  return birthdayOccurrence(birthday.month, birthday.day, year) >= today ? year : year + 1;
 }
 
 /** The database's own message, unless it is one the reader cannot act on. */

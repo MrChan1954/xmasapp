@@ -137,9 +137,9 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
   const validatePersonValues = (id: string | null, name: string, budgetPennies: number) => {
     const validName = validateRequiredText(name, { field: "a name", maxLength: INPUT_LIMITS.name });
     if (!validName.ok) throw new Error(validName.error);
-    if (!Number.isSafeInteger(budgetPennies) || budgetPennies < 0 || budgetPennies > MAX_PENNIES) throw new Error("Enter a valid Christmas budget.");
+    if (!Number.isSafeInteger(budgetPennies) || budgetPennies < 0 || budgetPennies > MAX_PENNIES) throw new Error("Enter a valid budget.");
     if (id) {
-      const validId = validateUuid(id, "Select a valid Christmas recipient.");
+      const validId = validateUuid(id, "Select a valid recipient.");
       if (!validId.ok) throw new Error(validId.error);
     }
     return validName.value;
@@ -162,7 +162,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     }), id ? "The person could not be updated." : "The person could not be added.");
   };
   const setActive = async (id: string, active: boolean) => {
-    const validId = validateUuid(id, "Select a valid Christmas recipient.");
+    const validId = validateUuid(id, "Select a valid recipient.");
     if (!validId.ok) throw new Error(validId.error);
     await mutate(createClient().rpc("set_christmas_recipient_active", { p_christmas_recipient_id: validId.value, p_active: active }), active ? "The person could not be restored." : "The person could not be removed.");
   };
