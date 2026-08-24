@@ -1,6 +1,8 @@
-import { Gift, House, MoreHorizontal, Scale, Sparkles, UserPlus, Users, type LucideIcon } from "lucide-react";
+import { CalendarDays, Contact, Gift, House, MoreHorizontal, Scale, Sparkles, UserPlus, Users, type LucideIcon } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventIdFromPath, eventNavMode, eventPath, eventSectionFromPath, type EventNavMode, type EventSection } from "@/lib/events.ts";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { activeGlobalSection, type GlobalNavSection } from "@/lib/navigation.ts";
 
 export type NavItem = {
   href: string;
@@ -92,6 +94,47 @@ export function activeNavSection(pathname: string): EventSection | null {
   if (pathname.startsWith("/more") || pathname.startsWith("/account") || pathname.startsWith("/payment-log")) return "more";
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Navigation that belongs to the FAMILY, not to an event
+// ---------------------------------------------------------------------------
+
+/**
+ * The destinations that exist whether or not the reader is inside an event.
+ *
+ * WHY THIS LIST HAD TO EXIST. Every navigation item in this file used to be
+ * event-scoped: `navItemsFor` returns nothing without an event id, so outside
+ * one the rail offered a single hard-coded Events link and the mobile tab bar
+ * rendered NOTHING AT ALL. That was survivable while every screen worth
+ * reaching lived inside an event. The People directory does not, so it was
+ * reachable only by typing the URL.
+ *
+ * PEOPLE HERE IS NOT AN EVENT'S PEOPLE TAB. This is the family directory: every
+ * person, their birthday, and what has been bought for them across every event.
+ * An event's People tab is its RECIPIENTS -- who that one occasion is for. Same
+ * word, different question, and they are deliberately built from different
+ * lists so neither can drift into the other.
+ *
+ * "The family" is the current planning context. Phase 5 makes that an Area; the
+ * href stays a plain path so nothing here has to change when it does.
+ */
+export type GlobalNavItem = {
+  section: GlobalNavSection;
+  href: string;
+  label: string;
+  icon: LucideIcon;
+};
+
+export const GLOBAL_NAV: readonly GlobalNavItem[] = [
+  { section: "events", href: "/", label: "Events", icon: CalendarDays },
+  // `Contact` rather than `Users`: `Users` is the event People tab, and two
+  // different questions should not wear the same glyph in the same app.
+  { section: "people", href: "/people", label: "People", icon: Contact },
+];
+
+// Route matching lives in `src/lib/navigation.ts` and is re-exported here, so
+// the components have one import and a test can run the real function.
+export { activeGlobalSection, type GlobalNavSection };
 
 /**
  * Signed-out entry points. These render their own full-screen frame, carry no

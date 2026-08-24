@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CalendarDays, Gift, ShieldCheck } from "lucide-react";
+import { Gift, ShieldCheck } from "lucide-react";
 import { useActiveRecipientCount, useFamily } from "../family-context";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventTypeMeta } from "@/lib/events.ts";
 import { cx } from "./cx";
-import { EVENTS_HOME, activeNavSection, navItemsFor } from "./nav-items";
+import { GLOBAL_NAV, activeGlobalSection, activeNavSection, navItemsFor } from "./nav-items";
 
 /**
  * Desktop navigation: a slim icon rail that expands on hover or keyboard focus.
@@ -21,6 +21,7 @@ export function IconRail() {
   const { isAdmin, event, eventId } = useFamily();
   const items = navItemsFor(eventId, useActiveRecipientCount());
   const activeSection = activeNavSection(pathname);
+  const activeGlobal = activeGlobalSection(pathname);
 
   return (
     <aside className="relative hidden w-[76px] shrink-0 lg:block">
@@ -53,21 +54,35 @@ export function IconRail() {
         </Link>
 
         <nav aria-label="Main navigation" className="mt-2 flex flex-col gap-1 px-3.5">
-          {/* Always first, and always present: the way back out to the
-              dashboard without reaching for the browser's Back button. */}
-          <Link
-            href={EVENTS_HOME.href}
-            aria-current={activeSection === null && pathname === "/" ? "page" : undefined}
-            className={cx(
-              "relative flex h-12 shrink-0 items-center gap-3.5 rounded-xl pl-[11px] text-sm font-semibold whitespace-nowrap",
-              pathname === "/" ? "bg-accent-soft text-accent" : "text-ink-600 hover:bg-hover-veil hover:text-ink-900",
-            )}
-          >
-            <CalendarDays aria-hidden size={21} strokeWidth={pathname === "/" ? 2 : 1.7} className="shrink-0" />
-            <span className="opacity-0 transition-opacity duration-200 group-hover/rail:opacity-100 group-has-focus-visible/rail:opacity-100">
-              {EVENTS_HOME.label}
-            </span>
-          </Link>
+          {/* Always first, and always present, whether or not the reader is
+              inside an event: the dashboard, and the family directory. Both
+              were previously unreachable from here -- Events was a single
+              hard-coded link and People had no entry at all. */}
+          {GLOBAL_NAV.map((item) => {
+            const active = item.section === activeGlobal;
+            const Glyph = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={active ? "page" : undefined}
+                className={cx(
+                  "relative flex h-12 shrink-0 items-center gap-3.5 rounded-xl pl-[11px] text-sm font-semibold whitespace-nowrap",
+                  active ? "bg-accent-soft text-accent" : "text-ink-600 hover:bg-hover-veil hover:text-ink-900",
+                )}
+              >
+                <Glyph aria-hidden size={21} strokeWidth={active ? 2 : 1.7} className="shrink-0" />
+                <span className="opacity-0 transition-opacity duration-200 group-hover/rail:opacity-100 group-has-focus-visible/rail:opacity-100">
+                  {item.label}
+                </span>
+              </Link>
+            );
+          })}
+
+          {/* A hairline between the family and the event the reader is inside,
+              so "People" above and "People" below read as the two different
+              questions they are. */}
+          {items.length > 0 && <span aria-hidden className="my-1.5 h-px bg-line" />}
 
           {items.map((item) => {
             const active = item.section === activeSection;

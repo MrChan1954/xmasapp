@@ -232,3 +232,124 @@ test("archived people leave the picker and stay in the history", () => {
   assert.match(profile, /person\.archivedAt && \(/u);
   assert.match(profile, /everything already recorded for them is untouched/u);
 });
+
+// ---------------------------------------------------------------------------
+// People is a place you can GET to
+//
+// The directory shipped without a way in: every navigation item in the app was
+// event-scoped, so the desktop rail offered one hard-coded Events link and the
+// mobile tab bar rendered nothing at all outside an event. /people existed and
+// could only be reached by typing it.
+// ---------------------------------------------------------------------------
+
+const { activeGlobalSection } = await import("../src/lib/navigation.ts");
+
+test("the family destinations are Events and People, in that order", () => {
+  const navItems = read(...APP, "components", "nav-items.ts");
+  const entries = navItems.split("\n")
+    .map((line) => line.trim())
+    // `href:` is what makes it a family destination. The EVENT_NAV entries
+    // above carry a section and a label but no path -- their href is built
+    // from the event the reader is in.
+    .filter((line) => line.startsWith("{ section: ") && line.includes("href: "));
+
+  assert.equal(entries.length, 2, "two family destinations");
+  assert.ok(entries[0].includes('href: "/"') && entries[0].includes('label: "Events"'), entries[0]);
+  // The label is "People". Not Recipients, not Family recipients, not Christmas
+  // people -- the directory is about the family, not about an occasion.
+  assert.ok(entries[1].includes('href: "/people"') && entries[1].includes('label: "People"'), entries[1]);
+
+  // An icon from the set already in use, and NOT the one the event People tab
+  // wears: two different questions should not share a glyph in one app.
+  assert.ok(!entries[1].includes("icon: Users"), "Users is the event recipients tab");
+  assert.ok(entries[1].includes("icon: Contact"), entries[1]);
+  assert.ok(navItems.includes('Contact,') && navItems.includes('from "lucide-react"'),
+    "and it comes from the icon set the rest of the navigation already uses");
+});
+
+test("the desktop rail renders both, and no longer hard-codes just one", () => {
+  const rail = read(...APP, "components", "icon-rail.tsx");
+  assert.match(rail, /GLOBAL_NAV\.map\(\(item\) => \{/u);
+  assert.match(rail, /activeGlobalSection\(pathname\)/u);
+  // The old shape: a single Events link written out by hand, with nowhere for a
+  // second family destination to go.
+  assert.ok(!rail.includes("href={EVENTS_HOME.href}"), "Events comes from the shared list now");
+});
+
+test("mobile falls back to the family bar instead of rendering nothing", () => {
+  const tabs = read(...APP, "components", "bottom-tabs.tsx");
+
+  // THE ACTUAL MOBILE BUG. `if (!items.length) return null` meant the
+  // dashboard, People and a person's profile had no navigation bar of any kind
+  // on a phone.
+  assert.match(tabs, /if \(!items\.length\) return <GlobalTabs activeGlobal=\{activeGlobal\} \/>;/u);
+  assert.ok(!tabs.includes("if (!items.length) return null"), "the bar must not disappear again");
+
+  assert.match(tabs, /function GlobalTabs\(/u);
+  assert.match(tabs, /GLOBAL_NAV\.map\(\(item\) => \{/u);
+  assert.match(tabs, /grid-cols-2/u, "two family tabs, no raised add action to nowhere");
+});
+
+test("People is also reachable from inside an event, without leaving it first", () => {
+  // On a phone the event's own five tabs fill the bar, so the event's More
+  // screen is where the family destinations live -- the same place Birthdays
+  // already sits.
+  const more = read(...APP, "more", "more-screen.tsx");
+  assert.match(more, /href="\/people"/u);
+  assert.match(more, /title="People"/u);
+  assert.match(more, /Everyone the family plans for/u);
+  assert.match(more, /href="\/birthdays"/u, "and Birthdays is still there");
+});
+
+test("People stays lit through a person's profile, and Events does not", () => {
+  assert.equal(activeGlobalSection("/people"), "people");
+  assert.equal(activeGlobalSection("/people/8f14e45f-ceea-467a-9f36-dd1a1b0b8b1c"), "people");
+  assert.equal(activeGlobalSection("/people/new"), "people");
+  assert.equal(activeGlobalSection("/"), "events");
+
+  // AN EVENT'S PEOPLE TAB IS NOT THIS. Being three levels into Christmas must
+  // not light up the family directory, and vice versa.
+  assert.equal(activeGlobalSection("/events/abc/people"), null);
+  assert.equal(activeGlobalSection("/events/abc"), null);
+  assert.equal(activeGlobalSection("/birthdays"), null);
+  assert.equal(activeGlobalSection("/more"), null);
+});
+
+test("navigation is visible to everybody; only the ACTION is gated", () => {
+  // Being able to see the directory is part of the normal family experience.
+  // Neither navigation component consults a role.
+  for (const file of [["components", "icon-rail.tsx"], ["components", "bottom-tabs.tsx"]]) {
+    const source = read(...APP, ...file);
+    // Scoped to the family block itself. The rail separately shows a "Global
+    // Admin" badge at the bottom, which is a label about the reader and not a
+    // gate on any destination.
+    const start = source.indexOf("GLOBAL_NAV.map");
+    const block = source.slice(start, source.indexOf("})}", start));
+    assert.ok(start > 0, `${file.join("/")} must render the family destinations`);
+    assert.ok(!block.includes("isAdmin"), `${file.join("/")} must not gate People on a role`);
+    assert.ok(!block.includes("role"), `${file.join("/")} must not gate People on a role`);
+  }
+
+  // Add Person keeps its own rule, on the screen and on the server.
+  const directory = read(...APP, "people", "people-directory-screen.tsx");
+  assert.match(directory, /isAdmin \? \(/u, "the Add person button is admin-only");
+  assert.match(directory, /href="\/people\/new"/u);
+  const page = read(...APP, "people", "new", "page.tsx");
+  assert.match(page, /member\.role !== "admin"/u, "and the route refuses a non-admin before rendering");
+});
+
+test("reaching a profile through navigation is not a privacy bypass", () => {
+  // Navigation adds a link. It adds no read: the profile is a server component
+  // whose queries are ordinary RLS-scoped selects, so migration 031 removes the
+  // reader's own birthday before anything renders.
+  const profileRoute = read(...APP, "people", "[id]", "page.tsx");
+  assert.match(profileRoute, /loadPersonProfile\(id\)/u);
+  assert.ok(!profileRoute.includes('"use client"'), "the profile resolves on the server");
+
+  const loader = read("src", "utils", "supabase", "people-server.ts");
+  assert.ok(!loader.includes("SUPABASE_SECRET_KEY"), "no service-role client anywhere near it");
+  assert.ok(!loader.includes("createAdminSupabaseClient"), "every read is the reader's own");
+
+  const screen = read(...APP, "people", "[id]", "person-profile-screen.tsx");
+  assert.match(screen, /You can&apos;t view your own birthday gifts/u);
+});

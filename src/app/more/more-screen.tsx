@@ -123,6 +123,17 @@ export function MoreScreen({
       {/* Birthdays belong to people, not to this event, so the link leaves the
           event behind rather than nesting under it. */}
       <Group label="Family">
+        {/* The family DIRECTORY, not this event's recipients. On a phone the
+            event's own tabs fill the bar, so this is how somebody reaches
+            People without leaving the event first. */}
+        <div className="mb-3">
+          <SettingsLink
+            href="/people"
+            title="People"
+            description="Everyone the family plans for, and what has been bought for them."
+            icon={<IconPeople size={20} />}
+          />
+        </div>
         <SettingsLink
           href="/birthdays"
           title="Birthdays"

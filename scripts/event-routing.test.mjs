@@ -278,8 +278,16 @@ test("there is always an obvious way back out to Events", () => {
   // never depends on the browser's Back button.
   assert.match(navItems, /export const EVENTS_HOME = \{ href: "\/", label: "Events" \}/);
   assert.match(navItems, /if \(section === "home"\) return \{ title: EVENT_SECTION_TITLES\.home, parent: EVENTS_HOME \};/);
-  // The desktop rail carries it as a permanent first entry.
-  assert.match(read(...APP, "components", "icon-rail.tsx"), /href=\{EVENTS_HOME\.href\}/);
+  // The desktop rail carries it as a permanent first entry -- now from the
+  // shared family list rather than hard-coded, so Events and People are built
+  // the same way and neither can be dropped without the other noticing.
+  const rail = read(...APP, "components", "icon-rail.tsx");
+  assert.match(rail, /GLOBAL_NAV\.map\(\(item\) => \{/u);
+  assert.deepEqual(
+    [...navItems.matchAll(/\{ section: "(events|people)", href: "([^"]+)"/gu)].map((match) => [match[1], match[2]]),
+    [["events", "/"], ["people", "/people"]],
+    "Events first, then People, and both are family-level paths",
+  );
 });
 
 test("the active event is named in the chrome, so nobody adds a gift to the wrong one", () => {
