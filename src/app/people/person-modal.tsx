@@ -207,8 +207,8 @@ export function PersonModal({
   const savePerson = async (allocations: RecipientAllocation[]) => {
     const validName = validateRequiredText(name, { field: "a name", maxLength: INPUT_LIMITS.name });
     if (!validName.ok) { setError(validName.error); return; }
-    const parsedBudget = parseMoneyToPennies(budget, { field: "a Christmas budget" });
-    if (!parsedBudget.ok || parsedBudget.value === null) { setError(parsedBudget.ok ? "Enter a Christmas budget." : parsedBudget.error); return; }
+    const parsedBudget = parseMoneyToPennies(budget, { field: "a budget" });
+    if (!parsedBudget.ok || parsedBudget.value === null) { setError(parsedBudget.ok ? "Enter a budget." : parsedBudget.error); return; }
     setSaving(true);
     try {
       await saveRecipient({
@@ -232,7 +232,7 @@ export function PersonModal({
       await archive(person.id);
       onClose();
     } catch {
-      setError("Only Global Admin can remove someone from Christmas.");
+      setError("Only Global Admin can remove someone from this event.");
       setConfirmingRemove(false);
     }
     setRemoving(false);
@@ -421,7 +421,7 @@ function DetailView({
           <h3 className="text-sm font-semibold text-ink-600">Management</h3>
           <div className="mt-3 grid gap-3 sm:flex sm:flex-wrap">
             <Button variant="secondary" onClick={editPerson} disabled={!contributionsLoaded}>Edit person</Button>
-            <Button variant="dangerGhost" onClick={remove} className="border border-berry-soft-border bg-surface">Remove from Christmas</Button>
+            <Button variant="dangerGhost" onClick={remove} className="border border-berry-soft-border bg-surface">Remove from this event</Button>
           </div>
         </section>
       )}
@@ -431,7 +431,7 @@ function DetailView({
 
 function PersonEditor({ name, budget, rows, saving, setName, setBudget, cancel, save }: { name: string; budget: string; rows: Contribution[]; saving: boolean; setName: (value: string) => void; setBudget: (value: string) => void; cancel: () => void; save: (allocations: RecipientAllocation[]) => void }) {
   const [allocationRows, setAllocationRows] = useState(() => createRecipientAllocationDraftRows(rows));
-  const parsedBudget = parseMoneyToPennies(budget, { field: "a Christmas budget" });
+  const parsedBudget = parseMoneyToPennies(budget, { field: "a budget" });
   const budgetPennies = parsedBudget.ok ? parsedBudget.value : null;
   const parsedDraft = parseRecipientAllocationDraft(allocationRows);
   const validPlan = budgetPennies !== null && parsedDraft.ok
@@ -444,7 +444,7 @@ function PersonEditor({ name, budget, rows, saving, setName, setBudget, cancel, 
       <Field label="Name" className="mt-5" required>
         <Input required maxLength={INPUT_LIMITS.name} value={name} onChange={(event) => setName(event.target.value)} />
       </Field>
-      <Field label="Christmas budget" className="mt-4">
+      <Field label="Budget" className="mt-4">
         <MoneyInput maxLength={INPUT_LIMITS.money} value={budget} onValueChange={setBudget} />
       </Field>
       <div className="mt-6 border-t border-line pt-5">

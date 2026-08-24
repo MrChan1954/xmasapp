@@ -40,6 +40,7 @@ import {
   planPurchaseNotifications,
   type NotifiableMember,
   type PlannedNotification,
+  type PurchaseShare,
   // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 } from "./notification-audience.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
@@ -562,9 +563,22 @@ export async function buildPlan(
       .select("contributor_id,responsibility_pennies")
       .eq("purchase_id", row.id);
     if (allocations.error) return null;
-    const allocatedContributorIds = (allocations.data ?? [])
-      .filter((allocation: { responsibility_pennies: number }) => allocation.responsibility_pennies > 0)
-      .map((allocation: { contributor_id: string }) => allocation.contributor_id);
+    // Read once, used twice. `shares` keeps the AMOUNT each contributor carries
+    // -- which is what lets a "you owe" notification say how much this purchase
+    // added -- and the id list for gift status is derived from it, so the two
+    // can never describe different sets of people.
+    //
+    // These are the same rows, and the same column, that
+    // `loadAuthoritativeBalances` turns into `PurchaseObligation`s for the Owed
+    // engine. Nothing is added, split or apportioned here.
+    const shares: PurchaseShare[] = (allocations.data ?? [])
+      .map((allocation: { contributor_id: string; responsibility_pennies: number }) => ({
+        contributorId: allocation.contributor_id,
+        responsibilityPennies: allocation.responsibility_pennies,
+      }));
+    const allocatedContributorIds = shares
+      .filter((share) => share.responsibilityPennies > 0)
+      .map((share) => share.contributorId);
 
     if (kind === "purchase") {
       authorize(row.created_by_app_member_id, row.created_at);
@@ -582,7 +596,7 @@ export async function buildPlan(
             christmasRecipientId: row.christmas_recipient_id,
             amountPennies: row.actual_price_pennies,
             checkoutPayerContributorId: row.checkout_payer_contributor_id,
-            allocatedContributorIds,
+            shares,
           },
           context.members,
           context.balances,

@@ -62,6 +62,9 @@ const occasionMigration = readFileSync(join(migrationsDirectory, occasionMigrati
 const budgetMigrationName = "202608100029_add_monthly_birthday_budget_reminder.sql";
 const budgetMigration = readFileSync(join(migrationsDirectory, budgetMigrationName), "utf8");
 
+const contributorMigrationName = "202608100030_family_contributors_and_atomic_setup.sql";
+const contributorMigration = readFileSync(join(migrationsDirectory, contributorMigrationName), "utf8");
+
 const applicationTables = [
   "christmas_events",
   "people",
@@ -79,7 +82,31 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  assert.equal(migrationFiles.at(-1), budgetMigrationName);
+  assert.equal(migrationFiles.at(-1), contributorMigrationName);
+  assert.ok(migrationFiles.includes(budgetMigrationName), "the budget reminder migration is still present");
+
+  // What 030 introduces, security-wise: two more Global Admin write paths.
+  // Contributor eligibility decides who may be assigned money, and birthday
+  // setup writes a budget and a plan — neither may be reachable by a member.
+  for (const fn of ["set_family_contributor", "start_birthday_planning"]) {
+    const start = contributorMigration.indexOf(`function public.${fn}(`);
+    assert.ok(start > 0, `${fn} must exist`);
+    const body = contributorMigration.slice(start, contributorMigration.indexOf("$$;", start));
+    assert.match(body, /is_app_admin\(\)/, `${fn} must check Global Admin in the database`);
+    assert.match(body, /set search_path = ''/, `${fn} must pin search_path`);
+    assert.match(body, /security definer/, `${fn} runs as definer`);
+    assert.match(
+      contributorMigration,
+      new RegExp(`revoke all on function public\\.${fn}\\([^)]*\\) from public, anon;`, "u"),
+      `${fn} must be revoked from anon`,
+    );
+  }
+  // Eligibility itself is not writable from a browser: no grant was added.
+  assert.doesNotMatch(
+    contributorMigration,
+    /grant (update|insert)[^;]*on table public\.people to (authenticated|anon)/i,
+    "people must stay unwritable from a browser session",
+  );
   assert.ok(migrationFiles.includes(occasionMigrationName), "the occasions migration is still present");
 
   // What 029 introduces, security-wise: one more table nobody may read, and two
@@ -1706,7 +1733,14 @@ test("the UI keeps recipient creation and removal behind Global Admin", () => {
   // Adding a person. The form is built once and rendered in all three shapes
   // of the screen -- list, single recipient and empty -- so the admin gate is
   // asserted on the one place it now lives rather than on each render site.
-  assert.match(peoplePage, /const addForm = isAdmin && adding \? \(\s*\n\s*<AddForm/);
+  // The gate is now "Global Admin, AND this event is not about one named
+  // person" -- a birthday cannot take a second recipient. Both halves are
+  // asserted here, so weakening either one fails.
+  assert.match(
+    peoplePage,
+    /const addForm = isAdmin && celebrantPersonId === null && adding \? \(\s*\n\s*<AddForm/,
+  );
+  assert.match(peoplePage, /const addButton = isAdmin && celebrantPersonId === null \? \(/);
   assert.equal(
     (peoplePage.match(/<AddForm/gu) ?? []).length,
     1,
@@ -1717,8 +1751,9 @@ test("the UI keeps recipient creation and removal behind Global Admin", () => {
     3,
     "and every shape of the screen renders that one gated form",
   );
-  // Editing details and removing from Christmas.
-  assert.match(personModal, /\{isAdmin && \(\s*<section[\s\S]*?Edit person[\s\S]*?Remove from Christmas/);
+  // Editing details and removing from the event. The modal is shared by every
+  // occasion, so its wording is neutral now.
+  assert.match(personModal, /\{isAdmin && \(\s*<section[\s\S]*?Edit person[\s\S]*?Remove from this event/);
 });
 
 // ---------------------------------------------------------------------------

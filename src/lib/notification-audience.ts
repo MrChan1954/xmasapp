@@ -69,15 +69,38 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
   birthdays: true,
 };
 
+/**
+ * One contributor's share of ONE purchase, exactly as its allocation row
+ * records it.
+ *
+ * `responsibilityPennies` is `purchase_allocations.responsibility_pennies`,
+ * read and passed through untouched. It is the SAME integer the dispatcher
+ * feeds the Owed engine as a `PurchaseObligation`, which is what lets a
+ * notification quote both "this purchase adds £1.66" and "you now owe £22.01"
+ * without either figure being computed twice or drifting from the Owed screen.
+ */
+export type PurchaseShare = {
+  contributorId: string;
+  responsibilityPennies: number;
+};
+
 export type PurchaseEvent = {
   actorAppMemberId: string;
   actorName: string;
   recipientName: string;
   christmasRecipientId: string;
+  /** The whole purchase. Never any one person's share of it. */
   amountPennies: number;
   checkoutPayerContributorId: string;
-  /** Contributor ids carrying a share of this purchase, payer included. */
-  allocatedContributorIds: string[];
+  /**
+   * Every contributor carrying a share of this purchase, payer included, with
+   * the amount each carries.
+   *
+   * The amounts matter as much as the membership: a £12 purchase split £4/£5/£3
+   * moves three balances by three different figures, and one purchase-wide
+   * number would be wrong for all three readers.
+   */
+  shares: PurchaseShare[];
 };
 
 /**
@@ -92,7 +115,14 @@ export function planPurchaseNotifications(
   members: NotifiableMember[],
   balances: NetOwedBalance[],
 ): PlannedNotification[] {
-  const allocated = new Set(event.allocatedContributorIds);
+  // Zero-share rows are excluded here, exactly as they were when this arrived
+  // pre-filtered as a list of ids: somebody allocated nothing carries no share
+  // of this purchase and reads the ordinary purchase notice, not a balance.
+  const shareByContributor = new Map(
+    event.shares
+      .filter((share) => share.responsibilityPennies > 0)
+      .map((share) => [share.contributorId, share.responsibilityPennies]),
+  );
   const planned: PlannedNotification[] = [];
 
   for (const member of members) {
@@ -135,15 +165,22 @@ export function planPurchaseNotifications(
       continue;
     }
 
-    // A contributor carrying a share of this purchase: tell them the balance.
-    if (contributorId && allocated.has(contributorId)) {
+    // A contributor carrying a share of this purchase: tell them the balance,
+    // and tell them what this purchase added to it.
+    const share = contributorId ? shareByContributor.get(contributorId) ?? 0 : 0;
+    if (contributorId && share > 0) {
       const balance = findPairBalance(balances, contributorId, event.checkoutPayerContributorId);
       if (balance && balance.debtorContributorId === contributorId && member.preferences.money_i_owe) {
         planned.push({
           appMemberId: member.appMemberId,
           payload: youOweNotification({
             creditorName: shortName(nameForContributor(members, event.checkoutPayerContributorId)),
+            // The running total, from the engine.
             amountPennies: balance.amountPennies,
+            // What THIS purchase added, from this purchase's own allocation
+            // row. Never the purchase total, and never a share of it worked out
+            // here -- two contributors on one purchase get two figures.
+            increasePennies: share,
           }),
         });
         continue;

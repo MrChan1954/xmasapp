@@ -41,18 +41,19 @@ export type EventType = (typeof EVENT_TYPES)[number];
 /**
  * The occasions the Create Event form offers.
  *
- * Christmas and Birthday are deliberately absent.
+ * CHRISTMAS IS HERE. A family needs Christmas 2027 after 2026, and a household
+ * signing up for the first time has none at all — so "the family already has
+ * its Christmas" is an assumption the app must not make. Creating a duplicate
+ * is prevented by the database (migration 025 enforces one Christmas per year),
+ * not by hiding the option.
  *
- *   Christmas is its own product area, and the family has one. Offering it here
- *   invites a second, which would split the year's money across two events that
- *   both call themselves Christmas.
- *
- *   A birthday belongs to a PERSON, and is started from Birthdays → that
- *   person, where the date is already known and the celebrant cannot be
- *   mistyped. Offering it here is how an event dated 1995 gets created by
- *   somebody who meant to record a date of birth.
+ * BIRTHDAY IS NOT. A birthday belongs to a PERSON, and is started from
+ * Birthdays → that person, where the date and the celebrant are already known
+ * and cannot be mistyped. Offering it here is how an event dated 1995 gets
+ * created by somebody who meant to record a date of birth.
  */
 export const SPECIAL_EVENT_TYPES = [
+  "christmas",
   "mothers_day",
   "fathers_day",
   "easter",

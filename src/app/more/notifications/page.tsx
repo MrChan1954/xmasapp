@@ -243,7 +243,7 @@ function DeviceState({
         <h3 className="font-display text-lg font-semibold">Blocked by your device</h3>
         <p className="mt-1 text-sm leading-6 text-ink-600">
           Notifications are switched off for this app in your browser or device settings. We cannot
-          turn them back on from here — allow notifications for Christmas Budget in those settings,
+          turn them back on from here — allow notifications for Family Gift Planner in those settings,
           then return to this page.
         </p>
       </div>

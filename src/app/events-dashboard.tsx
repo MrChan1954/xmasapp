@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { Cake, CalendarDays, ChevronRight, Plus } from "lucide-react";
+import { CalendarDays, ChevronRight, Plus } from "lucide-react";
 import { formatPennies } from "@/lib/currency";
+import { purchaseProgressStatus, type PurchaseProgressStatus } from "@/lib/purchases";
+import type { BirthdayPlanning } from "@/utils/supabase/birthdays-server";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { DASHBOARD_BIRTHDAY_LIMIT, birthdayWorkspacePath, describeDaysAway, formatBirthday, type UpcomingBirthday } from "@/lib/birthdays.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
@@ -10,7 +12,7 @@ import { eventPath, eventTypeMeta, formatEventDate, groupDashboardEvents, type E
 import { AppShell, PageHeader } from "./components/app-shell";
 import { GarlandRule } from "./components/festive/garland";
 import { FinancialProgressBar } from "./components/financial-progress";
-import { Badge, ButtonLink, EmptyState, Notice, cx } from "./components/ui";
+import { Badge, ButtonLink, EmptyState, Notice, cx, type BadgeTone } from "./components/ui";
 
 export type DashboardEvent = EventSummary & {
   spentPennies: number;
@@ -44,6 +46,7 @@ export type DashboardEvent = EventSummary & {
 export function EventsDashboard({
   events,
   birthdays = [],
+  planningByPerson = {},
   today,
   isAdmin,
   error,
@@ -51,6 +54,12 @@ export function EventsDashboard({
   events: DashboardEvent[];
   /** Everyone with a birthday, already ordered by how soon it next falls. */
   birthdays?: UpcomingBirthday[];
+  /**
+   * The planning for each person's NEXT birthday, where it exists. Absent is a
+   * normal state — most birthdays have not been planned yet — and is shown as
+   * "planning not started", never as a £0 budget somebody chose.
+   */
+  planningByPerson?: Record<string, BirthdayPlanning>;
   today: string;
   isAdmin: boolean;
   error?: string | null;
@@ -69,23 +78,17 @@ export function EventsDashboard({
         eyebrow="Family gift planner"
         title="Events"
         description="Every occasion the family plans and pays for together. Open one to see its people, purchases and balances."
-        actions={(
-          <>
-            {/* Birthdays sit beside the events rather than inside one, because
-                a birthday belongs to a person all year round whether or not
-                anybody has planned an event for it. Everybody can look. */}
-            <ButtonLink href="/birthdays" variant="secondary" size="lg" className="w-full sm:w-auto">
-              <Cake size={18} aria-hidden />
-              Birthdays
-            </ButtonLink>
-            {isAdmin ? (
+        // Birthdays are NOT a header button. The dashboard already has one
+        // route into them -- the Upcoming birthdays section below, and its
+        // "All birthdays" link -- and a second, larger control at the top of
+        // the same screen was two doors into one room. Removed on desktop and
+        // on mobile alike; the dedicated /birthdays page is unchanged.
+        actions={isAdmin ? (
           <ButtonLink href="/events/new" size="lg" className="w-full sm:w-auto">
             <Plus size={18} aria-hidden />
             Create event
           </ButtonLink>
-            ) : null}
-          </>
-        )}
+        ) : null}
       />
 
       {error && <Notice tone="danger" className="mt-6">{error}</Notice>}
@@ -102,7 +105,12 @@ export function EventsDashboard({
       )}
 
       <EventSection title="Christmas" events={christmas} />
-      <UpcomingBirthdaysSection birthdays={nextBirthdays} total={birthdays.length} />
+      <UpcomingBirthdaysSection
+        birthdays={nextBirthdays}
+        total={birthdays.length}
+        planningByPerson={planningByPerson}
+        isAdmin={isAdmin}
+      />
       <EventSection
         title="Special events"
         events={special.upcoming}
@@ -125,9 +133,13 @@ export function EventsDashboard({
 function UpcomingBirthdaysSection({
   birthdays,
   total,
+  planningByPerson,
+  isAdmin,
 }: {
   birthdays: UpcomingBirthday[];
   total: number;
+  planningByPerson: Record<string, BirthdayPlanning>;
+  isAdmin: boolean;
 }) {
   return (
     <section className="mt-10">
@@ -150,15 +162,46 @@ function UpcomingBirthdaysSection({
           </p>
         )
         : (
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {birthdays.map((person) => <BirthdayCard key={person.personId} person={person} />)}
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {birthdays.map((person) => (
+              <BirthdayCard
+                key={person.personId}
+                person={person}
+                planning={planningByPerson[person.personId]}
+                isAdmin={isAdmin}
+              />
+            ))}
           </div>
         )}
     </section>
   );
 }
 
-function BirthdayCard({ person }: { person: UpcomingBirthday }) {
+/**
+ * One person's next birthday, with the money if there is any.
+ *
+ * The figures are the SAME ones Event Home shows, read from the same rows by
+ * `loadFamilyBirthdays`. Status and progress come from
+ * `purchaseProgressStatus` and `FinancialProgressBar` — the helpers every other
+ * financial card already uses — so there is no second progress engine here.
+ *
+ * Where no planning exists the card says so plainly. "£0 spent of £0" would
+ * read as a budget somebody had chosen, which is worse than saying nothing.
+ */
+function BirthdayCard({
+  person,
+  planning,
+  isAdmin,
+}: {
+  person: UpcomingBirthday;
+  planning: BirthdayPlanning | undefined;
+  isAdmin: boolean;
+}) {
+  const status: PurchaseProgressStatus | null = planning
+    ? purchaseProgressStatus(planning.spentPennies, planning.budgetPennies)
+    : null;
+  const hasBudget = (planning?.budgetPennies ?? 0) > 0;
+
   return (
     <Link
       href={birthdayWorkspacePath(person.personId)}
@@ -174,24 +217,71 @@ function BirthdayCard({ person }: { person: UpcomingBirthday }) {
           <h3 className="font-display text-lg leading-snug font-semibold break-words text-ink-900">
             {person.name}
           </h3>
-          <p className="mt-1 text-xs font-semibold text-ink-600">
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs font-semibold text-ink-600">
             {formatBirthday(person.birthday.month, person.birthday.day)}
+            <span aria-hidden>·</span>
+            <span className={person.next.daysAway <= 7 ? "text-accent" : undefined}>
+              {describeDaysAway(person.next.daysAway)}
+            </span>
           </p>
         </div>
-        {person.next.isToday && <Badge tone="success">Today</Badge>}
+        {person.next.isToday
+          ? <Badge tone="success">Today</Badge>
+          : status && <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>}
       </div>
 
-      <div className="mt-auto flex items-end justify-between gap-3 pt-4">
-        <p className={cx(
-          "text-sm font-semibold",
-          person.next.daysAway <= 7 ? "text-accent" : "text-ink-900",
-        )}>
-          {describeDaysAway(person.next.daysAway)}
+      {planning
+        ? (
+          <div className="mt-4">
+            <p className="text-sm font-semibold text-ink-900">
+              {formatPennies(planning.spentPennies)}
+              <span className="font-medium text-ink-600">
+                {hasBudget ? ` of ${formatPennies(planning.budgetPennies)} budget` : " spent"}
+              </span>
+            </p>
+            {hasBudget && (
+              <div className="mt-2">
+                <FinancialProgressBar
+                  actualPennies={planning.spentPennies}
+                  plannedPennies={planning.budgetPennies}
+                  mode="budget"
+                />
+              </div>
+            )}
+            <p className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-ink-600">
+              <span>🎁 {planning.giftCount} {planning.giftCount === 1 ? "gift" : "gifts"}</span>
+              <span>✨ {planning.ideaCount} {planning.ideaCount === 1 ? "idea" : "ideas"}</span>
+            </p>
+          </div>
+        )
+        : (
+          <div className="mt-4">
+            <p className="text-sm font-medium text-ink-600">Planning not started yet</p>
+          </div>
+        )}
+
+      <div className="mt-auto flex items-end justify-end pt-4">
+        <p className="text-xs font-semibold tracking-eyebrow text-accent uppercase">
+          {planning ? "Open →" : isAdmin ? "Start planning →" : "Open →"}
         </p>
-        <p className="text-xs font-semibold tracking-eyebrow text-accent uppercase">Open →</p>
       </div>
     </Link>
   );
+}
+
+/** The app's existing status vocabulary, not a second one. */
+function statusLabel(status: PurchaseProgressStatus): string {
+  if (status === "not_started") return "Not started";
+  if (status === "in_progress") return "In progress";
+  if (status === "budget_reached") return "Complete";
+  return "Over budget";
+}
+
+function statusTone(status: PurchaseProgressStatus): BadgeTone {
+  if (status === "not_started") return "neutral";
+  if (status === "in_progress") return "gold";
+  if (status === "budget_reached") return "success";
+  return "warning";
 }
 
 function EventSection({

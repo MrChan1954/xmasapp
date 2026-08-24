@@ -296,19 +296,50 @@ export function purchaseAddedNotification(input: {
 }
 
 /**
- * "You now owe someone." `amountPennies` must be the reader's CURRENT net
- * balance with that person, taken from `calculateNetOwedBalances`, not the size
- * of the allocation that triggered the event — those differ whenever there is
- * any history between the two, and showing the allocation would contradict the
- * Owed screen.
+ * "You now owe someone", with BOTH figures the reader actually needs.
+ *
+ *   💷 You owe Paige
+ *   This purchase adds £1.66. You now owe Paige £22.01 in total.
+ *
+ * WHY TWO NUMBERS, AND WHY THEY COME FROM DIFFERENT PLACES
+ *
+ *   increasePennies  what THIS purchase made the reader responsible for: their
+ *                    own `purchase_allocations.responsibility_pennies` row for
+ *                    it. That row is the same integer the Owed engine consumes
+ *                    as a `PurchaseObligation`, so this is not a second
+ *                    calculation of anything -- it is the authoritative share,
+ *                    quoted. It is NOT the purchase total, and two contributors
+ *                    on one purchase will rightly see different figures.
+ *
+ *   amountPennies    the reader's CURRENT net balance with that person, from
+ *                    `calculateNetOwedBalances`. Not the allocation: the two
+ *                    differ whenever there is any history between the pair, and
+ *                    quoting the allocation as the total would contradict the
+ *                    Owed screen.
+ *
+ * The old copy gave only the running total, which answered "what do I owe?" but
+ * never "what just happened?" -- so a family member watching a figure move had
+ * no way to tell whether it moved by £1.66 or by £16.60 without opening the app.
+ *
+ * A non-positive increase prints no increase sentence at all. "This purchase
+ * adds £0" is worse than saying nothing: it asserts an obligation that was not
+ * created. The audience layer already routes those readers elsewhere; this is
+ * the second lock on the same door.
  */
 export function youOweNotification(input: {
   creditorName: string;
   amountPennies: number;
+  increasePennies: number;
 }): NotificationPayload {
+  const total = `You now owe ${input.creditorName} ${formatPennies(input.amountPennies)} in total.`;
   return {
     title: `💷 You owe ${input.creditorName}`,
-    body: `A new purchase means you now owe ${input.creditorName} ${formatPennies(input.amountPennies)}.`,
+    // One line rather than two: `withEvent` prefixes the body with the event
+    // name, and "Christmas 2026 · This purchase adds £1.66. You now owe Paige
+    // £22.01 in total." reads as one sentence of context plus one of fact.
+    body: input.increasePennies > 0
+      ? `This purchase adds ${formatPennies(input.increasePennies)}. ${total}`
+      : total,
     url: OWED_URL,
     // Keyed by the person, so a burst of purchases leaves one current figure.
     tag: `owed-to:${input.creditorName}`,

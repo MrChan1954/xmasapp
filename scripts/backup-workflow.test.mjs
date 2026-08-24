@@ -115,6 +115,13 @@ test("a failed dump cannot be mistaken for a successful backup", () => {
   for (const column of ["birthday_month", "birthday_day", "birthday_year"]) {
     assert.ok(verify.includes(column), `the schema check must require people.${column}`);
   }
+  // Contributor eligibility is also a column on people. Nobody would notice it
+  // missing from a restore -- every screen would still render, and would offer
+  // the whole family as contributors again.
+  assert.ok(
+    verify.includes("is_family_contributor"),
+    "the schema check must require people.is_family_contributor",
+  );
   // A data dump with no rows in it fails. (The COPY parsing itself is covered
   // by the fixture-driven tests further down, which run the real parser.)
   assert.match(verify, /DATA_ROWS/, "the data dump must be required to contain rows");

@@ -20,6 +20,8 @@ import {
   type BadgeTone,
 } from "../../components/ui";
 import { useRealtimeRefresh } from "../../components/use-realtime-refresh";
+import { describeSupabaseError, describeThrown } from "@/lib/supabase-error";
+import { createClient } from "@/utils/supabase/client";
 
 type AccountStatus = "no_account" | "pending" | "active" | "disabled";
 type AccountRole = "admin" | "member" | null;
@@ -27,6 +29,8 @@ type AccountRole = "admin" | "member" | null;
 type FamilyMember = {
   personId: string;
   name: string;
+  /** In the family's contributor pool. Eligibility, not an amount. */
+  isFamilyContributor: boolean;
   email: string | null;
   role: AccountRole;
   active: boolean | null;
@@ -272,6 +276,13 @@ export function FamilyAccessClient() {
         </div>
       </header>
 
+      <ContributorPool
+        members={members}
+        busy={busy !== null}
+        onError={setError}
+        onChanged={() => void loadMembers(true)}
+      />
+
       <section className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="Account summary">
         <Summary label="Family" value={counts.all} />
         <Summary label="Active account" value={counts.active} accent />
@@ -370,6 +381,96 @@ export function FamilyAccessClient() {
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Who may be asked to chip in.
+ *
+ * WHY THIS IS NOT "EVERYONE IN THE FAMILY"
+ *   Nineteen people are in this family and four share the cost of gifts. A
+ *   contributor selector that offers all nineteen makes the common case tedious
+ *   and the mistake easy — and there was no way to express "no, not them"
+ *   except by remembering every single time.
+ *
+ * WHAT REMOVING SOMEBODY DOES
+ *   Stops them being OFFERED for new assignments. It rewrites no plan, no
+ *   allocation and no payment: money already assigned stays assigned until the
+ *   Global Admin edits that event on purpose. `set_family_contributor` writes
+ *   one boolean and nothing else, and checks Global Admin itself — so hiding
+ *   this section is a courtesy, not the boundary.
+ */
+function ContributorPool({
+  members,
+  busy,
+  onError,
+  onChanged,
+}: {
+  members: FamilyMember[];
+  busy: boolean;
+  onError: (message: string | null) => void;
+  onChanged: () => void;
+}) {
+  const [saving, setSaving] = useState<string | null>(null);
+  const eligible = members.filter((member) => member.isFamilyContributor);
+
+  const toggle = async (member: FamilyMember) => {
+    onError(null);
+    setSaving(member.personId);
+    try {
+      const result = await createClient().rpc("set_family_contributor", {
+        p_person_id: member.personId,
+        p_eligible: !member.isFamilyContributor,
+      });
+      if (result.error) {
+        onError(describeSupabaseError(result.error, "That change could not be saved."));
+        return;
+      }
+      onChanged();
+    } catch (thrown) {
+      onError(describeThrown(thrown, "That change could not be saved. Check your connection and try again."));
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <section className="mt-8">
+      <h2 className="text-xs font-semibold tracking-eyebrow text-gold uppercase">Contributors</h2>
+      <div className="mt-3 rounded-2xl border border-line bg-surface p-5 shadow-card">
+        <p className="text-sm leading-6 text-ink-600">
+          Who can be asked to share the cost of a gift. Everyone else stays a family member —
+          they can still receive gifts and have a birthday — but they are not offered when
+          planning who pays. Removing somebody here changes nothing already planned or paid.
+        </p>
+        <p className="mt-2 text-xs font-semibold text-ink-600">
+          {eligible.length} of {members.length} {members.length === 1 ? "person" : "people"}
+        </p>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          {members.map((member) => {
+            const on = member.isFamilyContributor;
+            return (
+              <button
+                key={member.personId}
+                type="button"
+                aria-pressed={on}
+                disabled={busy || saving !== null}
+                onClick={() => void toggle(member)}
+                className={cx(
+                  "min-h-11 rounded-xl border px-3.5 text-sm font-semibold transition disabled:opacity-50",
+                  on
+                    ? "border-accent/40 bg-accent-soft text-accent"
+                    : "border-line text-ink-600 hover:bg-hover-veil",
+                )}
+              >
+                {member.name}{on ? " ✓" : ""}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </section>
   );
 }
 

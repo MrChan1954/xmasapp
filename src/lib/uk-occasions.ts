@@ -118,6 +118,44 @@ export function suggestedOccasionDate(eventType: string, year: number): string |
   return null;
 }
 
+/**
+ * The year to offer for a recurring occasion: the NEXT one that has not
+ * happened yet.
+ *
+ * Defaulting to the current calendar year is wrong for most of the year. On the
+ * 24th of August 2026, Mother's Day 2026 was five months ago — offering it
+ * means the admin has to notice and correct it, and the year/date validation
+ * then refuses whatever they half-corrected.
+ *
+ * @param today the family's own calendar date, `YYYY-MM-DD`
+ * @param taken years already used by an active occasion of this type, so the
+ *   wizard proposes the next AVAILABLE one rather than a duplicate the
+ *   database would refuse
+ */
+export function nextOccurrenceYear(
+  eventType: string,
+  today: string,
+  taken: readonly number[] = [],
+): number | null {
+  const valid = /^\d{4}-\d{2}-\d{2}$/u.test(today) ? today : null;
+  if (!valid) return null;
+
+  const thisYear = Number(valid.slice(0, 4));
+  const unavailable = new Set(taken);
+
+  // Look forward from this year. A recurring occasion always has a date in
+  // every year, so this terminates on the first year that is both still to
+  // come and not already planned.
+  for (let year = thisYear; year <= thisYear + 25; year += 1) {
+    const date = suggestedOccasionDate(eventType, year);
+    if (!date) return unavailable.has(year) ? null : year;
+    // TODAY still counts as upcoming: a family planning on the morning of
+    // Christmas Day is planning for that Christmas.
+    if (date >= valid && !unavailable.has(year)) return year;
+  }
+  return null;
+}
+
 /** How the suggestion is explained on the form, so it is not a magic date. */
 export function occasionDateExplanation(eventType: string): string | null {
   if (eventType === "mothers_day") {

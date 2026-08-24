@@ -1,0 +1,3812 @@
+diff --git a/.github/workflows/database-backup.yml b/.github/workflows/database-backup.yml
+index 43c29f5..080bfd6 100644
+--- a/.github/workflows/database-backup.yml
++++ b/.github/workflows/database-backup.yml
+@@ -211,7 +211,15 @@ jobs:
+           # loop above cannot see them. A restore that brought back every
+           # person but none of their birthdays would look complete and be
+           # wrong: the dates are irreplaceable in a way a purchase is not.
+-          for COLUMN in birthday_month birthday_day birthday_year; do
++          #
++          # is_family_contributor is here for the same reason. It is one boolean
++          # per person and it decides who the app OFFERS as a contributor; a
++          # restore that lost it would silently offer all nineteen family
++          # members again and read as working.
++          # ORDERING: is_family_contributor arrives with migration 030. This
++          # list must not reach the default branch before that migration is
++          # applied, or the nightly backup will report a valid dump as invalid.
++          for COLUMN in birthday_month birthday_day birthday_year is_family_contributor; do
+             if ! grep -q "\<${COLUMN}\>" "${DIR}/schema.sql"; then
+               echo "::error::schema.sql does not define people.${COLUMN}. Treating this backup as invalid."
+               FAILED=1
+diff --git a/package.json b/package.json
+index 716cdc3..1690774 100644
+--- a/package.json
++++ b/package.json
+@@ -47,7 +47,8 @@
+     "test:single-recipient": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/single-recipient-events.test.mjs",
+     "test:live-regressions": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/birthday-and-delete-regressions.test.mjs",
+     "test:occasions": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/occasions-and-workspace.test.mjs",
+-    "test:birthday-budget": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/birthday-budget-reminder.test.mjs"
++    "test:birthday-budget": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/birthday-budget-reminder.test.mjs",
++    "test:checkpoint-4-3": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/checkpoint-4-3.test.mjs"
+   },
+   "dependencies": {
+     "@opennextjs/cloudflare": "^1.20.2",
+diff --git a/scripts/backup-workflow.test.mjs b/scripts/backup-workflow.test.mjs
+index 2e27cc5..e491c2d 100644
+--- a/scripts/backup-workflow.test.mjs
++++ b/scripts/backup-workflow.test.mjs
+@@ -115,6 +115,13 @@ test("a failed dump cannot be mistaken for a successful backup", () => {
+   for (const column of ["birthday_month", "birthday_day", "birthday_year"]) {
+     assert.ok(verify.includes(column), `the schema check must require people.${column}`);
+   }
++  // Contributor eligibility is also a column on people. Nobody would notice it
++  // missing from a restore -- every screen would still render, and would offer
++  // the whole family as contributors again.
++  assert.ok(
++    verify.includes("is_family_contributor"),
++    "the schema check must require people.is_family_contributor",
++  );
+   // A data dump with no rows in it fails. (The COPY parsing itself is covered
+   // by the fixture-driven tests further down, which run the real parser.)
+   assert.match(verify, /DATA_ROWS/, "the data dump must be required to contain rows");
+diff --git a/scripts/birthday-and-delete-regressions.test.mjs b/scripts/birthday-and-delete-regressions.test.mjs
+index 51a0988..832572c 100644
+--- a/scripts/birthday-and-delete-regressions.test.mjs
++++ b/scripts/birthday-and-delete-regressions.test.mjs
+@@ -248,11 +248,18 @@ test("8. a repeated delete is refused cleanly and changes nothing", () => {
+ 
+ test("9. deleting a birthday occurrence lands on that person's birthdays", () => {
+   assert.match(settingsScreen, /`\/birthdays\/\$\{event\.celebrantPersonId\}`/u);
+-  // The workspace is where an unused occurrence is reachable from in the first
+-  // place, so this returns the reader to where they started.
+-  const workspace = read("src", "app", "birthdays", "[personId]", "workspace-screen.tsx");
+-  assert.match(workspace, /eventPath\(occurrence\.eventId, "settings"\)/u);
+-  assert.match(workspace, /\{isAdmin && unused\.length > 0 && \(/u);
++  // `/birthdays/<personId>` is now a resolver: with the occurrence deleted it
++  // has nothing to redirect to and shows the setup screen, which is exactly
++  // where somebody who has just removed a mistaken occurrence should land.
++  const resolver = read("src", "app", "birthdays", "[personId]", "page.tsx");
++  assert.match(resolver, /if \(workspace\.current\) \{/u);
++  assert.match(resolver, /<StartPlanningScreen/u);
++
++  // An unused occurrence is still reachable — from the history page, which is
++  // where it is listed for the Global Admin to tidy up.
++  const history = read(...["src","app","birthdays","[personId]","history","history-screen.tsx"]);
++  assert.match(history, /eventPath\(occurrence\.eventId, "settings"\)/u);
++  assert.match(history, /\{isAdmin && unused\.length > 0 && \(/u);
+ });
+ 
+ // ---------------------------------------------------------------------------
+diff --git a/scripts/birthday-experience.test.mjs b/scripts/birthday-experience.test.mjs
+index f13f4cc..cd310cd 100644
+--- a/scripts/birthday-experience.test.mjs
++++ b/scripts/birthday-experience.test.mjs
+@@ -31,6 +31,13 @@ const {
+ const REMINDER_MIGRATION = "202608100027_two_stage_birthday_reminders_and_safe_event_deletion.sql";
+ const sql = read("supabase", "migrations", REMINDER_MIGRATION);
+ 
++// The birthday journey as it stands: a resolver, a focused setup screen, and
++// the history page. The financial landing screen that used to sit between the
++// dashboard and Event Home is gone.
++const resolverPage = read("src", "app", "birthdays", "[personId]", "page.tsx");
++const setupScreen = read("src", "app", "birthdays", "[personId]", "start-planning-screen.tsx");
++const historyScreen = read("src", "app", "birthdays", "[personId]", "history", "history-screen.tsx");
++
+ /** A family of `count` people, each with a birthday, none of them planned. */
+ function familyWithBirthdays(count) {
+   return Array.from({ length: count }, (_, index) => ({
+@@ -173,7 +180,13 @@ test("the dashboard shows a small fixed number, and says where the rest are", ()
+   // The section renders the person's own numbers: date, distance, and Today.
+   assert.match(dashboard, /formatBirthday\(person\.birthday\.month, person\.birthday\.day\)/);
+   assert.match(dashboard, /describeDaysAway\(person\.next\.daysAway\)/);
+-  assert.match(dashboard, /person\.next\.isToday && <Badge tone="success">Today<\/Badge>/);
++  assert.match(dashboard, /person\.next\.isToday\s*\n?\s*\? <Badge tone="success">Today<\/Badge>/u);
++
++  // And the financial snapshot, built from the app's existing helpers rather
++  // than a second progress engine.
++  assert.match(dashboard, /purchaseProgressStatus\(planning\.spentPennies, planning\.budgetPennies\)/u);
++  assert.match(dashboard, /<FinancialProgressBar/u);
++  assert.match(dashboard, /Planning not started yet/u, "a clean state when there is no plan");
+   assert.match(dashboard, /birthdayWorkspacePath\(person\.personId\)/, "a card opens the PERSON");
+ });
+ 
+@@ -189,18 +202,30 @@ test("the root page reads birthdays and events independently", () => {
+ // 3. The birthday workspace
+ // ---------------------------------------------------------------------------
+ 
+-test("a birthday opens the person's workspace, not an event", () => {
++test("a birthday link resolves straight to Event Home, with nothing in between", () => {
+   assert.equal(birthdayWorkspacePath("abc"), "/birthdays/abc");
+ 
+-  const page = read("src", "app", "birthdays", "[personId]", "page.tsx");
+-  assert.match(page, /loadBirthdayWorkspace\(personId\)/);
+-  assert.match(page, /if \(!workspace\) notFound\(\)/, "an unknown person is a plain 404");
+-
+-  const screen = read("src", "app", "birthdays", "[personId]", "workspace-screen.tsx");
+-  assert.match(screen, /eyebrow="Birthdays"/, "the breadcrumb is Birthdays, not Events");
+-  // The generic event vocabulary stays out of what the reader sees.
+-  const visibleText = [...screen.matchAll(/>([^<>{}]{4,})</gu)].map((match) => match[1]).join(" ");
+-  assert.doesNotMatch(visibleText, /\bevent\b/iu, "the word \"event\" must not appear on this page");
++  assert.match(resolverPage, /loadBirthdayWorkspace\(personId\)/u);
++  assert.match(resolverPage, /if \(!workspace\) notFound\(\)/u, "an unknown person is a plain 404");
++
++  // THE REDIRECT. Where this year's planning exists, the person route hands
++  // straight over to Event Home. There is no second financial screen in the
++  // way, because there is only one place the money lives.
++  assert.match(resolverPage, /if \(workspace\.current\) \{/u);
++  assert.match(resolverPage, /redirect\(destination\)/u);
++  assert.match(resolverPage, /eventPath\(workspace\.current\.eventId\)/u);
++
++  // The removed screen's shortcuts went with it.
++  // The removed screen's shortcuts went with it. Comments are stripped first:
++  // the resolver's own doc comment explains what used to be there, and a bare
++  // search would find its own documentation.
++  const BLOCK_COMMENT = new RegExp(String.raw`/\*[\s\S]*?\*/`, "gu");
++  const LINE_COMMENT = new RegExp(String.raw`//[^\n]*`, "gu");
++  const resolverCode = resolverPage.replace(BLOCK_COMMENT, "").replace(LINE_COMMENT, "");
++  assert.doesNotMatch(resolverCode, /Ideas & budget|Add a purchase|Payments/u, "no landing page remains");
++
++  // Birthdays vocabulary, not event vocabulary, on what is left.
++  assert.match(setupScreen, /eyebrow="Birthdays"/u);
+ });
+ 
+ test("history is genuine activity only, so an accidental occurrence never becomes a year", () => {
+@@ -227,7 +252,7 @@ test("an empty occurrence is still reachable, or it could never be tidied up", (
+     "unused is exactly: not this year's planning, and nothing in it",
+   );
+ 
+-  const screen = read("src", "app", "birthdays", "[personId]", "workspace-screen.tsx");
++  const screen = historyScreen;
+   assert.ok(screen.includes("{isAdmin && unused.length > 0 && ("), "shown to the Global Admin only");
+   assert.ok(screen.includes('eventPath(occurrence.eventId, "settings")'), "and it links somewhere useful");
+ });
+@@ -384,7 +409,8 @@ test("nothing else in the application can delete an event", () => {
+     ["src", "app", "events", "[eventId]", "settings", "settings-screen.tsx"],
+     ["src", "app", "events", "[eventId]", "settings", "page.tsx"],
+     ["src", "utils", "supabase", "events-server.ts"],
+-    ["src", "app", "birthdays", "[personId]", "workspace-screen.tsx"],
++    ["src", "app", "birthdays", "[personId]", "start-planning-screen.tsx"],
++    ["src", "app", "birthdays", "[personId]", "history", "history-screen.tsx"],
+   ]) {
+     const source = read(...parts);
+     assert.doesNotMatch(
+diff --git a/scripts/event-administration.test.mjs b/scripts/event-administration.test.mjs
+index 66dc73d..3515ee9 100644
+--- a/scripts/event-administration.test.mjs
++++ b/scripts/event-administration.test.mjs
+@@ -29,6 +29,9 @@ const occasionSql = read("supabase", "migrations", OCCASION_MIGRATION);
+ const BUDGET_MIGRATION = "202608100029_add_monthly_birthday_budget_reminder.sql";
+ const budgetSql = read("supabase", "migrations", BUDGET_MIGRATION);
+ 
++const CONTRIBUTOR_MIGRATION = "202608100030_family_contributors_and_atomic_setup.sql";
++const contributorSql = read("supabase", "migrations", CONTRIBUTOR_MIGRATION);
++
+ /** The body of one `create ... function public.<name>(` block. */
+ function functionBody(name) {
+   const start = sql.indexOf(`function public.${name}(`);
+@@ -51,13 +54,14 @@ const ADMIN_WRITES = [
+ // 1. Migration hygiene -- the same invariants every applied migration holds
+ // ---------------------------------------------------------------------------
+ 
+-test("026 to 029 are the four newest migrations, in that order", () => {
++test("026 to 030 are the five newest migrations, in that order", () => {
+   const files = readdirSync(join(root, "supabase", "migrations")).filter((name) => name.endsWith(".sql")).sort();
+-  assert.equal(files.at(-4), MIGRATION, "026 must be fourth-newest");
+-  assert.equal(files.at(-3), REMINDER_MIGRATION, "027 must be third-newest");
+-  assert.equal(files.at(-2), OCCASION_MIGRATION, "028 must be second-newest");
+-  assert.equal(files.at(-1), BUDGET_MIGRATION, "029 must be the newest");
+-  for (const prefix of ["202608100026", "202608100027", "202608100028", "202608100029"]) {
++  assert.equal(files.at(-5), MIGRATION, "026 must be fifth-newest");
++  assert.equal(files.at(-4), REMINDER_MIGRATION, "027 must be fourth-newest");
++  assert.equal(files.at(-3), OCCASION_MIGRATION, "028 must be third-newest");
++  assert.equal(files.at(-2), BUDGET_MIGRATION, "029 must be second-newest");
++  assert.equal(files.at(-1), CONTRIBUTOR_MIGRATION, "030 must be the newest");
++  for (const prefix of ["202608100026", "202608100027", "202608100028", "202608100029", "202608100030"]) {
+     assert.equal(
+       files.filter((name) => name.startsWith(prefix)).length,
+       1,
+@@ -66,6 +70,29 @@ test("026 to 029 are the four newest migrations, in that order", () => {
+   }
+ });
+ 
++test("030 adds two admin paths and rewrites no financial history", () => {
++  const redefined = [...contributorSql.matchAll(/create or replace function public\.(\w+)\(/gu)]
++    .map((match) => match[1])
++    .sort();
++  assert.deepEqual(
++    redefined,
++    ["set_family_contributor", "start_birthday_planning"],
++    "030 may define only its own two functions",
++  );
++  for (const untouched of ADMIN_WRITES) {
++    assert.ok(!redefined.includes(untouched), `${untouched} must be left exactly as it was`);
++  }
++  // It writes only the new column and the rows a new birthday needs.
++  for (const table of ["purchases", "purchase_allocations", "settlements", "payment_receipts"]) {
++    assert.doesNotMatch(
++      contributorSql,
++      new RegExp(String.raw`(insert into|update|delete from)\s+public\.${table}\b`, "iu"),
++      `030 must not write ${table}`,
++    );
++  }
++  assert.doesNotMatch(contributorSql, /drop table|truncate/iu, "it removes nothing");
++});
++
+ test("029 adds the budget reminder and touches no admin write path", () => {
+   const redefined = [...budgetSql.matchAll(/create or replace function public\.(\w+)\(/gu)]
+     .map((match) => match[1])
+diff --git a/scripts/event-model.test.mjs b/scripts/event-model.test.mjs
+index 9004306..eee06b4 100644
+--- a/scripts/event-model.test.mjs
++++ b/scripts/event-model.test.mjs
+@@ -43,6 +43,10 @@ const occasionMigrationCode = occasionMigration.replace(/--[^\n]*/g, "");
+ const budgetMigrationName = "202608100029_add_monthly_birthday_budget_reminder.sql";
+ const budgetMigration = readFileSync(join(migrationsDirectory, budgetMigrationName), "utf8");
+ const budgetMigrationCode = budgetMigration.replace(/--[^\n]*/g, "");
++
++const contributorMigrationName = "202608100030_family_contributors_and_atomic_setup.sql";
++const contributorMigration = readFileSync(join(migrationsDirectory, contributorMigrationName), "utf8");
++const contributorMigrationCode = contributorMigration.replace(/--[^\n]*/g, "");
+ const eventMigration = readFileSync(join(migrationsDirectory, eventMigrationName), "utf8");
+ /** Comments explain the reasoning at length; assertions about CODE must ignore them. */
+ const eventMigrationCode = eventMigration.replace(/--[^\n]*/g, "");
+@@ -76,9 +80,9 @@ test("migration 026 is the newest migration, and nothing else has been added", (
+   // `scripts/event-administration.test.mjs` and
+   // `scripts/birthday-reminders.test.mjs`; what THIS file still owns is that
+   // 025 remains the Event layer and that 026 did not disturb it.
+-  assert.equal(migrationFiles.at(-1), budgetMigrationName);
+-  assert.equal(migrationFiles.length, 29);
+-  for (const name of [eventMigrationName, birthdayMigrationName, reminderMigrationName, occasionMigrationName]) {
++  assert.equal(migrationFiles.at(-1), contributorMigrationName);
++  assert.equal(migrationFiles.length, 30);
++  for (const name of [eventMigrationName, birthdayMigrationName, reminderMigrationName, occasionMigrationName, budgetMigrationName]) {
+     assert.ok(migrationFiles.includes(name), `${name} is still present, unedited`);
+   }
+ });
+@@ -91,6 +95,7 @@ test("026 and 027 leave the Event layer and the money exactly as 025 left them",
+     ["027", reminderMigrationCode],
+     ["028", occasionMigrationCode],
+     ["029", budgetMigrationCode],
++    ["030", contributorMigrationCode],
+   ]) {
+     for (const table of financialTables) {
+       assert.doesNotMatch(
+diff --git a/scripts/occasions-and-workspace.test.mjs b/scripts/occasions-and-workspace.test.mjs
+index ac6892a..1f01b7a 100644
+--- a/scripts/occasions-and-workspace.test.mjs
++++ b/scripts/occasions-and-workspace.test.mjs
+@@ -32,7 +32,9 @@ const {
+   validateEventInput, yearStatedInName, eventNavMode,
+ } = await import("../src/lib/events.ts");
+ 
+-const workspaceScreen = read("src", "app", "birthdays", "[personId]", "workspace-screen.tsx");
++const resolverPage = read("src", "app", "birthdays", "[personId]", "page.tsx");
++const setupScreen = read("src", "app", "birthdays", "[personId]", "start-planning-screen.tsx");
++const historyScreen = read("src", "app", "birthdays", "[personId]", "history", "history-screen.tsx");
+ const workspaceServer = read("src", "utils", "supabase", "birthdays-server.ts");
+ const createForm = read("src", "app", "events", "new", "create-event-form.tsx");
+ const migration28 = read("supabase", "migrations", "202608100028_add_mothers_and_fathers_day.sql");
+@@ -43,40 +45,37 @@ const migration28 = read("supabase", "migrations", "202608100028_add_mothers_and
+ 
+ test("1. a permanent birthday with no occurrence at all is a valid page", () => {
+   // The route is the PERSON. It must never need an event to exist — most
+-  // birthdays have no planning started, and that is the normal state, not an
+-  // error.
+-  const page = read("src", "app", "birthdays", "[personId]", "page.tsx");
+-  assert.match(page, /loadBirthdayWorkspace\(personId\)/u);
+-  assert.doesNotMatch(page, /eventId|requireEvent/u, "the route must not need an event id");
++  // birthdays have no planning started, and that is the normal state.
++  assert.match(resolverPage, /loadBirthdayWorkspace\(personId\)/u);
++  assert.doesNotMatch(resolverPage, /requireEvent/u, "the route must not need an event id");
+ 
+   // The loader returns a complete workspace before it looks at any event.
+   assert.ok(
+     workspaceServer.includes("if (events.length === 0) {")
+-    && workspaceServer.includes("return { person, current: null, currentYear, previous: [], unused: [], isAdmin, today };"),
++    && workspaceServer.includes("previous: [], unused: [], isAdmin, today,"),
+     "no occurrences is an ordinary return, not a failure",
+   );
+ 
+-  // And the screen says so, with the admin's way forward.
+-  assert.match(workspaceScreen, /Nothing planned for \{currentYear\} yet/u);
+-  assert.match(workspaceScreen, /Start planning/u);
+-  assert.match(workspaceScreen, /\{isAdmin && next && \(/u, "offered to the Global Admin only");
++  // And the setup screen says so, with the admin's way forward.
++  assert.match(setupScreen, /Start planning/u);
++  assert.match(setupScreen, /Nothing has been planned for/u, "a member is told plainly");
+ });
+ 
+ test("2-4. opening, leaving, reopening, reloading and pasting the URL are the same request", () => {
+-  // There is no client state to get stale: the page is a Server Component that
+-  // reads from the person id in the URL every time. Whatever made the second
+-  // visit differ from the first cannot live here.
+-  const page = read("src", "app", "birthdays", "[personId]", "page.tsx");
+-  assert.match(page, /export const dynamic = "force-dynamic";/u, "never served from a cache");
+-  // The DIRECTIVE, not the words: this file's comments explain the client
+-  // boundary, so a bare search for the phrase finds its own documentation.
++  // There is no client state to get stale: the resolver is a Server Component
++  // that reads from the person id in the URL every time, on every entry.
++  assert.match(resolverPage, /export const dynamic = "force-dynamic";/u, "never served from a cache");
+   assert.ok(
+-    !workspaceScreen.trimStart().startsWith('"use client"')
+-    && !workspaceScreen.trimStart().startsWith("'use client'"),
+-    "the screen renders on the server",
++    !resolverPage.trimStart().startsWith('"use client"')
++    && !resolverPage.trimStart().startsWith("'use client'"),
++    "the resolver runs on the server",
+   );
+-  assert.doesNotMatch(workspaceScreen, /useState|useEffect|useRouter|useSearchParams/u,
++  assert.doesNotMatch(resolverPage, /useState|useEffect|useRouter|useSearchParams/u,
+     "and holds no state that could differ between visits");
++
++  // `redirect` and `notFound` throw. Catching either would turn a redirect
++  // into a crash, so neither may sit inside a try.
++  assert.doesNotMatch(resolverPage, /try\s*\{/u, "no try/catch around thrown control flow");
+ });
+ 
+ test("5. reading the page creates nothing", () => {
+@@ -86,7 +85,15 @@ test("5. reading the page creates nothing", () => {
+     /\.(insert|update|upsert|delete)\(|rpc\(/u,
+     "the loader only reads",
+   );
+-  assert.doesNotMatch(workspaceScreen, /rpc\(|\.insert\(|\.update\(/u, "and so does the screen");
++  assert.doesNotMatch(resolverPage, /rpc\(|\.insert\(|\.update\(/u, "and so does the resolver");
++
++  // The setup screen writes — but only when submitted, never on render.
++  assert.match(setupScreen, /const start = async \(\) => \{/u, "creation is an explicit action");
++  assert.match(setupScreen, /rpc\("start_birthday_planning"/u);
++  assert.ok(
++    setupScreen.indexOf("const start = async () => {") < setupScreen.indexOf('rpc("start_birthday_planning"'),
++    "the only write is inside that handler",
++  );
+ });
+ 
+ test("6. a historical occurrence is never mistaken for this year's planning", () => {
+@@ -102,25 +109,21 @@ test("6. a historical occurrence is never mistaken for this year's planning", ()
+ 
+ test("7. an occurrence dated in a birth year cannot become current planning", () => {
+   // Production holds a birthday occurrence dated in a birth YEAR — somebody
+-  // typed a date of birth into Create Event, where the date field means the day
+-  // the event is for. It must never present itself as this year's plan.
++  // typed a date of birth into Create Event. It must never present itself as
++  // this year's plan.
+   const occurrences = [
+-    { year: 1995, status: "active", gifts: [], openIdeas: [] },
+-    { year: 2026, status: "active", gifts: [], openIdeas: [] },
++    { year: 1995, status: "active" },
++    { year: 2027, status: "active" },
+   ];
+-  const currentYear = 2026;
+-  const current = occurrences.find((o) => o.year === currentYear && o.status === "active");
+-  assert.equal(current?.year, 2026);
+-
+-  // With only the 1995 row, there is no current planning at all.
+-  const only1995 = [occurrences[0]];
+-  assert.equal(only1995.find((o) => o.year === currentYear && o.status === "active"), undefined);
++  const currentYear = 2027;
++  assert.equal(occurrences.find((o) => o.year === currentYear && o.status === "active")?.year, 2027);
++  assert.equal([occurrences[0]].find((o) => o.year === currentYear && o.status === "active"), undefined);
+ 
+   // It is not history either — nothing happened in it — so it is listed as
+-  // unused, for the admin, and only for the admin.
++  // unused, on the history page, for the Global Admin only.
+   assert.match(workspaceServer, /const unused = occurrences/u);
+   assert.match(workspaceServer, /occurrence !== current && !hasActivity\(occurrence\)/u);
+-  assert.match(workspaceScreen, /\{isAdmin && unused\.length > 0 && \(/u);
++  assert.match(historyScreen, /\{isAdmin && unused\.length > 0 && \(/u);
+ });
+ 
+ // ---------------------------------------------------------------------------
+@@ -249,25 +252,30 @@ test("15-16. both group under Special events, and neither is a birthday", () =>
+   assert.ok(!grouped.special.upcoming.some((e) => e.type === "birthday"));
+ });
+ 
+-test("Create Event offers the special occasions and not the two that belong elsewhere", () => {
++test("Create Event offers Christmas, and still not Birthday", () => {
++  // Christmas is back: a family needs 2027 after 2026, and a new household
++  // starts with none. A duplicate is refused by the database, not by hiding
++  // the option.
+   assert.deepEqual(
+     [...SPECIAL_EVENT_TYPES],
+-    ["mothers_day", "fathers_day", "easter", "wedding", "anniversary", "other"],
++    ["christmas", "mothers_day", "fathers_day", "easter", "wedding", "anniversary", "other"],
+   );
+-  assert.ok(!SPECIAL_EVENT_TYPES.includes("christmas"), "the family has one Christmas");
++  assert.ok(SPECIAL_EVENT_TYPES.includes("christmas"), "Christmas must be creatable");
+   assert.ok(!SPECIAL_EVENT_TYPES.includes("birthday"), "a birthday belongs to a person");
+ 
+   assert.match(createForm, /SPECIAL_EVENT_TYPES\.map\(\(option: EventType\) => \{/u);
+   assert.match(createForm, /href="\/birthdays"/u, "and it says where a birthday is started");
+ 
+-  // The date is suggested, and explained, and still editable.
++  // The date is suggested for the NEXT occurrence, explained, and editable.
++  assert.match(createForm, /nextOccurrenceYear\(nextType, today, takenYears\[nextType\] \?\? \[\]\)/u);
+   assert.match(createForm, /suggestedOccasionDate\(nextType, year\)/u);
+   assert.match(createForm, /occasionDateExplanation\(type\)/u);
+   assert.match(createForm, /<Input type="date" value=\{date\} onChange=/u, "the admin can change it");
+ 
+-  assert.equal(suggestedOccasionDate("mothers_day", 2026), "2026-03-15");
+-  assert.equal(suggestedOccasionDate("fathers_day", 2026), "2026-06-21");
+-  assert.equal(suggestedOccasionDate("easter", 2026), "2026-04-05");
++  assert.equal(suggestedOccasionDate("mothers_day", 2027), "2027-03-07");
++  assert.equal(suggestedOccasionDate("fathers_day", 2027), "2027-06-20");
++  assert.equal(suggestedOccasionDate("easter", 2027), "2027-03-28");
++  assert.equal(suggestedOccasionDate("christmas", 2026), "2026-12-25");
+   assert.equal(suggestedOccasionDate("wedding", 2026), null, "a wedding has no formula");
+ });
+ 
+@@ -378,9 +386,18 @@ test("no server component calls a value imported from a client module", () => {
+   assert.ok(files.length > 50, "the walk must actually have found the source tree");
+ });
+ 
+-test("the birthday workspace takes cx from the module server components may call", () => {
+-  assert.match(workspaceScreen, /import \{ cx \} from "\.\.\/\.\.\/components\/cx";/u);
+-  assert.doesNotMatch(workspaceScreen, /import \{[^}]*\bcx\b[^}]*\} from "\.\.\/\.\.\/components\/ui";/u);
+-  // And the module it now uses says why it exists.
++test("every birthday Server Component takes cx from the module they may call", () => {
++  // The Eden bug: a Server Component called `cx` imported from a "use client"
++  // module, which arrives as a client reference and throws when invoked.
++  for (const [label, source] of [
++    ["history screen", historyScreen],
++  ]) {
++    if (!/\bcx\(/u.test(source)) continue;
++    assert.match(source, /import \{ cx \} from "[^"]*components\/cx";/u,
++      `${label} must take cx from the server-safe module`);
++    assert.doesNotMatch(source, /import \{[^}]*\bcx\b[^}]*\} from "[^"]*components\/ui";/u,
++      `${label} must not take cx from the client module`);
++  }
++  // And the module it uses says why it exists.
+   assert.match(read("src", "app", "components", "cx.ts"), /server components can call it/u);
+ });
+diff --git a/scripts/rls-security.test.mjs b/scripts/rls-security.test.mjs
+index 36f3ab3..8a5a563 100644
+--- a/scripts/rls-security.test.mjs
++++ b/scripts/rls-security.test.mjs
+@@ -62,6 +62,9 @@ const occasionMigration = readFileSync(join(migrationsDirectory, occasionMigrati
+ const budgetMigrationName = "202608100029_add_monthly_birthday_budget_reminder.sql";
+ const budgetMigration = readFileSync(join(migrationsDirectory, budgetMigrationName), "utf8");
+ 
++const contributorMigrationName = "202608100030_family_contributors_and_atomic_setup.sql";
++const contributorMigration = readFileSync(join(migrationsDirectory, contributorMigrationName), "utf8");
++
+ const applicationTables = [
+   "christmas_events",
+   "people",
+@@ -79,7 +82,31 @@ test("the authorization migration explicitly enables RLS on every application ta
+   // Deliberately pinned to the newest migration. Adding one fails this test on
+   // purpose, so a schema change cannot land without this file being reviewed
+   // and its checks extended to whatever the migration introduced.
+-  assert.equal(migrationFiles.at(-1), budgetMigrationName);
++  assert.equal(migrationFiles.at(-1), contributorMigrationName);
++  assert.ok(migrationFiles.includes(budgetMigrationName), "the budget reminder migration is still present");
++
++  // What 030 introduces, security-wise: two more Global Admin write paths.
++  // Contributor eligibility decides who may be assigned money, and birthday
++  // setup writes a budget and a plan — neither may be reachable by a member.
++  for (const fn of ["set_family_contributor", "start_birthday_planning"]) {
++    const start = contributorMigration.indexOf(`function public.${fn}(`);
++    assert.ok(start > 0, `${fn} must exist`);
++    const body = contributorMigration.slice(start, contributorMigration.indexOf("$$;", start));
++    assert.match(body, /is_app_admin\(\)/, `${fn} must check Global Admin in the database`);
++    assert.match(body, /set search_path = ''/, `${fn} must pin search_path`);
++    assert.match(body, /security definer/, `${fn} runs as definer`);
++    assert.match(
++      contributorMigration,
++      new RegExp(`revoke all on function public\\.${fn}\\([^)]*\\) from public, anon;`, "u"),
++      `${fn} must be revoked from anon`,
++    );
++  }
++  // Eligibility itself is not writable from a browser: no grant was added.
++  assert.doesNotMatch(
++    contributorMigration,
++    /grant (update|insert)[^;]*on table public\.people to (authenticated|anon)/i,
++    "people must stay unwritable from a browser session",
++  );
+   assert.ok(migrationFiles.includes(occasionMigrationName), "the occasions migration is still present");
+ 
+   // What 029 introduces, security-wise: one more table nobody may read, and two
+@@ -1706,7 +1733,14 @@ test("the UI keeps recipient creation and removal behind Global Admin", () => {
+   // Adding a person. The form is built once and rendered in all three shapes
+   // of the screen -- list, single recipient and empty -- so the admin gate is
+   // asserted on the one place it now lives rather than on each render site.
+-  assert.match(peoplePage, /const addForm = isAdmin && adding \? \(\s*\n\s*<AddForm/);
++  // The gate is now "Global Admin, AND this event is not about one named
++  // person" -- a birthday cannot take a second recipient. Both halves are
++  // asserted here, so weakening either one fails.
++  assert.match(
++    peoplePage,
++    /const addForm = isAdmin && celebrantPersonId === null && adding \? \(\s*\n\s*<AddForm/,
++  );
++  assert.match(peoplePage, /const addButton = isAdmin && celebrantPersonId === null \? \(/);
+   assert.equal(
+     (peoplePage.match(/<AddForm/gu) ?? []).length,
+     1,
+@@ -1717,8 +1751,9 @@ test("the UI keeps recipient creation and removal behind Global Admin", () => {
+     3,
+     "and every shape of the screen renders that one gated form",
+   );
+-  // Editing details and removing from Christmas.
+-  assert.match(personModal, /\{isAdmin && \(\s*<section[\s\S]*?Edit person[\s\S]*?Remove from Christmas/);
++  // Editing details and removing from the event. The modal is shared by every
++  // occasion, so its wording is neutral now.
++  assert.match(personModal, /\{isAdmin && \(\s*<section[\s\S]*?Edit person[\s\S]*?Remove from this event/);
+ });
+ 
+ // ---------------------------------------------------------------------------
+diff --git a/src/app/add-purchase/purchase-form.tsx b/src/app/add-purchase/purchase-form.tsx
+index eb99b87..e75befc 100644
+--- a/src/app/add-purchase/purchase-form.tsx
++++ b/src/app/add-purchase/purchase-form.tsx
+@@ -194,7 +194,7 @@ export function PurchaseForm({ eventId }: { eventId: string }) {
+         .sort((left, right) => left.name.localeCompare(right.name)));
+ 
+       if (requestedRecipientId && !nextRecipients.some((row) => row.id === requestedRecipientId)) {
+-        setError("The selected Christmas recipient could not be found.");
++        setError("The selected recipient could not be found.");
+         setLoading(false);
+         return;
+       }
+@@ -330,7 +330,7 @@ export function PurchaseForm({ eventId }: { eventId: string }) {
+     event.preventDefault();
+     setError(null);
+     const validRecipientId = validateUuid(recipientId, "Choose who this gift is for.");
+-    if (!validRecipientId.ok || !recipients.some((row) => row.id === validRecipientId.value)) { setError(validRecipientId.ok ? "Choose a valid Christmas recipient." : validRecipientId.error); return; }
++    if (!validRecipientId.ok || !recipients.some((row) => row.id === validRecipientId.value)) { setError(validRecipientId.ok ? "Choose a valid recipient." : validRecipientId.error); return; }
+     const title = validateRequiredText(description, { field: "the gift or item", maxLength: INPUT_LIMITS.title });
+     if (!title.ok) { setError(title.error); return; }
+     if (!parsedPrice.ok) { setError(parsedPrice.error); return; }
+diff --git a/src/app/api/admin/family-access/route.ts b/src/app/api/admin/family-access/route.ts
+index c494abd..4f91d8a 100644
+--- a/src/app/api/admin/family-access/route.ts
++++ b/src/app/api/admin/family-access/route.ts
+@@ -31,6 +31,14 @@ type MembershipRow = {
+ type PersonRow = {
+   id: string;
+   name: string;
++  /**
++   * May this person be offered when choosing who shares the cost of a gift?
++   *
++   * Family membership and contributor eligibility are different facts. Somebody
++   * is in the family because they exist; they contribute because the Global
++   * Admin says so.
++   */
++  is_family_contributor: boolean;
+ };
+ 
+ type Action =
+@@ -74,7 +82,7 @@ export async function GET() {
+     // Route handlers are public entry points. Do not rely on Proxy or UI checks.
+     const context = await requireFamilyAccessAdmin();
+     const [peopleResult, membershipResult, authUsers] = await Promise.all([
+-      context.admin.from("people").select("id, name").order("name"),
++      context.admin.from("people").select("id, name, is_family_contributor").order("name"),
+       context.admin
+         .from("app_members")
+         .select("id, person_id, contributor_id, user_id, email, role, active"),
+@@ -118,6 +126,7 @@ export async function GET() {
+       return {
+         personId: person.id,
+         name: person.name,
++        isFamilyContributor: Boolean(person.is_family_contributor),
+         email: membership?.email ?? authUser?.email ?? null,
+         role,
+         active: hasAccountDetails ? Boolean(membership?.active) : null,
+diff --git a/src/app/birthdays/[personId]/page.tsx b/src/app/birthdays/[personId]/page.tsx
+index 2c8e22d..231bfe6 100644
+--- a/src/app/birthdays/[personId]/page.tsx
++++ b/src/app/birthdays/[personId]/page.tsx
+@@ -1,24 +1,58 @@
+-import { notFound } from "next/navigation";
++import { notFound, redirect } from "next/navigation";
++// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
++import { eventPath } from "@/lib/events.ts";
+ import { loadBirthdayWorkspace } from "@/utils/supabase/birthdays-server";
+-import { BirthdayWorkspaceScreen } from "./workspace-screen";
++import { StartPlanningScreen } from "./start-planning-screen";
+ 
+ export const dynamic = "force-dynamic";
+ 
+ /**
+- * One person's birthday.
++ * One person's birthday — a RESOLVER, not a screen.
+  *
+- * The route is the PERSON, not an event: `/birthdays/<personId>`. A birthday
+- * belongs to somebody permanently, and the year being planned is derived from
+- * today, so this URL keeps working every year with nothing renamed or
+- * recreated.
++ * WHY THIS ROUTE STILL EXISTS
++ *   A birthday belongs to a person all year round, so the person is the stable
++ *   thing to link to. `/birthdays/<personId>` keeps working every year with
++ *   nothing renamed or recreated, and every card in the app points at it.
+  *
+- * A person id that does not exist, or a visitor who is not an active family
+- * member, both get a plain 404. The loader returns null for each without saying
+- * which, and every read inside it is behind the same RLS as the rest of the app.
++ * WHAT IT DOES
++ *   Works out which birthday is coming, looks for that year's planning, and
++ *   then gets out of the way:
++ *
++ *     planning exists      -> redirect to its Event Home
++ *     planning does not    -> the focused setup screen, for the Global Admin
++ *
++ *   There used to be a financial landing page in between, with its own budget,
++ *   spend and links to Ideas, Add, Owed and Payments. It was a second copy of
++ *   Event Home reached one tap earlier, and it is gone: the money lives in one
++ *   place.
++ *
++ * REDIRECTS AND `notFound` ARE THROWN CONTROL FLOW
++ *   Both are called at the top level of this function, never inside a try/catch,
++ *   because catching them would turn a redirect into a crash. The loader returns
++ *   `null` for "no such person" and for "not an active member" without saying
++ *   which, so an unknown id and an unauthorised reader look identical.
+  */
+-export default async function BirthdayWorkspacePage({ params }: PageProps<"/birthdays/[personId]">) {
++export default async function BirthdayPage({ params }: PageProps<"/birthdays/[personId]">) {
+   const { personId } = await params;
+   const workspace = await loadBirthdayWorkspace(personId);
+   if (!workspace) notFound();
+-  return <BirthdayWorkspaceScreen workspace={workspace} />;
++
++  // The occurrence for the birthday that is COMING. A past year's planning is
++  // history and must never stand in for it.
++  if (workspace.current) {
++    const destination = eventPath(workspace.current.eventId);
++    if (destination) redirect(destination);
++  }
++
++  return (
++    <StartPlanningScreen
++      personId={workspace.person.personId}
++      personName={workspace.person.name}
++      birthday={workspace.person.birthday}
++      year={workspace.currentYear}
++      occurrenceDate={workspace.nextOccurrenceDate}
++      contributors={workspace.eligibleContributors}
++      isAdmin={workspace.isAdmin}
++    />
++  );
+ }
+diff --git a/src/app/birthdays/[personId]/workspace-screen.tsx b/src/app/birthdays/[personId]/workspace-screen.tsx
+deleted file mode 100644
+index 9f0c5a4..0000000
+--- a/src/app/birthdays/[personId]/workspace-screen.tsx
++++ /dev/null
+@@ -1,338 +0,0 @@
+-import Link from "next/link";
+-import { CalendarDays, Gift, Lightbulb, Plus, Receipt, Scale, Settings, Users } from "lucide-react";
+-import { formatPennies } from "@/lib/currency";
+-// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+-import { describeDaysAway, formatBirthday, nextBirthdayOccurrence, suggestedBirthdayEventName } from "@/lib/birthdays.ts";
+-// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+-import { eventPath } from "@/lib/events.ts";
+-import type { BirthdayOccurrence, BirthdayWorkspace } from "@/utils/supabase/birthdays-server";
+-import { AppShell, PageHeader } from "../../components/app-shell";
+-import { GarlandRule } from "../../components/festive/garland";
+-import { FinancialProgressBar } from "../../components/financial-progress";
+-import { Badge, ButtonLink, EmptyState, Notice } from "../../components/ui";
+-// NOT from "./ui": this is a Server Component, and `ui.tsx` is "use client".
+-// A plain function exported from a client module becomes a client reference,
+-// and calling one during a server render throws — which is exactly what put
+-// this page into the global error boundary for every person whose birthday
+-// planning had been started.
+-import { cx } from "../../components/cx";
+-
+-/**
+- * Taylor's birthday, not "Taylor's Birthday 2026".
+- *
+- * WHY THE WORD "EVENT" IS NOT ON THIS PAGE
+- *   The family thinks in people and years: whose birthday, and what are we
+- *   doing about it this time. The event row underneath is what makes the money
+- *   work -- recipients, contributors, purchases, allocations, Owed, payments,
+- *   all exactly as they are for Christmas -- but it is machinery, and machinery
+- *   does not belong in the sentence.
+- *
+- *   So the links below go INTO the occurrence's own screens, which are the real
+- *   ones, and this page is the front of them.
+- *
+- * WHAT COUNTS AS HISTORY
+- *   A previous year appears only if something actually happened in it. An
+- *   occurrence created by accident and never used is not "the year nobody
+- *   bought Taylor anything"; it is an empty row, and it is left out.
+- */
+-export function BirthdayWorkspaceScreen({ workspace }: { workspace: BirthdayWorkspace }) {
+-  const { person, current, currentYear, previous, unused, isAdmin, today } = workspace;
+-  const next = person.birthday ? nextBirthdayOccurrence(person.birthday, today) : null;
+-  const firstName = person.name.split(" ")[0];
+-
+-  return (
+-    <AppShell width="narrow">
+-      <PageHeader
+-        eyebrow="Birthdays"
+-        title={person.name}
+-        description={person.birthday
+-          ? `${formatBirthday(person.birthday.month, person.birthday.day)}${next ? ` · ${describeDaysAway(next.daysAway)}` : ""}`
+-          : "No birthday saved yet."}
+-        actions={
+-          <ButtonLink href="/birthdays" variant="secondary" size="lg" className="w-full sm:w-auto">
+-            All birthdays
+-          </ButtonLink>
+-        }
+-      />
+-
+-      {next?.isToday && (
+-        <Notice tone="success" className="mt-6">
+-          It is {firstName}&apos;s birthday today.
+-        </Notice>
+-      )}
+-
+-      {!person.birthday && (
+-        <EmptyState
+-          className="mt-8"
+-          illustration="star"
+-          title="No birthday saved"
+-          body={isAdmin
+-            ? "Add the date on the Birthdays page and this workspace fills in."
+-            : "An admin has not recorded this birthday yet."}
+-        />
+-      )}
+-
+-      {person.birthday && (
+-        <section className="mt-10">
+-          <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-2">
+-            <h2 className="font-display text-2xl font-semibold text-ink-900">{currentYear}</h2>
+-            {current?.status === "archived" && <Badge tone="neutral">Archived</Badge>}
+-          </div>
+-          <GarlandRule className="mt-4" />
+-
+-          {current
+-            ? <CurrentYear occurrence={current} firstName={firstName} />
+-            : (
+-              <div className="mt-6 rounded-2xl border border-dashed border-line-strong bg-surface-2 px-5 py-8 text-center">
+-                <p className="font-display text-lg font-semibold text-ink-900">
+-                  Nothing planned for {currentYear} yet
+-                </p>
+-                <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-ink-600">
+-                  {isAdmin
+-                    ? `Start planning and ${firstName} becomes a recipient, with a budget, gift ideas, purchases and the same Owed and payment tracking as Christmas.`
+-                    : "An admin has not started this year's planning."}
+-                </p>
+-                {isAdmin && next && (
+-                  <ButtonLink
+-                    href={startPlanningHref(person.personId, person.name, next.year, next.date)}
+-                    size="lg"
+-                    className="mt-5"
+-                  >
+-                    <Plus size={18} aria-hidden />
+-                    Start planning
+-                  </ButtonLink>
+-                )}
+-              </div>
+-            )}
+-        </section>
+-      )}
+-
+-      {isAdmin && unused.length > 0 && (
+-        <section className="mt-12">
+-          <h2 className="font-display text-2xl font-semibold text-ink-900">Unused planning</h2>
+-          <p className="mt-1.5 text-sm leading-6 text-ink-600">
+-            Started and never used — nothing was bought, and no ideas were added.
+-            These are not counted as previous birthdays. Open the settings to tidy
+-            one up; anything with a purchase or an idea in it can only be archived.
+-          </p>
+-          <GarlandRule className="mt-4" />
+-          <ul className="mt-5 divide-y divide-line rounded-2xl border border-line bg-surface">
+-            {unused.map((occurrence) => (
+-              <li
+-                key={occurrence.eventId}
+-                className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5"
+-              >
+-                <span className="min-w-0">
+-                  <span className="block font-semibold text-ink-900">{occurrence.year}</span>
+-                  <span className="block text-xs text-ink-600">
+-                    {occurrence.eventDate}{occurrence.status === "archived" ? " · archived" : ""}
+-                  </span>
+-                </span>
+-                <ButtonLink
+-                  href={eventPath(occurrence.eventId, "settings") ?? "/"}
+-                  variant="ghost"
+-                  className="min-h-11"
+-                >
+-                  Settings
+-                </ButtonLink>
+-              </li>
+-            ))}
+-          </ul>
+-        </section>
+-      )}
+-
+-      <section className="mt-12">
+-        <h2 className="font-display text-2xl font-semibold text-ink-900">Previous birthdays</h2>
+-        <p className="mt-1.5 text-sm leading-6 text-ink-600">
+-          What was bought, what it cost, and who paid. Years where nothing was
+-          planned are not listed.
+-        </p>
+-        <GarlandRule className="mt-4" />
+-
+-        {previous.length === 0
+-          ? <p className="mt-5 text-sm text-ink-600">No previous birthdays recorded yet.</p>
+-          : (
+-            <div className="mt-6 space-y-4">
+-              {previous.map((occurrence) => (
+-                <PreviousYear key={occurrence.eventId} occurrence={occurrence} firstName={firstName} />
+-              ))}
+-            </div>
+-          )}
+-      </section>
+-    </AppShell>
+-  );
+-}
+-
+-/** Pre-fills Create Event from the person's own birthday, so nothing is retyped. */
+-function startPlanningHref(personId: string, name: string, year: number, date: string): string {
+-  const query = new URLSearchParams({
+-    type: "birthday",
+-    celebrant: personId,
+-    date,
+-    name: suggestedBirthdayEventName(name, year),
+-  });
+-  return `/events/new?${query.toString()}`;
+-}
+-
+-function CurrentYear({ occurrence, firstName }: { occurrence: BirthdayOccurrence; firstName: string }) {
+-  const hasBudget = occurrence.budgetPennies > 0;
+-
+-  return (
+-    <div className="mt-6 rounded-2xl border border-line bg-surface p-5 shadow-card">
+-      <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+-        <p className="text-sm font-semibold text-ink-900">
+-          {formatPennies(occurrence.spentPennies)}
+-          <span className="font-medium text-ink-600">
+-            {hasBudget ? ` of ${formatPennies(occurrence.budgetPennies)} spent` : " spent"}
+-          </span>
+-        </p>
+-        <p className="flex items-center gap-1.5 text-xs font-semibold text-ink-600">
+-          <CalendarDays size={14} aria-hidden />
+-          {occurrence.eventDate}
+-        </p>
+-      </div>
+-      {hasBudget && (
+-        <div className="mt-2">
+-          <FinancialProgressBar
+-            actualPennies={occurrence.spentPennies}
+-            plannedPennies={occurrence.budgetPennies}
+-            mode="budget"
+-          />
+-        </div>
+-      )}
+-
+-      {/* Into the real screens. They are the same ones Christmas uses; only the
+-          words leading to them are different. */}
+-      <div className="mt-5 grid gap-2 sm:grid-cols-2">
+-        <WorkspaceLink
+-          href={eventPath(occurrence.eventId, "people") ?? "/"}
+-          icon={<Users size={18} aria-hidden />}
+-          label="Ideas & budget"
+-          hint={`What to get ${firstName}, and how much`}
+-        />
+-        <WorkspaceLink
+-          href={eventPath(occurrence.eventId, "add-purchase") ?? "/"}
+-          icon={<Gift size={18} aria-hidden />}
+-          label="Add a purchase"
+-          hint="Record something you have bought"
+-        />
+-        <WorkspaceLink
+-          href={eventPath(occurrence.eventId, "owed") ?? "/"}
+-          icon={<Scale size={18} aria-hidden />}
+-          label="Owed"
+-          hint="Who owes who, for this birthday"
+-        />
+-        <WorkspaceLink
+-          href={eventPath(occurrence.eventId, "payment-log") ?? "/"}
+-          icon={<Receipt size={18} aria-hidden />}
+-          label="Payments"
+-          hint="Money already settled"
+-        />
+-        <WorkspaceLink
+-          href={eventPath(occurrence.eventId, "settings") ?? "/"}
+-          icon={<Settings size={18} aria-hidden />}
+-          label="Settings"
+-          hint="Who takes part, the date, archiving"
+-        />
+-      </div>
+-
+-      {occurrence.gifts.length > 0 && (
+-        <div className="mt-6 border-t border-line pt-5">
+-          <h3 className="text-xs font-semibold tracking-eyebrow text-gold uppercase">Bought so far</h3>
+-          <GiftList gifts={occurrence.gifts} />
+-        </div>
+-      )}
+-    </div>
+-  );
+-}
+-
+-function PreviousYear({ occurrence, firstName }: { occurrence: BirthdayOccurrence; firstName: string }) {
+-  return (
+-    <article className="rounded-2xl border border-line bg-surface p-5 shadow-sm">
+-      <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+-        <h3 className="font-display text-lg font-semibold text-ink-900">{occurrence.year}</h3>
+-        <p className="text-sm font-semibold tabular-nums text-ink-900">
+-          {formatPennies(occurrence.spentPennies)}
+-          <span className="font-medium text-ink-600"> spent</span>
+-        </p>
+-      </div>
+-
+-      {occurrence.gifts.length > 0
+-        ? <GiftList gifts={occurrence.gifts} />
+-        : (
+-          <p className="mt-3 text-sm text-ink-600">
+-            Nothing was bought, but there were ideas.
+-          </p>
+-        )}
+-
+-      {occurrence.openIdeas.length > 0 && (
+-        <div className="mt-4 border-t border-line pt-4">
+-          <p className="flex items-center gap-1.5 text-xs font-semibold tracking-eyebrow text-gold uppercase">
+-            <Lightbulb size={14} aria-hidden />
+-            Ideas nobody bought
+-          </p>
+-          <ul className="mt-2 flex flex-wrap gap-2">
+-            {occurrence.openIdeas.map((idea) => (
+-              <li
+-                key={idea.id}
+-                className="rounded-xl border border-line bg-surface-2 px-3 py-1.5 text-xs font-medium text-ink-600"
+-              >
+-                {idea.title}
+-                {idea.estimatedPricePennies !== null && (
+-                  <span className="text-ink-400"> · {formatPennies(idea.estimatedPricePennies)}</span>
+-                )}
+-              </li>
+-            ))}
+-          </ul>
+-          <p className="mt-2 text-xs text-ink-600">Still worth a look for {firstName} this year.</p>
+-        </div>
+-      )}
+-    </article>
+-  );
+-}
+-
+-function GiftList({ gifts }: { gifts: BirthdayOccurrence["gifts"] }) {
+-  return (
+-    <ul className="mt-3 divide-y divide-line">
+-      {gifts.map((gift) => (
+-        <li key={gift.id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 py-2.5">
+-          <span className="min-w-0 break-words text-sm font-medium text-ink-900">{gift.description}</span>
+-          <span className="flex items-baseline gap-2 text-sm">
+-            {gift.buyerName && <span className="text-xs font-medium text-ink-600">{gift.buyerName}</span>}
+-            <span className="font-semibold tabular-nums text-ink-900">{formatPennies(gift.pricePennies)}</span>
+-          </span>
+-        </li>
+-      ))}
+-    </ul>
+-  );
+-}
+-
+-function WorkspaceLink({
+-  href,
+-  icon,
+-  label,
+-  hint,
+-}: {
+-  href: string;
+-  icon: React.ReactNode;
+-  label: string;
+-  hint: string;
+-}) {
+-  return (
+-    <Link
+-      href={href}
+-      className={cx(
+-        "flex min-h-11 items-center gap-3 rounded-xl border border-line bg-surface-2 px-3.5 py-3 transition",
+-        "hover:border-accent/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+-      )}
+-    >
+-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent">
+-        {icon}
+-      </span>
+-      <span className="min-w-0">
+-        <span className="block text-sm font-semibold text-ink-900">{label}</span>
+-        <span className="block text-xs leading-4 text-ink-600">{hint}</span>
+-      </span>
+-    </Link>
+-  );
+-}
+diff --git a/src/app/events-dashboard.tsx b/src/app/events-dashboard.tsx
+index c21c31d..b82a0e1 100644
+--- a/src/app/events-dashboard.tsx
++++ b/src/app/events-dashboard.tsx
+@@ -3,6 +3,8 @@
+ import Link from "next/link";
+ import { Cake, CalendarDays, ChevronRight, Plus } from "lucide-react";
+ import { formatPennies } from "@/lib/currency";
++import { purchaseProgressStatus, type PurchaseProgressStatus } from "@/lib/purchases";
++import type { BirthdayPlanning } from "@/utils/supabase/birthdays-server";
+ // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+ import { DASHBOARD_BIRTHDAY_LIMIT, birthdayWorkspacePath, describeDaysAway, formatBirthday, type UpcomingBirthday } from "@/lib/birthdays.ts";
+ // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+@@ -10,7 +12,7 @@ import { eventPath, eventTypeMeta, formatEventDate, groupDashboardEvents, type E
+ import { AppShell, PageHeader } from "./components/app-shell";
+ import { GarlandRule } from "./components/festive/garland";
+ import { FinancialProgressBar } from "./components/financial-progress";
+-import { Badge, ButtonLink, EmptyState, Notice, cx } from "./components/ui";
++import { Badge, ButtonLink, EmptyState, Notice, cx, type BadgeTone } from "./components/ui";
+ 
+ export type DashboardEvent = EventSummary & {
+   spentPennies: number;
+@@ -44,6 +46,7 @@ export type DashboardEvent = EventSummary & {
+ export function EventsDashboard({
+   events,
+   birthdays = [],
++  planningByPerson = {},
+   today,
+   isAdmin,
+   error,
+@@ -51,6 +54,12 @@ export function EventsDashboard({
+   events: DashboardEvent[];
+   /** Everyone with a birthday, already ordered by how soon it next falls. */
+   birthdays?: UpcomingBirthday[];
++  /**
++   * The planning for each person's NEXT birthday, where it exists. Absent is a
++   * normal state — most birthdays have not been planned yet — and is shown as
++   * "planning not started", never as a £0 budget somebody chose.
++   */
++  planningByPerson?: Record<string, BirthdayPlanning>;
+   today: string;
+   isAdmin: boolean;
+   error?: string | null;
+@@ -102,7 +111,12 @@ export function EventsDashboard({
+       )}
+ 
+       <EventSection title="Christmas" events={christmas} />
+-      <UpcomingBirthdaysSection birthdays={nextBirthdays} total={birthdays.length} />
++      <UpcomingBirthdaysSection
++        birthdays={nextBirthdays}
++        total={birthdays.length}
++        planningByPerson={planningByPerson}
++        isAdmin={isAdmin}
++      />
+       <EventSection
+         title="Special events"
+         events={special.upcoming}
+@@ -125,9 +139,13 @@ export function EventsDashboard({
+ function UpcomingBirthdaysSection({
+   birthdays,
+   total,
++  planningByPerson,
++  isAdmin,
+ }: {
+   birthdays: UpcomingBirthday[];
+   total: number;
++  planningByPerson: Record<string, BirthdayPlanning>;
++  isAdmin: boolean;
+ }) {
+   return (
+     <section className="mt-10">
+@@ -150,15 +168,46 @@ function UpcomingBirthdaysSection({
+           </p>
+         )
+         : (
+-          <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+-            {birthdays.map((person) => <BirthdayCard key={person.personId} person={person} />)}
++          <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
++            {birthdays.map((person) => (
++              <BirthdayCard
++                key={person.personId}
++                person={person}
++                planning={planningByPerson[person.personId]}
++                isAdmin={isAdmin}
++              />
++            ))}
+           </div>
+         )}
+     </section>
+   );
+ }
+ 
+-function BirthdayCard({ person }: { person: UpcomingBirthday }) {
++/**
++ * One person's next birthday, with the money if there is any.
++ *
++ * The figures are the SAME ones Event Home shows, read from the same rows by
++ * `loadFamilyBirthdays`. Status and progress come from
++ * `purchaseProgressStatus` and `FinancialProgressBar` — the helpers every other
++ * financial card already uses — so there is no second progress engine here.
++ *
++ * Where no planning exists the card says so plainly. "£0 spent of £0" would
++ * read as a budget somebody had chosen, which is worse than saying nothing.
++ */
++function BirthdayCard({
++  person,
++  planning,
++  isAdmin,
++}: {
++  person: UpcomingBirthday;
++  planning: BirthdayPlanning | undefined;
++  isAdmin: boolean;
++}) {
++  const status: PurchaseProgressStatus | null = planning
++    ? purchaseProgressStatus(planning.spentPennies, planning.budgetPennies)
++    : null;
++  const hasBudget = (planning?.budgetPennies ?? 0) > 0;
++
+   return (
+     <Link
+       href={birthdayWorkspacePath(person.personId)}
+@@ -174,26 +223,73 @@ function BirthdayCard({ person }: { person: UpcomingBirthday }) {
+           <h3 className="font-display text-lg leading-snug font-semibold break-words text-ink-900">
+             {person.name}
+           </h3>
+-          <p className="mt-1 text-xs font-semibold text-ink-600">
++          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs font-semibold text-ink-600">
+             {formatBirthday(person.birthday.month, person.birthday.day)}
++            <span aria-hidden>·</span>
++            <span className={person.next.daysAway <= 7 ? "text-accent" : undefined}>
++              {describeDaysAway(person.next.daysAway)}
++            </span>
+           </p>
+         </div>
+-        {person.next.isToday && <Badge tone="success">Today</Badge>}
++        {person.next.isToday
++          ? <Badge tone="success">Today</Badge>
++          : status && <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>}
+       </div>
+ 
+-      <div className="mt-auto flex items-end justify-between gap-3 pt-4">
+-        <p className={cx(
+-          "text-sm font-semibold",
+-          person.next.daysAway <= 7 ? "text-accent" : "text-ink-900",
+-        )}>
+-          {describeDaysAway(person.next.daysAway)}
++      {planning
++        ? (
++          <div className="mt-4">
++            <p className="text-sm font-semibold text-ink-900">
++              {formatPennies(planning.spentPennies)}
++              <span className="font-medium text-ink-600">
++                {hasBudget ? ` of ${formatPennies(planning.budgetPennies)} budget` : " spent"}
++              </span>
++            </p>
++            {hasBudget && (
++              <div className="mt-2">
++                <FinancialProgressBar
++                  actualPennies={planning.spentPennies}
++                  plannedPennies={planning.budgetPennies}
++                  mode="budget"
++                />
++              </div>
++            )}
++            <p className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-ink-600">
++              <span>🎁 {planning.giftCount} {planning.giftCount === 1 ? "gift" : "gifts"}</span>
++              <span>✨ {planning.ideaCount} {planning.ideaCount === 1 ? "idea" : "ideas"}</span>
++            </p>
++          </div>
++        )
++        : (
++          <div className="mt-4">
++            <p className="text-sm font-medium text-ink-600">Planning not started yet</p>
++          </div>
++        )}
++
++      <div className="mt-auto flex items-end justify-end pt-4">
++        <p className="text-xs font-semibold tracking-eyebrow text-accent uppercase">
++          {planning ? "Open →" : isAdmin ? "Start planning →" : "Open →"}
+         </p>
+-        <p className="text-xs font-semibold tracking-eyebrow text-accent uppercase">Open →</p>
+       </div>
+     </Link>
+   );
+ }
+ 
++/** The app's existing status vocabulary, not a second one. */
++function statusLabel(status: PurchaseProgressStatus): string {
++  if (status === "not_started") return "Not started";
++  if (status === "in_progress") return "In progress";
++  if (status === "budget_reached") return "Complete";
++  return "Over budget";
++}
++
++function statusTone(status: PurchaseProgressStatus): BadgeTone {
++  if (status === "not_started") return "neutral";
++  if (status === "in_progress") return "gold";
++  if (status === "budget_reached") return "success";
++  return "warning";
++}
++
+ function EventSection({
+   title,
+   events,
+diff --git a/src/app/events/[eventId]/more/page.tsx b/src/app/events/[eventId]/more/page.tsx
+index 0cb148c..56075ab 100644
+--- a/src/app/events/[eventId]/more/page.tsx
++++ b/src/app/events/[eventId]/more/page.tsx
+@@ -6,5 +6,14 @@ export const dynamic = "force-dynamic";
+ export default async function EventMorePage({ params }: PageProps<"/events/[eventId]/more">) {
+   const { eventId } = await params;
+   const event = await requireEvent(eventId);
+-  return <MoreScreen eventId={event.id} eventName={event.name} />;
++  return (
++    <MoreScreen
++      eventId={event.id}
++      eventName={event.name}
++      // Only a birthday has previous years belonging to one person, so only a
++      // birthday offers the link. History lives on the PERSON, not on this
++      // year's occurrence.
++      celebrantPersonId={event.type === "birthday" ? event.celebrantPersonId : null}
++    />
++  );
+ }
+diff --git a/src/app/events/[eventId]/people/page.tsx b/src/app/events/[eventId]/people/page.tsx
+index d8526d9..d56ef01 100644
+--- a/src/app/events/[eventId]/people/page.tsx
++++ b/src/app/events/[eventId]/people/page.tsx
+@@ -6,5 +6,11 @@ export const dynamic = "force-dynamic";
+ export default async function EventPeoplePage({ params }: PageProps<"/events/[eventId]/people">) {
+   const { eventId } = await params;
+   const event = await requireEvent(eventId);
+-  return <PeopleScreen eventId={event.id} eventName={event.name} />;
++  return (
++    <PeopleScreen
++      eventId={event.id}
++      eventName={event.name}
++      celebrantPersonId={event.celebrantPersonId}
++    />
++  );
+ }
+diff --git a/src/app/events/[eventId]/settings/page.tsx b/src/app/events/[eventId]/settings/page.tsx
+index dc8dded..cc108c4 100644
+--- a/src/app/events/[eventId]/settings/page.tsx
++++ b/src/app/events/[eventId]/settings/page.tsx
+@@ -18,7 +18,7 @@ export default async function EventSettingsPage({ params }: PageProps<"/events/[
+   const [{ member }, db] = await Promise.all([getCurrentMember(), createClient()]);
+ 
+   const [peopleResult, recipientResult, contributorResult] = await Promise.all([
+-    db.from("people").select("id,name").order("name"),
++    db.from("people").select("id,name,is_family_contributor").order("name"),
+     db.from("christmas_recipients").select("id,person_id,active").eq("christmas_event_id", event.id),
+     db.from("contributors").select("person_id,active").eq("christmas_event_id", event.id),
+   ]);
+@@ -47,6 +47,7 @@ export default async function EventSettingsPage({ params }: PageProps<"/events/[
+   const people: SettingsPerson[] = (peopleResult.data ?? []).map((row) => ({
+     personId: row.id as string,
+     name: row.name as string,
++    isFamilyContributor: Boolean(row.is_family_contributor),
+   }));
+ 
+   return (
+diff --git a/src/app/events/[eventId]/settings/settings-screen.tsx b/src/app/events/[eventId]/settings/settings-screen.tsx
+index de7e23f..282c125 100644
+--- a/src/app/events/[eventId]/settings/settings-screen.tsx
++++ b/src/app/events/[eventId]/settings/settings-screen.tsx
+@@ -14,7 +14,12 @@ import {
+   Badge, Button, ConfirmDialog, Field, Input, Notice, Textarea, cx,
+ } from "../../../components/ui";
+ 
+-export type SettingsPerson = { personId: string; name: string };
++export type SettingsPerson = {
++  personId: string;
++  name: string;
++  /** In the family's contributor pool — may be OFFERED as a contributor. */
++  isFamilyContributor: boolean;
++};
+ 
+ export type EventSettings = {
+   id: string;
+@@ -201,6 +206,30 @@ export function EventSettingsScreen({
+     }
+   };
+ 
++  /**
++   * Who to offer as a contributor.
++   *
++   * The family's contributor pool, PLUS anybody already contributing to this
++   * event. That second half matters: taking somebody out of the pool must not
++   * make an existing contributor vanish from the one screen that can remove
++   * them — their money would stay assigned with no way to see it.
++   */
++  const contributorChoices = people.filter((person) =>
++    person.isFamilyContributor || contributorPersonIds.includes(person.personId));
++
++  /**
++   * An event that names a celebrant is ABOUT that person.
++   *
++   * So it shows its one recipient and offers no way to add a second: a
++   * birthday with two recipients is a mistake, not a configuration. The test is
++   * the celebrant rather than the event type, so every single-celebrant event
++   * behaves the same way and no event type is named here.
++   */
++  const isAboutOnePerson = event.celebrantPersonId !== null;
++  const recipientChoices = isAboutOnePerson
++    ? people.filter((person) => recipientPersonIds.includes(person.personId))
++    : people;
++
+   const addRecipient = (personId: string) =>
+     void run(() => createClient().rpc("add_event_recipient", {
+       p_event_id: event.id,
+@@ -268,19 +297,19 @@ export function EventSettingsScreen({
+       <section className="mt-12">
+         <h2 className="font-display text-xl font-semibold text-ink-900">Recipients</h2>
+         <p className="mt-1.5 text-sm leading-6 text-ink-600">
+-          Who this event is buying for. Adding somebody here uses the family member who already
+-          exists — it never creates a second copy of them. Removing a recipient is done from the
+-          People screen, which keeps their purchases.
++          {isAboutOnePerson
++            ? "This event is about one person, so its recipient is fixed. Everything else — budget, contributors, gifts and Owed — works exactly as it does anywhere else."
++            : "Who this event is buying for. Adding somebody here uses the family member who already exists — it never creates a second copy of them. Removing a recipient is done from the People screen, which keeps their purchases."}
+         </p>
+         <GarlandRule className="mt-4" />
+         <div className="mt-5 flex flex-wrap gap-2">
+-          {people.map((person) => {
++          {recipientChoices.map((person) => {
+             const on = recipientPersonIds.includes(person.personId);
+             return (
+               <button
+                 key={person.personId}
+                 type="button"
+-                disabled={busy || on}
++                disabled={busy || on || isAboutOnePerson}
+                 aria-pressed={on}
+                 onClick={() => addRecipient(person.personId)}
+                 className={cx(
+@@ -303,7 +332,7 @@ export function EventSettingsScreen({
+         </p>
+         <GarlandRule className="mt-4" />
+         <div className="mt-5 flex flex-wrap gap-2">
+-          {people.map((person) => {
++          {contributorChoices.map((person) => {
+             const on = contributorPersonIds.includes(person.personId);
+             const isCelebrant = person.personId === event.celebrantPersonId;
+             return (
+diff --git a/src/app/events/new/create-event-form.tsx b/src/app/events/new/create-event-form.tsx
+index e849dc5..6f98c96 100644
+--- a/src/app/events/new/create-event-form.tsx
++++ b/src/app/events/new/create-event-form.tsx
+@@ -7,7 +7,7 @@ import { Check, ChevronLeft } from "lucide-react";
+ // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+ import { EVENT_TYPES, SPECIAL_EVENT_TYPES, birthdayDateLooksLikeDateOfBirth, eventTypeMeta, formatEventDate, validateEventInput, type EventType } from "@/lib/events.ts";
+ // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+-import { occasionDateExplanation, suggestedOccasionDate } from "@/lib/uk-occasions.ts";
++import { nextOccurrenceYear, occasionDateExplanation, suggestedOccasionDate } from "@/lib/uk-occasions.ts";
+ // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+ import { birthdayOccurrence, suggestedBirthdayEventName } from "@/lib/birthdays.ts";
+ import { INPUT_LIMITS } from "@/lib/input-validation";
+@@ -22,6 +22,14 @@ export type CreatablePerson = {
+   personId: string;
+   name: string;
+   birthday: { month: number; day: number } | null;
++  /**
++   * May be offered as a contributor.
++   *
++   * Recipients come from EVERYBODY: anyone in the family can receive a gift.
++   * Contributors come from the pool the Global Admin maintains, because being
++   * in the family and sharing the cost are different facts.
++   */
++  isFamilyContributor: boolean;
+ };
+ 
+ type Step = "type" | "details" | "people" | "review";
+@@ -45,7 +53,16 @@ const STEPS: Array<{ step: Step; label: string }> = [
+  * database; this calls `create_event`, which checks Global Admin itself and
+  * creates the event, its recipients and its contributors in one transaction.
+  */
+-export function CreateEventForm({ people, today }: { people: CreatablePerson[]; today: string }) {
++export function CreateEventForm({
++  people,
++  today,
++  takenYears = {},
++}: {
++  people: CreatablePerson[];
++  today: string;
++  /** Years each recurring occasion already has an active event for. */
++  takenYears?: Record<string, number[]>;
++}) {
+   const router = useRouter();
+   const params = useSearchParams();
+ 
+@@ -74,11 +91,18 @@ export function CreateEventForm({ people, today }: { people: CreatablePerson[];
+    * Sensible defaults, offered rather than imposed: everything below is a
+    * starting point the admin can overwrite before saving.
+    */
++  // Everyone can receive; only the pool can contribute.
++  const contributorPool = people.filter((person) => person.isFamilyContributor);
++
+   const applyTypeDefaults = (nextType: EventType) => {
+     setType(nextType);
+     setError(null);
+     const nextMeta = eventTypeMeta(nextType);
+-    const year = new Date().getUTCFullYear();
++    // The NEXT occurrence that has not happened and is not already planned.
++    // Defaulting to the current calendar year is wrong for most of the year:
++    // on the 24th of August, Mother's Day was five months ago.
++    const year = nextOccurrenceYear(nextType, today, takenYears[nextType] ?? [])
++      ?? Number(today.slice(0, 4));
+ 
+     if (nextType === "christmas") {
+       setName(`Christmas ${year}`);
+@@ -86,7 +110,7 @@ export function CreateEventForm({ people, today }: { people: CreatablePerson[];
+       setCelebrantId("");
+       // Christmas does not assume everybody receives: the admin chooses.
+       setRecipientIds([]);
+-      setContributorIds(people.map((person) => person.personId));
++      setContributorIds(contributorPool.map((person) => person.personId));
+       return;
+     }
+     // The occasions that move every year but move by a RULE. Easter Sunday,
+@@ -102,7 +126,7 @@ export function CreateEventForm({ people, today }: { people: CreatablePerson[];
+       setDate(suggested);
+       setCelebrantId("");
+       setRecipientIds([]);
+-      setContributorIds(people.map((person) => person.personId));
++      setContributorIds(contributorPool.map((person) => person.personId));
+       return;
+     }
+     if (nextType === "easter") {
+@@ -110,14 +134,14 @@ export function CreateEventForm({ people, today }: { people: CreatablePerson[];
+       setDate("");
+       setCelebrantId("");
+       setRecipientIds([]);
+-      setContributorIds(people.map((person) => person.personId));
++      setContributorIds(contributorPool.map((person) => person.personId));
+       return;
+     }
+     if (!nextMeta.allowsCelebrant) setCelebrantId("");
+     setName("");
+     setDate("");
+     setRecipientIds([]);
+-    setContributorIds(people.map((person) => person.personId));
++    setContributorIds(contributorPool.map((person) => person.personId));
+   };
+ 
+   /**
+@@ -132,7 +156,7 @@ export function CreateEventForm({ people, today }: { people: CreatablePerson[];
+     if (!person || type !== "birthday") return;
+ 
+     if (person.birthday) {
+-      const year = nextOccurrenceYear(person.birthday);
++      const year = nextBirthdayYear(person.birthday, today);
+       setDate(birthdayOccurrence(person.birthday.month, person.birthday.day, year));
+       setName(suggestedBirthdayEventName(person.name, year));
+     } else if (!name) {
+@@ -334,12 +358,16 @@ export function CreateEventForm({ people, today }: { people: CreatablePerson[];
+             selected={recipientIds}
+             onChange={setRecipientIds}
+           />
++          {/* Only the family's contributor pool. The recipient picker above
++              comes from everybody, because anyone can receive a gift. */}
+           <PeoplePicker
+             title="Who is chipping in?"
+-            hint={celebrant
+-              ? `${celebrant.name.split(" ")[0]} is left out by default — nobody pays for their own present. You can change that.`
+-              : "Contributors share the cost of every purchase in this event."}
+-            people={people}
++            hint={contributorPool.length === 0
++              ? "Nobody is set up as a family contributor yet. Add somebody in Family access first."
++              : celebrant
++                ? `${celebrant.name.split(" ")[0]} is left out by default — nobody pays for their own present. You can change that.`
++                : "Contributors share the cost of every purchase in this event."}
++            people={contributorPool}
+             selected={contributorIds}
+             onChange={setContributorIds}
+           />
+@@ -443,13 +471,19 @@ function describePeople(people: CreatablePerson[], ids: string[]): string {
+   return people.filter((person) => ids.includes(person.personId)).map((person) => person.name).join(", ");
+ }
+ 
+-/** This year's birthday if it is still to come, otherwise next year's. */
+-function nextOccurrenceYear(birthday: { month: number; day: number }): number {
+-  const now = new Date();
+-  const year = now.getUTCFullYear();
+-  const thisYear = birthdayOccurrence(birthday.month, birthday.day, year);
+-  const today = now.toISOString().slice(0, 10);
+-  return thisYear >= today ? year : year + 1;
++/**
++ * This year's birthday if it is still to come, otherwise next year's.
++ *
++ * Takes the family's own date rather than reading the clock: a UTC instant is
++ * the wrong day for part of every evening in British Summer Time, and this
++ * decides which YEAR somebody is planning.
++ *
++ * Named for birthdays specifically. `nextOccurrenceYear` in `uk-occasions`
++ * answers the same question for the recurring occasions that move by a rule.
++ */
++function nextBirthdayYear(birthday: { month: number; day: number }, today: string): number {
++  const year = Number(today.slice(0, 4));
++  return birthdayOccurrence(birthday.month, birthday.day, year) >= today ? year : year + 1;
+ }
+ 
+ /** The database's own message, unless it is one the reader cannot act on. */
+diff --git a/src/app/events/new/page.tsx b/src/app/events/new/page.tsx
+index aeca75a..58a6b5a 100644
+--- a/src/app/events/new/page.tsx
++++ b/src/app/events/new/page.tsx
+@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
+ import { Suspense } from "react";
+ import { getCurrentMember } from "@/utils/supabase/current-member";
+ import { loadFamilyBirthdays, londonToday } from "@/utils/supabase/birthdays-server";
++import { listEvents } from "@/utils/supabase/events-server";
+ import { CreateEventForm, type CreatablePerson } from "./create-event-form";
+ 
+ export const dynamic = "force-dynamic";
+@@ -19,18 +20,37 @@ export default async function CreateEventPage() {
+   if (!user) redirect("/login");
+   if (!member || member.role !== "admin") redirect("/");
+ 
+-  const { people } = await loadFamilyBirthdays();
++  const [{ people }, existing] = await Promise.all([
++    loadFamilyBirthdays(),
++    listEvents().catch(() => []),
++  ]);
++
++  const takenYears: Record<string, number[]> = {};
++  for (const event of existing) {
++    if (event.status !== "active") continue;
++    const year = Number(String(event.eventDate).slice(0, 4));
++    if (!Number.isInteger(year)) continue;
++    const type = String(event.type);
++    takenYears[type] = [...(takenYears[type] ?? []), year];
++  }
+   const creatable: CreatablePerson[] = people.map((person) => ({
+     personId: person.personId,
+     name: person.name,
+     birthday: person.birthday ? { month: person.birthday.month, day: person.birthday.day } : null,
++    // Everyone can RECEIVE a gift. Only the family's contributor pool is
++    // offered when choosing who shares the cost.
++    isFamilyContributor: person.isFamilyContributor,
+   }));
+ 
+   return (
+     <Suspense fallback={null}>
+       {/* The family's today, resolved on the server, so the form can tell a
+-          celebration being planned from a date of birth typed by mistake. */}
+-      <CreateEventForm people={creatable} today={londonToday()} />
++          celebration being planned from a date of birth typed by mistake.
++
++          `takenYears` is which years each recurring occasion already has, so
++          the wizard proposes the next AVAILABLE one instead of a duplicate the
++          database would refuse. */}
++      <CreateEventForm people={creatable} today={londonToday()} takenYears={takenYears} />
+     </Suspense>
+   );
+ }
+diff --git a/src/app/family-context.tsx b/src/app/family-context.tsx
+index 3a7b8c6..60bda9f 100644
+--- a/src/app/family-context.tsx
++++ b/src/app/family-context.tsx
+@@ -137,9 +137,9 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
+   const validatePersonValues = (id: string | null, name: string, budgetPennies: number) => {
+     const validName = validateRequiredText(name, { field: "a name", maxLength: INPUT_LIMITS.name });
+     if (!validName.ok) throw new Error(validName.error);
+-    if (!Number.isSafeInteger(budgetPennies) || budgetPennies < 0 || budgetPennies > MAX_PENNIES) throw new Error("Enter a valid Christmas budget.");
++    if (!Number.isSafeInteger(budgetPennies) || budgetPennies < 0 || budgetPennies > MAX_PENNIES) throw new Error("Enter a valid budget.");
+     if (id) {
+-      const validId = validateUuid(id, "Select a valid Christmas recipient.");
++      const validId = validateUuid(id, "Select a valid recipient.");
+       if (!validId.ok) throw new Error(validId.error);
+     }
+     return validName.value;
+@@ -162,7 +162,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
+     }), id ? "The person could not be updated." : "The person could not be added.");
+   };
+   const setActive = async (id: string, active: boolean) => {
+-    const validId = validateUuid(id, "Select a valid Christmas recipient.");
++    const validId = validateUuid(id, "Select a valid recipient.");
+     if (!validId.ok) throw new Error(validId.error);
+     await mutate(createClient().rpc("set_christmas_recipient_active", { p_christmas_recipient_id: validId.value, p_active: active }), active ? "The person could not be restored." : "The person could not be removed.");
+   };
+diff --git a/src/app/more/activity/activity-client.tsx b/src/app/more/activity/activity-client.tsx
+index dcb22cb..0eab9f3 100644
+--- a/src/app/more/activity/activity-client.tsx
++++ b/src/app/more/activity/activity-client.tsx
+@@ -66,7 +66,7 @@ function describe(entry: AuditEntry) {
+     return `Account for ${subject ?? "someone"}${context ? ` (${context})` : ""}`;
+   }
+   if (kind === "christmas_recipients") {
+-    return `${subject ?? "Someone"} on the Christmas list${money ? ` (${money} budget)` : ""}`;
++    return `${subject ?? "Someone"} as a recipient${money ? ` (${money} budget)` : ""}`;
+   }
+   return subject ?? KINDS[kind as keyof typeof KINDS] ?? kind;
+ }
+diff --git a/src/app/more/family-access/family-access-client.tsx b/src/app/more/family-access/family-access-client.tsx
+index 8a6b7d1..fb62ae1 100644
+--- a/src/app/more/family-access/family-access-client.tsx
++++ b/src/app/more/family-access/family-access-client.tsx
+@@ -20,6 +20,8 @@ import {
+   type BadgeTone,
+ } from "../../components/ui";
+ import { useRealtimeRefresh } from "../../components/use-realtime-refresh";
++import { describeSupabaseError, describeThrown } from "@/lib/supabase-error";
++import { createClient } from "@/utils/supabase/client";
+ 
+ type AccountStatus = "no_account" | "pending" | "active" | "disabled";
+ type AccountRole = "admin" | "member" | null;
+@@ -27,6 +29,8 @@ type AccountRole = "admin" | "member" | null;
+ type FamilyMember = {
+   personId: string;
+   name: string;
++  /** In the family's contributor pool. Eligibility, not an amount. */
++  isFamilyContributor: boolean;
+   email: string | null;
+   role: AccountRole;
+   active: boolean | null;
+@@ -272,6 +276,13 @@ export function FamilyAccessClient() {
+         </div>
+       </header>
+ 
++      <ContributorPool
++        members={members}
++        busy={busy !== null}
++        onError={setError}
++        onChanged={() => void loadMembers(true)}
++      />
++
+       <section className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="Account summary">
+         <Summary label="Family" value={counts.all} />
+         <Summary label="Active account" value={counts.active} accent />
+@@ -373,6 +384,96 @@ export function FamilyAccessClient() {
+   );
+ }
+ 
++/**
++ * Who may be asked to chip in.
++ *
++ * WHY THIS IS NOT "EVERYONE IN THE FAMILY"
++ *   Nineteen people are in this family and four share the cost of gifts. A
++ *   contributor selector that offers all nineteen makes the common case tedious
++ *   and the mistake easy — and there was no way to express "no, not them"
++ *   except by remembering every single time.
++ *
++ * WHAT REMOVING SOMEBODY DOES
++ *   Stops them being OFFERED for new assignments. It rewrites no plan, no
++ *   allocation and no payment: money already assigned stays assigned until the
++ *   Global Admin edits that event on purpose. `set_family_contributor` writes
++ *   one boolean and nothing else, and checks Global Admin itself — so hiding
++ *   this section is a courtesy, not the boundary.
++ */
++function ContributorPool({
++  members,
++  busy,
++  onError,
++  onChanged,
++}: {
++  members: FamilyMember[];
++  busy: boolean;
++  onError: (message: string | null) => void;
++  onChanged: () => void;
++}) {
++  const [saving, setSaving] = useState<string | null>(null);
++  const eligible = members.filter((member) => member.isFamilyContributor);
++
++  const toggle = async (member: FamilyMember) => {
++    onError(null);
++    setSaving(member.personId);
++    try {
++      const result = await createClient().rpc("set_family_contributor", {
++        p_person_id: member.personId,
++        p_eligible: !member.isFamilyContributor,
++      });
++      if (result.error) {
++        onError(describeSupabaseError(result.error, "That change could not be saved."));
++        return;
++      }
++      onChanged();
++    } catch (thrown) {
++      onError(describeThrown(thrown, "That change could not be saved. Check your connection and try again."));
++    } finally {
++      setSaving(null);
++    }
++  };
++
++  return (
++    <section className="mt-8">
++      <h2 className="text-xs font-semibold tracking-eyebrow text-gold uppercase">Contributors</h2>
++      <div className="mt-3 rounded-2xl border border-line bg-surface p-5 shadow-card">
++        <p className="text-sm leading-6 text-ink-600">
++          Who can be asked to share the cost of a gift. Everyone else stays a family member —
++          they can still receive gifts and have a birthday — but they are not offered when
++          planning who pays. Removing somebody here changes nothing already planned or paid.
++        </p>
++        <p className="mt-2 text-xs font-semibold text-ink-600">
++          {eligible.length} of {members.length} {members.length === 1 ? "person" : "people"}
++        </p>
++
++        <div className="mt-4 flex flex-wrap gap-2">
++          {members.map((member) => {
++            const on = member.isFamilyContributor;
++            return (
++              <button
++                key={member.personId}
++                type="button"
++                aria-pressed={on}
++                disabled={busy || saving !== null}
++                onClick={() => void toggle(member)}
++                className={cx(
++                  "min-h-11 rounded-xl border px-3.5 text-sm font-semibold transition disabled:opacity-50",
++                  on
++                    ? "border-accent/40 bg-accent-soft text-accent"
++                    : "border-line text-ink-600 hover:bg-hover-veil",
++                )}
++              >
++                {member.name}{on ? " ✓" : ""}
++              </button>
++            );
++          })}
++        </div>
++      </div>
++    </section>
++  );
++}
++
+ function AccountCard({
+   person,
+   busy,
+diff --git a/src/app/more/more-screen.tsx b/src/app/more/more-screen.tsx
+index 2903f76..83160d9 100644
+--- a/src/app/more/more-screen.tsx
++++ b/src/app/more/more-screen.tsx
+@@ -7,13 +7,23 @@ import { eventPath } from "@/lib/events.ts";
+ import { AppShell, PageHeader } from "../components/app-shell";
+ import { useFestive } from "../components/festive/festive-context";
+ import { IconBell, IconCake, IconChevronRight, IconHistory, IconPeople, IconReceipt, IconSettings, IconUser } from "../components/icons";
++import { IconGift } from "../components/icons";
+ import { InstallCard } from "../components/install-card";
+ import { Notice, Skeleton, cx } from "../components/ui";
+ 
+ type AccessState = "checking" | "admin" | "member" | "error";
+ 
+ /** The More screen for one event: its Payment Log, plus family-level tools. */
+-export function MoreScreen({ eventId, eventName }: { eventId: string; eventName: string }) {
++export function MoreScreen({
++  eventId,
++  eventName,
++  celebrantPersonId = null,
++}: {
++  eventId: string;
++  eventName: string;
++  /** Set only for a birthday: whose birthday this year's planning is for. */
++  celebrantPersonId?: string | null;
++}) {
+   const [access, setAccess] = useState<AccessState>("checking");
+   const { snow, setSnow, reducedMotion } = useFestive();
+ 
+@@ -122,6 +132,16 @@ export function MoreScreen({ eventId, eventName }: { eventId: string; eventName:
+       </Group>
+ 
+       <Group label="Records">
++        {celebrantPersonId && (
++          <div className="mb-3">
++            <SettingsLink
++              href={`/birthdays/${celebrantPersonId}/history`}
++              title="Previous birthdays"
++              description="What was bought in earlier years, what it cost, and who paid."
++              icon={<IconGift size={20} />}
++            />
++          </div>
++        )}
+         <SettingsLink
+           href={eventPath(eventId, "payment-log") ?? "/"}
+           title="Payment log"
+diff --git a/src/app/more/notifications/page.tsx b/src/app/more/notifications/page.tsx
+index 155994b..6a4d2c7 100644
+--- a/src/app/more/notifications/page.tsx
++++ b/src/app/more/notifications/page.tsx
+@@ -243,7 +243,7 @@ function DeviceState({
+         <h3 className="font-display text-lg font-semibold">Blocked by your device</h3>
+         <p className="mt-1 text-sm leading-6 text-ink-600">
+           Notifications are switched off for this app in your browser or device settings. We cannot
+-          turn them back on from here — allow notifications for Christmas Budget in those settings,
++          turn them back on from here — allow notifications for Family Gift Planner in those settings,
+           then return to this page.
+         </p>
+       </div>
+diff --git a/src/app/people/people-screen.tsx b/src/app/people/people-screen.tsx
+index d44a3d4..76e2b1c 100644
+--- a/src/app/people/people-screen.tsx
++++ b/src/app/people/people-screen.tsx
+@@ -62,20 +62,43 @@ const filters = ["All", "Not started", "In progress", "Budget reached", "Over bu
+  *   none          A setup step, with "Add recipient" for the Global Admin --
+  *                 rather than an empty list and a filter bar over nothing.
+  *
++ * AN EVENT WITH A CELEBRANT NEVER OFFERS "ADD RECIPIENT"
++ *   A birthday is about one person by definition, so a second recipient is a
++ *   mistake waiting to be made rather than a feature. The test is the
++ *   celebrant, not the event type -- any single-celebrant event behaves the
++ *   same way, and no event type is named here.
++ *
+  * This is presentation. The recipient row, the contributor plan, the purchase
+  * allocations, Owed and the payment log are identical in all three: the single
+  * shape renders the SAME component the list opens in a dialog, so there is one
+  * budget editor, one contributor editor and one purchase list in the codebase.
+  */
+-export function PeopleScreen({ eventId, eventName }: { eventId: string; eventName: string }) {
++export function PeopleScreen({
++  eventId,
++  eventName,
++  celebrantPersonId = null,
++}: {
++  eventId: string;
++  eventName: string;
++  /** Set when the event is ABOUT one person; that person is its only recipient. */
++  celebrantPersonId?: string | null;
++}) {
+   return (
+     <Suspense fallback={null}>
+-      <PeopleView eventId={eventId} eventName={eventName} />
++      <PeopleView eventId={eventId} eventName={eventName} celebrantPersonId={celebrantPersonId} />
+     </Suspense>
+   );
+ }
+ 
+-function PeopleView({ eventId, eventName }: { eventId: string; eventName: string }) {
++function PeopleView({
++  eventId,
++  eventName,
++  celebrantPersonId,
++}: {
++  eventId: string;
++  eventName: string;
++  celebrantPersonId: string | null;
++}) {
+   const { people, saveRecipient, restore, loading, error, isAdmin } = useFamily();
+   const { budgetPennies } = useTotals();
+   const [query, setQuery] = useState("");
+@@ -130,14 +153,14 @@ function PeopleView({ eventId, eventName }: { eventId: string; eventName: string
+   const mode = eventNavMode(loading || error ? null : active.length);
+   const soleRecipient = mode === "single" ? active[0] : null;
+ 
+-  const addButton = isAdmin ? (
++  const addButton = isAdmin && celebrantPersonId === null ? (
+     <Button size="lg" onClick={() => setAdding(true)} className="w-full sm:w-auto">
+       <IconPlus size={18} />
+       {mode === "multi" ? "Add person" : "Add recipient"}
+     </Button>
+   ) : undefined;
+ 
+-  const addForm = isAdmin && adding ? (
++  const addForm = isAdmin && celebrantPersonId === null && adding ? (
+     <AddForm
+       eventId={eventId}
+       eventName={eventName}
+@@ -456,7 +479,7 @@ function AddForm({ eventId, eventName, onCancel, onSave }: { eventId: string; ev
+     event.preventDefault();
+     const validName = validateRequiredText(name, { field: "a name", maxLength: INPUT_LIMITS.name });
+     if (!validName.ok) { setError(validName.error); return; }
+-    if (!parsedBudget.ok || parsedBudget.value === null) { setError(parsedBudget.ok ? "Enter a Christmas budget." : parsedBudget.error); return; }
++    if (!parsedBudget.ok || parsedBudget.value === null) { setError(parsedBudget.ok ? "Enter a budget." : parsedBudget.error); return; }
+     if (!parsedDraft.ok) { setError(parsedDraft.error); return; }
+     const validPlan = validateRecipientAllocationSnapshot(parsedBudget.value, parsedDraft.value);
+     if (!validPlan.ok) {
+@@ -485,7 +508,7 @@ function AddForm({ eventId, eventName, onCancel, onSave }: { eventId: string; ev
+           <Field label="Name" required>
+             <Input required maxLength={INPUT_LIMITS.name} value={name} onChange={(event) => setName(event.target.value)} />
+           </Field>
+-          <Field label="Christmas budget" className="mt-4">
++          <Field label="Budget" className="mt-4">
+             <MoneyInput maxLength={INPUT_LIMITS.money} value={budget} onValueChange={setBudget} />
+           </Field>
+           <div className="mt-6 border-t border-line pt-5">
+diff --git a/src/app/people/person-modal.tsx b/src/app/people/person-modal.tsx
+index d3e84f0..8ca5aca 100644
+--- a/src/app/people/person-modal.tsx
++++ b/src/app/people/person-modal.tsx
+@@ -207,8 +207,8 @@ export function PersonModal({
+   const savePerson = async (allocations: RecipientAllocation[]) => {
+     const validName = validateRequiredText(name, { field: "a name", maxLength: INPUT_LIMITS.name });
+     if (!validName.ok) { setError(validName.error); return; }
+-    const parsedBudget = parseMoneyToPennies(budget, { field: "a Christmas budget" });
+-    if (!parsedBudget.ok || parsedBudget.value === null) { setError(parsedBudget.ok ? "Enter a Christmas budget." : parsedBudget.error); return; }
++    const parsedBudget = parseMoneyToPennies(budget, { field: "a budget" });
++    if (!parsedBudget.ok || parsedBudget.value === null) { setError(parsedBudget.ok ? "Enter a budget." : parsedBudget.error); return; }
+     setSaving(true);
+     try {
+       await saveRecipient({
+@@ -232,7 +232,7 @@ export function PersonModal({
+       await archive(person.id);
+       onClose();
+     } catch {
+-      setError("Only Global Admin can remove someone from Christmas.");
++      setError("Only Global Admin can remove someone from this event.");
+       setConfirmingRemove(false);
+     }
+     setRemoving(false);
+@@ -421,7 +421,7 @@ function DetailView({
+           <h3 className="text-sm font-semibold text-ink-600">Management</h3>
+           <div className="mt-3 grid gap-3 sm:flex sm:flex-wrap">
+             <Button variant="secondary" onClick={editPerson} disabled={!contributionsLoaded}>Edit person</Button>
+-            <Button variant="dangerGhost" onClick={remove} className="border border-berry-soft-border bg-surface">Remove from Christmas</Button>
++            <Button variant="dangerGhost" onClick={remove} className="border border-berry-soft-border bg-surface">Remove from this event</Button>
+           </div>
+         </section>
+       )}
+@@ -431,7 +431,7 @@ function DetailView({
+ 
+ function PersonEditor({ name, budget, rows, saving, setName, setBudget, cancel, save }: { name: string; budget: string; rows: Contribution[]; saving: boolean; setName: (value: string) => void; setBudget: (value: string) => void; cancel: () => void; save: (allocations: RecipientAllocation[]) => void }) {
+   const [allocationRows, setAllocationRows] = useState(() => createRecipientAllocationDraftRows(rows));
+-  const parsedBudget = parseMoneyToPennies(budget, { field: "a Christmas budget" });
++  const parsedBudget = parseMoneyToPennies(budget, { field: "a budget" });
+   const budgetPennies = parsedBudget.ok ? parsedBudget.value : null;
+   const parsedDraft = parseRecipientAllocationDraft(allocationRows);
+   const validPlan = budgetPennies !== null && parsedDraft.ok
+@@ -444,7 +444,7 @@ function PersonEditor({ name, budget, rows, saving, setName, setBudget, cancel,
+       <Field label="Name" className="mt-5" required>
+         <Input required maxLength={INPUT_LIMITS.name} value={name} onChange={(event) => setName(event.target.value)} />
+       </Field>
+-      <Field label="Christmas budget" className="mt-4">
++      <Field label="Budget" className="mt-4">
+         <MoneyInput maxLength={INPUT_LIMITS.money} value={budget} onValueChange={setBudget} />
+       </Field>
+       <div className="mt-6 border-t border-line pt-5">
+diff --git a/src/app/people/purchases.tsx b/src/app/people/purchases.tsx
+index 5f8f197..9239c52 100644
+--- a/src/app/people/purchases.tsx
++++ b/src/app/people/purchases.tsx
+@@ -174,7 +174,7 @@ export function Purchases({
+     }
+     await loadPurchases();
+     setConfirming(null);
+-    setNotice(`“${purchase.description}” was removed from Christmas spending. Its history was preserved.`);
++    setNotice(`“${purchase.description}” was removed from this event's spending. Its history was preserved.`);
+     setBusy(null);
+   };
+ 
+@@ -265,7 +265,7 @@ export function Purchases({
+                 {confirming?.id === purchase.id && (
+                   <div className="mt-3 rounded-xl border border-berry-soft-border bg-berry-soft p-3.5">
+                     <p className="text-sm font-semibold">Remove “{purchase.description}”?</p>
+-                    <p className="mt-1 text-xs leading-5 text-ink-600">This removes {formatPennies(purchase.actual_price_pennies)} from Christmas spending. Financial history will be preserved.</p>
++                    <p className="mt-1 text-xs leading-5 text-ink-600">This removes {formatPennies(purchase.actual_price_pennies)} from this event&apos;s spending. Financial history will be preserved.</p>
+                     <div className="mt-3 grid grid-cols-2 gap-2">
+                       <Button variant="secondary" disabled={busy === purchase.id} onClick={() => setConfirming(null)}>Cancel</Button>
+                       <Button variant="danger" disabled={busy === purchase.id} onClick={() => void removePurchase(purchase)}>{busy === purchase.id ? "Removing..." : "Remove purchase"}</Button>
+diff --git a/src/app/people/recipient-allocation-editor.tsx b/src/app/people/recipient-allocation-editor.tsx
+index 55c37cd..32942b4 100644
+--- a/src/app/people/recipient-allocation-editor.tsx
++++ b/src/app/people/recipient-allocation-editor.tsx
+@@ -83,7 +83,7 @@ export function RecipientAllocationEditor({
+ 
+   const splitEqually = () => {
+     if (budgetPennies === null) {
+-      setActionError("Enter a valid Christmas budget before splitting it.");
++      setActionError("Enter a valid budget before splitting it.");
+       return;
+     }
+     const selectedIds = rows.filter((row) => row.selected).map((row) => row.contributorId);
+diff --git a/src/lib/events.ts b/src/lib/events.ts
+index 9b31c23..a0f8907 100644
+--- a/src/lib/events.ts
++++ b/src/lib/events.ts
+@@ -41,18 +41,19 @@ export type EventType = (typeof EVENT_TYPES)[number];
+ /**
+  * The occasions the Create Event form offers.
+  *
+- * Christmas and Birthday are deliberately absent.
++ * CHRISTMAS IS HERE. A family needs Christmas 2027 after 2026, and a household
++ * signing up for the first time has none at all — so "the family already has
++ * its Christmas" is an assumption the app must not make. Creating a duplicate
++ * is prevented by the database (migration 025 enforces one Christmas per year),
++ * not by hiding the option.
+  *
+- *   Christmas is its own product area, and the family has one. Offering it here
+- *   invites a second, which would split the year's money across two events that
+- *   both call themselves Christmas.
+- *
+- *   A birthday belongs to a PERSON, and is started from Birthdays → that
+- *   person, where the date is already known and the celebrant cannot be
+- *   mistyped. Offering it here is how an event dated 1995 gets created by
+- *   somebody who meant to record a date of birth.
++ * BIRTHDAY IS NOT. A birthday belongs to a PERSON, and is started from
++ * Birthdays → that person, where the date and the celebrant are already known
++ * and cannot be mistyped. Offering it here is how an event dated 1995 gets
++ * created by somebody who meant to record a date of birth.
+  */
+ export const SPECIAL_EVENT_TYPES = [
++  "christmas",
+   "mothers_day",
+   "fathers_day",
+   "easter",
+diff --git a/src/lib/uk-occasions.ts b/src/lib/uk-occasions.ts
+index d75170f..a4a5bd7 100644
+--- a/src/lib/uk-occasions.ts
++++ b/src/lib/uk-occasions.ts
+@@ -118,6 +118,44 @@ export function suggestedOccasionDate(eventType: string, year: number): string |
+   return null;
+ }
+ 
++/**
++ * The year to offer for a recurring occasion: the NEXT one that has not
++ * happened yet.
++ *
++ * Defaulting to the current calendar year is wrong for most of the year. On the
++ * 24th of August 2026, Mother's Day 2026 was five months ago — offering it
++ * means the admin has to notice and correct it, and the year/date validation
++ * then refuses whatever they half-corrected.
++ *
++ * @param today the family's own calendar date, `YYYY-MM-DD`
++ * @param taken years already used by an active occasion of this type, so the
++ *   wizard proposes the next AVAILABLE one rather than a duplicate the
++ *   database would refuse
++ */
++export function nextOccurrenceYear(
++  eventType: string,
++  today: string,
++  taken: readonly number[] = [],
++): number | null {
++  const valid = /^\d{4}-\d{2}-\d{2}$/u.test(today) ? today : null;
++  if (!valid) return null;
++
++  const thisYear = Number(valid.slice(0, 4));
++  const unavailable = new Set(taken);
++
++  // Look forward from this year. A recurring occasion always has a date in
++  // every year, so this terminates on the first year that is both still to
++  // come and not already planned.
++  for (let year = thisYear; year <= thisYear + 25; year += 1) {
++    const date = suggestedOccasionDate(eventType, year);
++    if (!date) return unavailable.has(year) ? null : year;
++    // TODAY still counts as upcoming: a family planning on the morning of
++    // Christmas Day is planning for that Christmas.
++    if (date >= valid && !unavailable.has(year)) return year;
++  }
++  return null;
++}
++
+ /** How the suggestion is explained on the form, so it is not a magic date. */
+ export function occasionDateExplanation(eventType: string): string | null {
+   if (eventType === "mothers_day") {
+diff --git a/src/utils/supabase/birthdays-server.ts b/src/utils/supabase/birthdays-server.ts
+index e822f69..f979c7d 100644
+--- a/src/utils/supabase/birthdays-server.ts
++++ b/src/utils/supabase/birthdays-server.ts
+@@ -12,27 +12,62 @@ import { createClient } from "./server";
+  * visitor gets nothing, and a member gets the same list the calendar shows.
+  */
+ 
++/** A family member, with whether they may be offered as a contributor. */
++export type FamilyPerson = PersonBirthday & { isFamilyContributor: boolean };
++
+ export type FamilyBirthdays = {
+-  people: PersonBirthday[];
++  people: FamilyPerson[];
+   /** Active Birthday Events, keyed by `<personId>:<year>` for the calendar. */
+   birthdayEventsByPersonYear: Record<string, { id: string; name: string }>;
++  /**
++   * The planning for each person's NEXT birthday, keyed by person id.
++   *
++   * Absent where planning has not been started — which is a normal state, not
++   * an error, and must never be shown as "£0 of £0".
++   */
++  planningByPerson: Record<string, BirthdayPlanning>;
+   isAdmin: boolean;
+   /** Today, in the family's own timezone. Never derived from a UTC instant. */
+   today: string;
+ };
+ 
++/**
++ * One person's planning for one birthday, as a dashboard card shows it.
++ *
++ * Every figure is READ from the same rows Event Home reads:
++ *
++ *   budget = the celebrant's `christmas_recipients.budget_pennies`
++ *   spend  = `purchases.actual_price_pennies` where `deleted_at is null`
++ *   gifts  = the count of those live purchases
++ *   ideas  = `gift_ideas` with no purchase made from them
++ *
++ * There is no second birthday-spend calculation anywhere. Status and progress
++ * come from `purchaseProgressStatus` and `calculateFinancialProgress`, which
++ * every other financial card in the app already uses.
++ */
++export type BirthdayPlanning = {
++  eventId: string;
++  eventName: string;
++  /** The occurrence year, which is the year of the person's NEXT birthday. */
++  year: number;
++  budgetPennies: number;
++  spentPennies: number;
++  giftCount: number;
++  ideaCount: number;
++};
++
+ export async function loadFamilyBirthdays(): Promise<FamilyBirthdays> {
+   const db = await createClient();
+   const today = londonToday();
+ 
+   const { data: auth } = await db.auth.getUser();
+   if (!auth.user) {
+-    return { people: [], birthdayEventsByPersonYear: {}, isAdmin: false, today };
++    return { people: [], birthdayEventsByPersonYear: {}, planningByPerson: {}, isAdmin: false, today };
+   }
+ 
+   const [membership, peopleResult, eventResult] = await Promise.all([
+     db.from("app_members").select("role").eq("user_id", auth.user.id).eq("active", true).maybeSingle(),
+-    db.from("people").select("id,name,birthday_month,birthday_day,birthday_year").order("name"),
++    db.from("people").select("id,name,birthday_month,birthday_day,birthday_year,is_family_contributor").order("name"),
+     // Only birthdays, only active ones: an archived event must not present
+     // itself as "this year is already set up".
+     db.from("events")
+@@ -42,13 +77,14 @@ export async function loadFamilyBirthdays(): Promise<FamilyBirthdays> {
+   ]);
+ 
+   if (!membership.data) {
+-    return { people: [], birthdayEventsByPersonYear: {}, isAdmin: false, today };
++    return { people: [], birthdayEventsByPersonYear: {}, planningByPerson: {}, isAdmin: false, today };
+   }
+   if (peopleResult.error) throw new Error("The family's birthdays could not be loaded.");
+ 
+-  const people: PersonBirthday[] = (peopleResult.data ?? []).map((row) => ({
++  const people: FamilyPerson[] = (peopleResult.data ?? []).map((row) => ({
+     personId: row.id as string,
+     name: row.name as string,
++    isFamilyContributor: Boolean(row.is_family_contributor),
+     birthday: row.birthday_month === null || row.birthday_day === null
+       ? null
+       : {
+@@ -68,9 +104,102 @@ export async function loadFamilyBirthdays(): Promise<FamilyBirthdays> {
+     };
+   }
+ 
++  // -------------------------------------------------------------------------
++  // The planning for each person's NEXT birthday.
++  //
++  // WHICH YEAR COUNTS
++  //   The dashboard is about the birthday that is COMING. If somebody's
++  //   birthday has already been and gone this year, the card is about next
++  //   year's — and showing this year's spend would present money already
++  //   spent as though it were the current plan.
++  //
++  //   `nextBirthdayOccurrence` decides that, from the family's own calendar
++  //   date, exactly as the ordering on the dashboard does.
++  // -------------------------------------------------------------------------
++  const wantedYearByPerson = new Map<string, number>();
++  for (const entry of people) {
++    if (!entry.birthday) continue;
++    const next = nextBirthdayOccurrence(entry.birthday, today);
++    if (next) wantedYearByPerson.set(entry.personId, next.year);
++  }
++
++  const planningByPerson: Record<string, BirthdayPlanning> = {};
++  const wantedEvents = (eventResult.data ?? []).filter((row) => {
++    if (!row.celebrant_person_id) return false;
++    const wanted = wantedYearByPerson.get(row.celebrant_person_id as string);
++    return wanted !== undefined && Number(String(row.event_date).slice(0, 4)) === wanted;
++  });
++
++  if (wantedEvents.length > 0) {
++    const wantedIds = wantedEvents.map((row) => row.id as string);
++    const recipientRows = await db
++      .from("christmas_recipients")
++      .select("id,christmas_event_id,budget_pennies,active")
++      .in("christmas_event_id", wantedIds);
++
++    // Archived recipients count towards neither figure, exactly as on Event
++    // Home and on the dashboard's own event cards.
++    const activeRecipients = (recipientRows.data ?? []).filter((row) => row.active);
++    const eventByRecipient = new Map(
++      activeRecipients.map((row) => [row.id as string, row.christmas_event_id as string]),
++    );
++    const recipientIds = [...eventByRecipient.keys()];
++
++    const [purchaseRows, ideaRows] = await Promise.all([
++      recipientIds.length
++        ? db.from("purchases")
++          .select("id,christmas_recipient_id,actual_price_pennies,originating_gift_idea_id")
++          .in("christmas_recipient_id", recipientIds)
++          .is("deleted_at", null)
++        : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
++      recipientIds.length
++        ? db.from("gift_ideas").select("id,christmas_recipient_id").in("christmas_recipient_id", recipientIds)
++        : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
++    ]);
++
++    const budgetByEvent = new Map<string, number>();
++    for (const row of activeRecipients) {
++      const id = row.christmas_event_id as string;
++      budgetByEvent.set(id, (budgetByEvent.get(id) ?? 0) + Number(row.budget_pennies));
++    }
++
++    const spentByEvent = new Map<string, number>();
++    const giftsByEvent = new Map<string, number>();
++    const boughtIdeas = new Set<string>();
++    for (const row of (purchaseRows.data ?? []) as Array<Record<string, unknown>>) {
++      const id = eventByRecipient.get(row.christmas_recipient_id as string);
++      if (!id) continue;
++      spentByEvent.set(id, (spentByEvent.get(id) ?? 0) + Number(row.actual_price_pennies));
++      giftsByEvent.set(id, (giftsByEvent.get(id) ?? 0) + 1);
++      if (row.originating_gift_idea_id) boughtIdeas.add(row.originating_gift_idea_id as string);
++    }
++
++    // An idea somebody has already bought is not still an idea.
++    const ideasByEvent = new Map<string, number>();
++    for (const row of (ideaRows.data ?? []) as Array<Record<string, unknown>>) {
++      const id = eventByRecipient.get(row.christmas_recipient_id as string);
++      if (!id || boughtIdeas.has(row.id as string)) continue;
++      ideasByEvent.set(id, (ideasByEvent.get(id) ?? 0) + 1);
++    }
++
++    for (const row of wantedEvents) {
++      const id = row.id as string;
++      planningByPerson[row.celebrant_person_id as string] = {
++        eventId: id,
++        eventName: row.name as string,
++        year: Number(String(row.event_date).slice(0, 4)),
++        budgetPennies: budgetByEvent.get(id) ?? 0,
++        spentPennies: spentByEvent.get(id) ?? 0,
++        giftCount: giftsByEvent.get(id) ?? 0,
++        ideaCount: ideasByEvent.get(id) ?? 0,
++      };
++    }
++  }
++
+   return {
+     people,
+     birthdayEventsByPersonYear,
++    planningByPerson,
+     isAdmin: membership.data.role === "admin",
+     today,
+   };
+@@ -127,6 +256,18 @@ export type BirthdayWorkspace = {
+   current: BirthdayOccurrence | null;
+   /** The year `current` is for, whether or not planning has started. */
+   currentYear: number;
++  /**
++   * The date that birthday falls on, `YYYY-MM-DD`, or null if no birthday is
++   * recorded. This is the NEXT occurrence: if the birthday has already been
++   * this year, it is next year's date.
++   */
++  nextOccurrenceDate: string | null;
++  /**
++   * Who may be offered as a contributor: the family's contributor pool, minus
++   * the birthday person. Being in the family is not the same as sharing the
++   * cost of gifts, and the celebrant never chips in for their own present.
++   */
++  eligibleContributors: Array<{ personId: string; name: string }>;
+   /**
+    * Earlier years that actually happened.
+    *
+@@ -196,6 +337,20 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
+ 
+   const next = person.birthday ? nextBirthdayOccurrence(person.birthday, today) : null;
+   const currentYear = next ? next.year : currentYearOf(today);
++  const nextOccurrenceDate = next ? next.date : null;
++
++  // The family's contributor pool, never the whole family. `is_family_contributor`
++  // is set by the Global Admin; a new family member is not one until they say so.
++  const eligibleResult = await db
++    .from("people")
++    .select("id,name")
++    .eq("is_family_contributor", true)
++    .neq("id", personId)
++    .order("name");
++  const eligibleContributors = (eligibleResult.data ?? []).map((row) => ({
++    personId: row.id as string,
++    name: row.name as string,
++  }));
+ 
+   const events = (eventResult.data ?? []) as Array<{
+     id: string; name: string; event_date: string; status: string;
+@@ -203,7 +358,10 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
+ 
+   const isAdmin = membership.data.role === "admin";
+   if (events.length === 0) {
+-    return { person, current: null, currentYear, previous: [], unused: [], isAdmin, today };
++    return {
++      person, current: null, currentYear, nextOccurrenceDate, eligibleContributors,
++      previous: [], unused: [], isAdmin, today,
++    };
+   }
+ 
+   const eventIds = events.map((event) => event.id);
+@@ -313,5 +471,8 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
+     .filter((occurrence) => occurrence !== current && !hasActivity(occurrence))
+     .sort((left, right) => right.year - left.year);
+ 
+-  return { person, current, currentYear, previous, unused, isAdmin, today };
++  return {
++    person, current, currentYear, nextOccurrenceDate, eligibleContributors,
++    previous, unused, isAdmin, today,
++  };
+ }
+
+===============================================================================
+UNTRACKED FILES (not present in the git diff above)
+===============================================================================
+
+-------------------------------------------------------------------------------
+NEW FILE: scripts/checkpoint-4-3.test.mjs  (575 lines)
+-------------------------------------------------------------------------------
+import assert from "node:assert/strict";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
+const APP = ["src", "app"];
+const BIRTHDAY_ROUTE = [...APP, "birthdays", "[personId]"];
+
+/**
+ * Checkpoint 4.3 — birthday money, family contributors, event creation.
+ *
+ * WHAT THIS FILE IS FOR
+ *   Four changes in this checkpoint are each one edit away from silently
+ *   undoing themselves, and none of them would throw:
+ *
+ *     1. The birthday card showing money again      -> a card that reads "£0"
+ *     2. The intermediate landing screen coming back -> a second Event Home
+ *     3. Setup stopping being one transaction        -> half-made birthdays
+ *     4. Contributor pickers listing everybody again -> nineteen names
+ *
+ *   Every one of those looks fine on screen. So they are pinned here, against
+ *   the source, and the assertions are written to fail when the BEHAVIOUR
+ *   changes rather than when the wording does.
+ *
+ * WHAT IT IS NOT
+ *   Not a substitute for the runtime migration preflight, which runs the real
+ *   `start_birthday_planning` and `set_family_contributor` against real
+ *   PostgreSQL. These are the checks that can run without a database.
+ */
+
+// ---------------------------------------------------------------------------
+// The dashboard birthday card
+// ---------------------------------------------------------------------------
+
+test("the birthday card shows this event's own money, from the shared loader", () => {
+  const dashboard = read(...APP, "events-dashboard.tsx");
+
+  // The figures arrive as a prop. A card that fetched its own totals would be a
+  // second financial reader, free to disagree with Event Home.
+  assert.match(dashboard, /planning:\s*BirthdayPlanning \| undefined/);
+  assert.match(dashboard, /planning=\{planningByPerson\[person\.personId\]\}/);
+
+  // Spend, budget, gifts and ideas are all rendered.
+  assert.match(dashboard, /formatPennies\(planning\.spentPennies\)/);
+  assert.match(dashboard, /formatPennies\(planning\.budgetPennies\)/);
+  assert.match(dashboard, /planning\.giftCount/);
+  assert.match(dashboard, /planning\.ideaCount/);
+});
+
+test("the card reuses the app's progress and status engines rather than its own", () => {
+  // Scoped to the card. The dashboard renders four progress bars, so asserting
+  // against the whole file would pass while the birthday one was replaced.
+  const card = birthdayCard();
+  assert.match(card, /purchaseProgressStatus\(planning\.spentPennies, planning\.budgetPennies\)/);
+  assert.match(card, /<FinancialProgressBar\s/);
+
+  // No hand-rolled percentage or threshold. That is how two screens end up
+  // disagreeing about whether a birthday is complete.
+  assert.doesNotMatch(card, /spentPennies\s*\/\s*\w*[Bb]udgetPennies/);
+  assert.doesNotMatch(card, /Math\.(round|floor|ceil)\([^;]*100/);
+  assert.doesNotMatch(card, /spentPennies\s*>=?\s*planning\.budgetPennies/);
+  assert.doesNotMatch(card, /"(?:budget_reached|in_progress|not_started|over_budget)"/);
+});
+
+test("no planning means the card says so, and never shows a budget of zero", () => {
+  const dashboard = read(...APP, "events-dashboard.tsx");
+  assert.match(dashboard, /Planning not started yet/);
+
+  // The progress bar and the money line are both inside the `planning ?` arm,
+  // so an unplanned birthday cannot render "£0 of £0" and read like a decision
+  // somebody made.
+  const card = dashboard.slice(dashboard.indexOf("function BirthdayCard"));
+  const arm = card.slice(card.indexOf("{planning"), card.indexOf("Planning not started yet"));
+  assert.ok(arm.includes("FinancialProgressBar"), "the bar belongs to the planned arm");
+  assert.ok(arm.includes("formatPennies"), "so does the money");
+
+  // And the bar itself only appears when a budget was actually set.
+  assert.match(card, /const hasBudget = \(planning\?\.budgetPennies \?\? 0\) > 0;/);
+  assert.match(card, /\{hasBudget && \(\s*\n\s*<div/);
+});
+
+test("the card links to the person, not to a year's event", () => {
+  const dashboard = read(...APP, "events-dashboard.tsx");
+  assert.match(dashboard, /href=\{birthdayWorkspacePath\(person\.personId\)\}/);
+
+  // A link built from the event id would break the moment the next birthday
+  // came round, because that event does not exist yet.
+  assert.doesNotMatch(dashboard, /href=\{[^}]*planning\.eventId/);
+});
+
+// ---------------------------------------------------------------------------
+// The intermediate screen is gone
+// ---------------------------------------------------------------------------
+
+test("the birthday financial landing screen no longer exists", () => {
+  assert.equal(
+    existsSync(join(root, ...BIRTHDAY_ROUTE, "workspace-screen.tsx")),
+    false,
+    "workspace-screen.tsx was a second Event Home reached one tap earlier",
+  );
+});
+
+test("/birthdays/[personId] resolves; it does not render money", () => {
+  const page = read(...BIRTHDAY_ROUTE, "page.tsx");
+
+  // Planning exists -> straight to the real Event Home.
+  assert.match(page, /if \(workspace\.current\) \{/);
+  assert.match(page, /const destination = eventPath\(workspace\.current\.eventId\);/);
+  assert.match(page, /redirect\(destination\)/);
+
+  // Planning does not exist -> the setup screen, and nothing else.
+  assert.match(page, /<StartPlanningScreen/);
+  assert.doesNotMatch(page, /WorkspaceScreen/);
+
+  // No financial vocabulary on the resolver at all. Comments are stripped
+  // first: the doc comment explains what was REMOVED and naming it there is
+  // the point.
+  const logic = page.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, "");
+  for (const word of ["formatPennies", "budgetPennies", "spentPennies", "Owed", "FinancialProgressBar"]) {
+    assert.ok(!logic.includes(word), `the resolver must not render ${word}`);
+  }
+});
+
+test("redirect and notFound stay outside try/catch, because they throw", () => {
+  const page = read(...BIRTHDAY_ROUTE, "page.tsx");
+  const body = page.slice(page.indexOf("export default async function"));
+  assert.ok(!body.includes("try {"), "catching a redirect turns navigation into a crash");
+});
+
+test("the resolver redirects on the COMING birthday, not on any past year", () => {
+  const loader = read("src", "utils", "supabase", "birthdays-server.ts");
+  // `current` is resolved through the next-occurrence helper, so a completed
+  // 2025 birthday cannot stand in for an unplanned 2026 one.
+  assert.match(loader, /nextBirthdayOccurrence/);
+  assert.match(loader, /nextOccurrenceDate/);
+});
+
+// ---------------------------------------------------------------------------
+// Start planning: one screen, one transaction
+// ---------------------------------------------------------------------------
+
+test("starting a birthday is a single RPC, so it cannot half-succeed", () => {
+  const screen = read(...BIRTHDAY_ROUTE, "start-planning-screen.tsx");
+
+  const rpcs = screen.match(/\.rpc\(\s*"([a-z_]+)"/gu) ?? [];
+  assert.equal(rpcs.length, 1, `setup must be one call, found ${rpcs.length}: ${rpcs.join(", ")}`);
+  assert.match(screen, /\.rpc\("start_birthday_planning", \{/);
+
+  // The old shape — create the event, then add a recipient, then a budget,
+  // then contributors — is exactly the sequence that leaves a birthday
+  // half-made when the third call fails.
+  for (const name of ["create_event", "add_event_recipient", "set_event_contributor", "save_recipient"]) {
+    assert.ok(!screen.includes(name), `${name} would make setup multi-step again`);
+  }
+});
+
+test("every part of the plan is passed in that one call", () => {
+  const screen = read(...BIRTHDAY_ROUTE, "start-planning-screen.tsx");
+  for (const argument of [
+    "p_celebrant_person_id",
+    "p_name",
+    "p_event_date",
+    "p_budget_pennies",
+    "p_contributions",
+  ]) {
+    assert.ok(screen.includes(argument), `start_birthday_planning needs ${argument}`);
+  }
+});
+
+test("the equal split is the app's splitter, not a second one", () => {
+  const screen = read(...BIRTHDAY_ROUTE, "start-planning-screen.tsx");
+  assert.match(screen, /import \{ splitPenniesEqually \} from "@\/lib\/recipient-allocations";/);
+  assert.match(screen, /splitPenniesEqually\(budgetPennies, chosen\)/);
+
+  // A local division would drop the remainder. `splitPenniesEqually` is the
+  // function that distributes it, and it is already proven by its own tests.
+  assert.doesNotMatch(screen, /budgetPennies\s*\/\s*chosen\.length/);
+  assert.doesNotMatch(screen, /Math\.floor\(budgetPennies/);
+});
+
+test("the plan must equal the budget before the button works", () => {
+  const screen = read(...BIRTHDAY_ROUTE, "start-planning-screen.tsx");
+  assert.match(screen, /plannedTotal === budgetPennies/);
+  assert.match(screen, /disabled=\{saving \|\| !totalsMatch \|\| chosen\.length === 0\}/);
+  // And the guard is repeated before the call, so a re-enabled button in dev
+  // tools still cannot send a mismatched plan.
+  assert.match(screen, /if \(!totalsMatch\) \{/);
+});
+
+test("nothing is created until submit", () => {
+  const screen = read(...BIRTHDAY_ROUTE, "start-planning-screen.tsx");
+  const before = screen.slice(0, screen.indexOf("const start = async"));
+  assert.ok(!before.includes(".rpc("), "opening the page must create nothing");
+  assert.ok(!/useEffect\([^)]*\)\s*=>\s*\{[^}]*rpc/u.test(screen), "no create-on-mount");
+});
+
+test("a successful start goes straight to Event Home", () => {
+  const screen = read(...BIRTHDAY_ROUTE, "start-planning-screen.tsx");
+  assert.match(screen, /router\.replace\(`\/events\/\$\{created\.id\}`\)/);
+  // `replace`, not `push`: the setup screen no longer exists once it has run,
+  // so Back must not return to it.
+  assert.doesNotMatch(screen, /router\.push\(`\/events\//);
+});
+
+test("the celebrant is never offered as a contributor to their own birthday", () => {
+  const loader = read("src", "utils", "supabase", "birthdays-server.ts");
+  const screen = read(...BIRTHDAY_ROUTE, "start-planning-screen.tsx");
+
+  // Decided by person identity in the loader...
+  assert.match(loader, /eligibleContributors/);
+  assert.match(loader, /neq\("id", personId\)|!==\s*personId|\bfilter\([^)]*personId/);
+
+  // ...and the screen renders exactly what the loader gave it.
+  assert.match(screen, /contributors\.map\(\(person\)/);
+  assert.ok(!screen.includes("people.map("), "the screen must not build its own list");
+});
+
+// ---------------------------------------------------------------------------
+// The family contributor pool
+// ---------------------------------------------------------------------------
+
+test("contributor eligibility is a column on people, added in 030 or later", () => {
+  const applied = ["026", "027", "028", "029"];
+  for (const number of applied) {
+    const files = migrationsMatching(number);
+    for (const file of files) {
+      assert.ok(
+        !read("supabase", "migrations", file).includes("is_family_contributor"),
+        `${file} is already applied to production and must not be edited`,
+      );
+    }
+  }
+  const owner = migrationsMatching("030").find((file) =>
+    read("supabase", "migrations", file).includes("is_family_contributor"));
+  assert.ok(owner, "migration 030 must introduce is_family_contributor");
+});
+
+test("the pool is backfilled from who actually contributes, not from a name list", () => {
+  const sql = read("supabase", "migrations", ownerOf("is_family_contributor"));
+  assert.match(sql, /update public\.people\s+set is_family_contributor = true\s+where id in \(\s*select distinct person_id from public\.contributors/i);
+  // A hard-coded family would be wrong for this family tomorrow and wrong for
+  // any other family today.
+  assert.doesNotMatch(sql, /where name (=|in)/i);
+});
+
+test("set_family_contributor writes one boolean and checks Global Admin itself", () => {
+  const sql = read("supabase", "migrations", ownerOf("set_family_contributor"));
+  const body = functionBody(sql, "set_family_contributor");
+
+  assert.match(body, /security definer/i);
+  assert.match(body, /set search_path = ''/i);
+  assert.match(body, /42501/, "a non-admin must be refused by the database, not by the UI");
+
+  // It must not touch money. Removing somebody from the pool stops them being
+  // OFFERED; it does not rewrite a plan they are already part of.
+  for (const table of [
+    "recipient_contributions",
+    "purchase_allocations",
+    "purchases",
+    "settlements",
+    "payment_receipts",
+    "contributors",
+  ]) {
+    assert.ok(
+      !new RegExp(`(update|delete\\s+from|insert\\s+into)\\s+public\\.${table}\\b`, "iu").test(body),
+      `set_family_contributor must not write ${table}`,
+    );
+  }
+});
+
+test("the Global Admin edits the pool from Family access", () => {
+  const client = read(...APP, "more", "family-access", "family-access-client.tsx");
+  assert.match(client, /function ContributorPool\(/);
+  assert.match(client, /rpc\("set_family_contributor", \{/);
+  assert.match(client, /p_person_id: member\.personId/);
+  assert.match(client, /p_eligible: !member\.isFamilyContributor/);
+  assert.match(client, /aria-pressed=\{on\}/, "a toggle must announce its state");
+
+  // The API has to carry the flag, or every chip renders off.
+  const route = read(...APP, "api", "admin", "family-access", "route.ts");
+  assert.match(route, /select\("id, name, is_family_contributor"\)/);
+  assert.match(route, /isFamilyContributor: Boolean\(person\.is_family_contributor\)/);
+});
+
+test("contributor pickers offer the pool; recipient pickers offer everybody", () => {
+  const form = read(...APP, "events", "new", "create-event-form.tsx");
+
+  assert.match(form, /const contributorPool = people\.filter\(\(person\) => person\.isFamilyContributor\);/);
+
+  // Each picker is extracted and checked to pass EXACTLY ONE `people` prop.
+  // Matching loosely across the element would pass while a second `people`
+  // prop after it quietly overrode the first.
+  const contributorPicker = pickerWithTitle(form, "Who is chipping in?");
+  assert.deepEqual(contributorPicker.match(/people=\{[^}]*\}/gu), ["people={contributorPool}"]);
+
+  // The recipient picker still takes everybody, because anyone can receive a
+  // gift regardless of whether they ever pay for one.
+  const recipientPicker = pickerWithTitle(form, "Who is this event for?");
+  assert.deepEqual(recipientPicker.match(/people=\{[^}]*\}/gu), ["people={people}"]);
+
+  // Defaults seed from the pool too, or the first render pre-selects nineteen
+  // people and the filter is cosmetic.
+  assert.ok(
+    !form.includes("setContributorIds(people.map("),
+    "contributor defaults must seed from the pool",
+  );
+  assert.ok(
+    form.includes("setContributorIds(contributorPool.map((person) => person.personId))"),
+    "the pool must actually be used as the default",
+  );
+
+  const page = read(...APP, "events", "new", "page.tsx");
+  assert.match(page, /isFamilyContributor: person\.isFamilyContributor/);
+});
+
+test("event settings keeps an existing contributor visible after they leave the pool", () => {
+  const screen = read(...APP, "events", "[eventId]", "settings", "settings-screen.tsx");
+
+  // Pool OR already contributing. Without the second half, removing somebody
+  // from the pool would hide the only control that can take their money back
+  // out of an event they are still assigned to.
+  assert.match(
+    screen,
+    /const contributorChoices = people\.filter\(\(person\) =>\s*\n?\s*person\.isFamilyContributor \|\| contributorPersonIds\.includes\(person\.personId\)\);/,
+  );
+  assert.match(screen, /\{contributorChoices\.map\(\(person\)/);
+
+  const page = read(...APP, "events", "[eventId]", "settings", "page.tsx");
+  assert.match(page, /select\("id,name,is_family_contributor"\)/);
+});
+
+test("removing somebody from the pool changes nothing already planned", () => {
+  const client = read(...APP, "more", "family-access", "family-access-client.tsx");
+  // Said in the interface, because a control whose blast radius is unclear is
+  // one nobody dares use.
+  assert.match(client, /Removing somebody here changes nothing already planned or paid\./);
+});
+
+// ---------------------------------------------------------------------------
+// An event about one person takes exactly one recipient
+// ---------------------------------------------------------------------------
+
+test("a celebrant event never offers Add recipient", () => {
+  const people = read(...APP, "people", "people-screen.tsx");
+  assert.match(people, /const addButton = isAdmin && celebrantPersonId === null \? \(/);
+  assert.match(people, /const addForm = isAdmin && celebrantPersonId === null && adding \? \(/);
+
+  const route = read(...APP, "events", "[eventId]", "people", "page.tsx");
+  assert.match(route, /celebrantPersonId=\{event\.celebrantPersonId\}/);
+
+  const settings = read(...APP, "events", "[eventId]", "settings", "settings-screen.tsx");
+  assert.match(settings, /const isAboutOnePerson = event\.celebrantPersonId !== null;/);
+  assert.match(settings, /disabled=\{busy \|\| on \|\| isAboutOnePerson\}/);
+});
+
+test("that rule is decided by the celebrant, never by the event type", () => {
+  // The People screen has no event type at all, so it could not branch on one
+  // even if somebody wanted to.
+  const people = read(...APP, "people", "people-screen.tsx");
+  const peopleLogic = people.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, "");
+  for (const literal of ['"birthday"', "'birthday'", '"christmas"', "'christmas'"]) {
+    assert.ok(!peopleLogic.includes(literal), `people-screen must not branch on ${literal}`);
+  }
+
+  // Settings does read `event.type` — for the delete destination and for a
+  // hint about the person's saved birthday, both of which are genuinely about
+  // birthdays. What must NOT depend on it is the single-recipient rule, so the
+  // derivation itself is pinned to the celebrant.
+  const settings = read(...APP, "events", "[eventId]", "settings", "settings-screen.tsx");
+  const derivation = settings.slice(
+    settings.indexOf("const isAboutOnePerson"),
+    settings.indexOf("const addRecipient"),
+  );
+  assert.ok(derivation.length > 0, "the derivation must exist");
+  assert.ok(
+    !/event\.type/u.test(derivation),
+    "isAboutOnePerson and recipientChoices must not consult the event type",
+  );
+  assert.match(derivation, /event\.celebrantPersonId !== null/);
+});
+
+// ---------------------------------------------------------------------------
+// Event creation
+// ---------------------------------------------------------------------------
+
+test("Christmas can be created from Create Event again", () => {
+  const events = read("src", "lib", "events.ts");
+  assert.match(events, /SPECIAL_EVENT_TYPES[\s\S]{0,200}?"christmas"/);
+
+  // Birthdays are the exception, and for a reason: they are started from the
+  // person, in one transaction, with a budget and a plan.
+  const block = events.slice(events.indexOf("SPECIAL_EVENT_TYPES"), events.indexOf("SPECIAL_EVENT_TYPES") + 400);
+  assert.ok(!block.includes('"birthday"'), "birthdays start from the person");
+});
+
+test("one Christmas per year is enforced by the database, not by hiding the option", () => {
+  const sql = read("supabase", "migrations", ownerOf("is_family_contributor"));
+  // The note that stops somebody 'fixing' this in the UI later. Migration 025
+  // owns the constraint; 030 documents that it has no status predicate, so
+  // archiving a Christmas does not free its year.
+  assert.match(sql, /unique \(year\)[\s\S]{0,120}?event_type = 'christmas'/i);
+});
+
+test("the year and date default to the next occurrence that is still available", () => {
+  const form = read(...APP, "events", "new", "create-event-form.tsx");
+  assert.match(form, /nextOccurrenceYear\(nextType, today, takenYears\[nextType\] \?\? \[\]\)/);
+
+  const occasions = read("src", "lib", "uk-occasions.ts");
+  assert.match(occasions, /export function nextOccurrenceYear\(/);
+  // Today still counts as upcoming — an event created on the morning of the
+  // day is for that day.
+  assert.match(occasions, /taken: readonly number\[\] = \[\]/);
+});
+
+test("no family member, family size, year or event id is hard-coded anywhere", () => {
+  const files = [
+    [...APP, "events-dashboard.tsx"],
+    [...BIRTHDAY_ROUTE, "page.tsx"],
+    [...BIRTHDAY_ROUTE, "start-planning-screen.tsx"],
+    [...APP, "more", "family-access", "family-access-client.tsx"],
+    [...APP, "events", "new", "create-event-form.tsx"],
+    ["src", "utils", "supabase", "birthdays-server.ts"],
+    ["src", "lib", "uk-occasions.ts"],
+  ];
+  // A UUID literal in application code is a production row pasted into the
+  // repository. There is no legitimate one.
+  const uuid = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/iu;
+  for (const file of files) {
+    const source = read(...file);
+    const logic = source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, "");
+    assert.ok(!uuid.test(logic), `${file.join("/")} contains a literal id`);
+    // A calendar year assigned, compared or returned is a year the app will be
+    // wrong about next January. Years inside comments are documentation and are
+    // already stripped above.
+    // MIN_YEAR/MAX_YEAR are excluded: they are limits on what a human may
+    // type, not a year the app assumes.
+    const years = logic.replace(/^.*(?:MIN_YEAR|MAX_YEAR).*$/gmu, "");
+    assert.ok(
+      !/(?:[=<>]=?|return|year:)\s*(?:19|20)\d\d\b/u.test(years),
+      `${file.join("/")} pins a year`,
+    );
+    // "Mum" and "Dad" are recipients this family happens to have, not a
+    // definition of Mother's Day or Father's Day.
+    assert.ok(!/["'](Mum|Dad|Mother|Father)["']/u.test(logic), `${file.join("/")} names a recipient`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Wording: the product is not Christmas
+// ---------------------------------------------------------------------------
+
+test("shared screens do not call an event Christmas", () => {
+  const shared = [
+    [...APP, "people", "people-screen.tsx"],
+    [...APP, "people", "person-modal.tsx"],
+    [...APP, "people", "recipient-allocation-editor.tsx"],
+    [...APP, "add-purchase", "purchase-form.tsx"],
+    [...APP, "family-context.tsx"],
+  ];
+  // Only user-facing strings. Column and table names like
+  // `christmas_recipients` are the schema and are deliberately unchanged.
+  const visible = /(?:title|label|hint|description|body|placeholder)=["'][^"']*[Cc]hristmas[^"']*["']|>[^<>{}]*[Cc]hristmas[^<>{}]*</u;
+  for (const file of shared) {
+    const source = read(...file).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, "");
+    assert.ok(!visible.test(source), `${file.join("/")} still says Christmas to the reader`);
+  }
+});
+
+test("notification titles keep the action; the event name is context", () => {
+  const content = read("src", "lib", "notification-content.ts");
+  // The regression this pins: titles were once rewritten to the event name, so
+  // a push said "Ruby's Birthday" and the reader had no idea what happened.
+  for (const action of ["Payment", "payment", "Purchase", "purchase"]) {
+    assert.ok(content.includes(action), `notification copy must still describe the ${action} action`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Financial non-regression
+// ---------------------------------------------------------------------------
+
+test("checkpoint 4.3 wrote no new financial arithmetic", () => {
+  const touched = [
+    [...APP, "events-dashboard.tsx"],
+    [...BIRTHDAY_ROUTE, "page.tsx"],
+    [...BIRTHDAY_ROUTE, "start-planning-screen.tsx"],
+    [...APP, "more", "family-access", "family-access-client.tsx"],
+    [...APP, "events", "[eventId]", "settings", "settings-screen.tsx"],
+  ];
+  for (const file of touched) {
+    const source = read(...file).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, "");
+    // Floating point anywhere near money is the bug this app was built to
+    // avoid. The one permitted use is /100 when formatting for display.
+    assert.ok(!/parseFloat\(/u.test(source), `${file.join("/")} uses parseFloat`);
+    assert.ok(!/[Pp]ennies\s*\*\s*1\.|\bpennies\s*\/\s*(?!100\b)/u.test(source),
+      `${file.join("/")} divides pennies by something other than 100`);
+  }
+});
+
+test("the Owed engine, allocation snapshots and payment rules are untouched", () => {
+  // Not a copy of their logic — a guard that this checkpoint did not add a
+  // second implementation of any of it.
+  const owed = read("src", "lib", "owed.ts");
+  assert.match(owed, /confirmed/i, "Owed still reduces on confirmed payments only");
+
+  const dashboard = read(...APP, "events-dashboard.tsx");
+  for (const word of ["owedPennies", "confirmPayment", "purchase_allocations", "settlements"]) {
+    assert.ok(!dashboard.includes(word), `the dashboard must not reimplement ${word}`);
+  }
+});
+
+test("the backup proves it carried contributor eligibility", () => {
+  const workflow = read(".github", "workflows", "database-backup.yml");
+  assert.match(workflow, /for COLUMN in birthday_month birthday_day birthday_year is_family_contributor; do/);
+  // One boolean per person, and a restore without it would look complete while
+  // silently offering the whole family as contributors again.
+  assert.match(workflow, /ORDERING: is_family_contributor arrives with migration 030/);
+});
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** One `<PeoplePicker …/>` element, found by its title and cut at its close. */
+function pickerWithTitle(source, title) {
+  const at = source.indexOf(`title="${title}"`);
+  assert.notEqual(at, -1, `no picker titled ${title}`);
+  const open = source.lastIndexOf("<PeoplePicker", at);
+  assert.notEqual(open, -1, `${title} is not a PeoplePicker`);
+  const close = source.indexOf("/>", at);
+  assert.notEqual(close, -1, `${title} is not closed`);
+  return source.slice(open, close + 2);
+}
+
+/** Just the BirthdayCard component, so a sibling card cannot satisfy a check. */
+function birthdayCard() {
+  const dashboard = read(...APP, "events-dashboard.tsx");
+  const start = dashboard.indexOf("function BirthdayCard(");
+  assert.notEqual(start, -1, "BirthdayCard must exist");
+  const rest = dashboard.slice(start);
+  const end = rest.indexOf("\nfunction ", 1);
+  return end === -1 ? rest : rest.slice(0, end);
+}
+
+/** Migration filenames whose sequence number is `number` (e.g. "030"). */
+function migrationsMatching(number) {
+  // Filenames are <8-digit date><4-digit sequence>_name.sql, so the sequence is
+  // the last four digits of the prefix. Matching anywhere in the name would let
+  // "026" match 202608100030, whose DATE contains it.
+  return readdirSync(join(root, "supabase", "migrations"))
+    .filter((file) => file.endsWith(".sql"))
+    .filter((file) => (/^\d{8}(\d{4})_/u.exec(file)?.[1] ?? "").endsWith(number));
+}
+
+/** The single migration that introduces `symbol`. */
+function ownerOf(symbol) {
+  const files = readdirSync(join(root, "supabase", "migrations"))
+    .filter((file) => file.endsWith(".sql"))
+    .filter((file) => read("supabase", "migrations", file).includes(symbol));
+  assert.equal(files.length, 1, `${symbol} must be introduced by exactly one migration, found ${files.length}`);
+  return files[0];
+}
+
+/** The text of one `create ... function name(...)` body, dollar quotes and all. */
+function functionBody(sql, name) {
+  const start = sql.search(new RegExp(`function public\\.${name}\\s*\\(`, "u"));
+  assert.notEqual(start, -1, `${name} is not defined here`);
+  const rest = sql.slice(start);
+  const end = rest.search(/\n\$\$;/u);
+  assert.notEqual(end, -1, `${name} has no closing dollar quote`);
+  return rest.slice(0, end);
+}
+
+-------------------------------------------------------------------------------
+NEW FILE: src/app/birthdays/[personId]/history/history-screen.tsx  (135 lines)
+-------------------------------------------------------------------------------
+import { Lightbulb } from "lucide-react";
+import { formatPennies } from "@/lib/currency";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { eventPath } from "@/lib/events.ts";
+import type { BirthdayOccurrence } from "@/utils/supabase/birthdays-server";
+import { AppShell, PageHeader } from "../../../components/app-shell";
+import { GarlandRule } from "../../../components/festive/garland";
+import { ButtonLink, EmptyState } from "../../../components/ui";
+// NOT from "./ui": this is a Server Component, and `ui.tsx` is "use client".
+// A plain function exported from a client module becomes a client reference,
+// and calling one during a server render throws.
+import { cx } from "../../../components/cx";
+
+/**
+ * Previous birthdays, read-only.
+ *
+ * A year appears only if something actually happened in it. An occurrence
+ * created and never used is not "the year nobody bought anything"; it is an
+ * empty row, and it is listed separately for the Global Admin to tidy up rather
+ * than presented as history.
+ */
+export function BirthdayHistoryScreen({
+  personName,
+  previous,
+  unused,
+  isAdmin,
+}: {
+  personName: string;
+  previous: BirthdayOccurrence[];
+  unused: BirthdayOccurrence[];
+  isAdmin: boolean;
+}) {
+  const firstName = personName.split(" ")[0];
+
+  return (
+    <AppShell width="narrow" title="Previous birthdays">
+      <PageHeader
+        eyebrow={personName}
+        title="Previous birthdays"
+        description={`What the family got ${firstName} in earlier years, what it cost, and who paid.`}
+        actions={<ButtonLink href="/birthdays" variant="secondary" size="lg" className="w-full sm:w-auto">All birthdays</ButtonLink>}
+      />
+
+      {previous.length === 0
+        ? (
+          <EmptyState
+            className="mt-8"
+            illustration="star"
+            title="No previous birthdays recorded"
+            body={`Once a birthday has been planned and gifts bought, ${firstName}'s earlier years appear here.`}
+          />
+        )
+        : (
+          <div className="mt-8 space-y-4">
+            {previous.map((occurrence) => (
+              <article key={occurrence.eventId} className="rounded-2xl border border-line bg-surface p-5 shadow-sm">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+                  <h2 className="font-display text-lg font-semibold text-ink-900">{occurrence.year}</h2>
+                  <p className="text-sm font-semibold tabular-nums text-ink-900">
+                    {formatPennies(occurrence.spentPennies)}
+                    <span className="font-medium text-ink-600"> spent</span>
+                  </p>
+                </div>
+
+                {occurrence.gifts.length > 0
+                  ? (
+                    <ul className="mt-3 divide-y divide-line">
+                      {occurrence.gifts.map((gift) => (
+                        <li key={gift.id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 py-2.5">
+                          <span className="min-w-0 break-words text-sm font-medium text-ink-900">{gift.description}</span>
+                          <span className="flex items-baseline gap-2 text-sm">
+                            {gift.buyerName && <span className="text-xs font-medium text-ink-600">{gift.buyerName}</span>}
+                            <span className="font-semibold tabular-nums text-ink-900">{formatPennies(gift.pricePennies)}</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )
+                  : <p className="mt-3 text-sm text-ink-600">Nothing was bought, but there were ideas.</p>}
+
+                {occurrence.openIdeas.length > 0 && (
+                  <div className="mt-4 border-t border-line pt-4">
+                    <p className="flex items-center gap-1.5 text-xs font-semibold tracking-eyebrow text-gold uppercase">
+                      <Lightbulb size={14} aria-hidden />
+                      Ideas nobody bought
+                    </p>
+                    <ul className="mt-2 flex flex-wrap gap-2">
+                      {occurrence.openIdeas.map((idea) => (
+                        <li key={idea.id} className={cx(
+                          "rounded-xl border border-line bg-surface-2 px-3 py-1.5 text-xs font-medium text-ink-600",
+                        )}>
+                          {idea.title}
+                          {idea.estimatedPricePennies !== null && (
+                            <span className="text-ink-400"> · {formatPennies(idea.estimatedPricePennies)}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-xs text-ink-600">Still worth a look for {firstName} this year.</p>
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+
+      {isAdmin && unused.length > 0 && (
+        <section className="mt-12">
+          <h2 className="font-display text-xl font-semibold text-ink-900">Unused planning</h2>
+          <p className="mt-1.5 text-sm leading-6 text-ink-600">
+            Started and never used — nothing was bought, and no ideas were added. These are not
+            counted as previous birthdays. Open the settings to tidy one up; anything with a
+            purchase or an idea in it can only be archived.
+          </p>
+          <GarlandRule className="mt-4" />
+          <ul className="mt-5 divide-y divide-line rounded-2xl border border-line bg-surface">
+            {unused.map((occurrence) => (
+              <li key={occurrence.eventId} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5">
+                <span className="min-w-0">
+                  <span className="block font-semibold text-ink-900">{occurrence.year}</span>
+                  <span className="block text-xs text-ink-600">
+                    {occurrence.eventDate}{occurrence.status === "archived" ? " · archived" : ""}
+                  </span>
+                </span>
+                <ButtonLink href={eventPath(occurrence.eventId, "settings") ?? "/"} variant="ghost" className="min-h-11">
+                  Settings
+                </ButtonLink>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </AppShell>
+  );
+}
+
+-------------------------------------------------------------------------------
+NEW FILE: src/app/birthdays/[personId]/history/page.tsx  (38 lines)
+-------------------------------------------------------------------------------
+import { notFound } from "next/navigation";
+import { loadBirthdayWorkspace } from "@/utils/supabase/birthdays-server";
+import { BirthdayHistoryScreen } from "./history-screen";
+
+export const dynamic = "force-dynamic";
+
+/**
+ * What the family got somebody in previous years.
+ *
+ * WHY IT LIVES HERE AND NOT ON THE EVENT
+ *   History belongs to the PERSON, not to any one year's occurrence. Asking
+ *   "what did we get Taylor last year" from inside Taylor's 2027 planning is
+ *   asking about a different event, and hanging it off the person keeps one
+ *   answer instead of one per year.
+ *
+ *   It is reached from the birthday's own More screen, which is where somebody
+ *   planning this year would look for it.
+ *
+ * PREVIOUS YEARS ARE PREVIOUS YEARS
+ *   Nothing here feeds the current year's budget, spend or Owed. It is a
+ *   read-only record, and the loader keeps the two apart: `current` is this
+ *   year's planning and `previous` is everything before it that actually
+ *   happened.
+ */
+export default async function BirthdayHistoryPage({ params }: PageProps<"/birthdays/[personId]/history">) {
+  const { personId } = await params;
+  const workspace = await loadBirthdayWorkspace(personId);
+  if (!workspace) notFound();
+
+  return (
+    <BirthdayHistoryScreen
+      personName={workspace.person.name}
+      previous={workspace.previous}
+      unused={workspace.unused}
+      isAdmin={workspace.isAdmin}
+    />
+  );
+}
+
+-------------------------------------------------------------------------------
+NEW FILE: src/app/birthdays/[personId]/start-planning-screen.tsx  (338 lines)
+-------------------------------------------------------------------------------
+"use client";
+
+import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Cake, Plus } from "lucide-react";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { describeDaysAway, formatBirthday, nextBirthdayOccurrence, suggestedBirthdayEventName, type Birthday } from "@/lib/birthdays.ts";
+import { formatPennies } from "@/lib/currency";
+import { INPUT_LIMITS, parseMoneyToPennies } from "@/lib/input-validation";
+import { splitPenniesEqually } from "@/lib/recipient-allocations";
+import { describeSupabaseError, describeThrown } from "@/lib/supabase-error";
+import { createClient } from "@/utils/supabase/client";
+import { AppShell, PageHeader } from "../../components/app-shell";
+import { GarlandRule } from "../../components/festive/garland";
+import { Button, ButtonLink, EmptyState, Field, MoneyInput, Notice, cx } from "../../components/ui";
+
+export type EligibleContributor = { personId: string; name: string };
+
+/**
+ * Starting one year of somebody's birthday planning.
+ *
+ * WHY THIS EXISTS RATHER THAN A BARE "CREATE"
+ *   Creating an empty occurrence and then hunting through Settings for the
+ *   budget and the split is how a birthday ends up with £0 planned and a
+ *   monthly reminder that never fires. Everything the plan needs is asked for
+ *   here, once, and written in a single transaction.
+ *
+ * NOTHING IS CREATED UNTIL SUBMIT
+ *   Opening this page creates nothing. Cancelling creates nothing. Only a valid
+ *   submission does, and it is one call to `start_birthday_planning`, which
+ *   either produces a complete birthday or nothing at all.
+ *
+ * WHO IS OFFERED
+ *   The family's contributor pool, minus the birthday person — decided by
+ *   person identity in the loader, and enforced again by the database, which
+ *   refuses an amount assigned to anybody outside the pool.
+ */
+export function StartPlanningScreen({
+  personId,
+  personName,
+  birthday,
+  year,
+  occurrenceDate,
+  contributors,
+  isAdmin,
+}: {
+  personId: string;
+  personName: string;
+  birthday: Birthday | null;
+  year: number;
+  occurrenceDate: string | null;
+  contributors: EligibleContributor[];
+  isAdmin: boolean;
+}) {
+  const router = useRouter();
+  const firstName = personName.split(" ")[0];
+
+  const [budget, setBudget] = useState("");
+  const [chosen, setChosen] = useState<string[]>(contributors.map((person) => person.personId));
+  const [manual, setManual] = useState<Record<string, string>>({});
+  const [splitMode, setSplitMode] = useState<"equal" | "manual">("equal");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const budgetPennies = useMemo(() => {
+    const parsed = parseMoneyToPennies(budget, { field: "a budget" });
+    return parsed.ok && parsed.value !== null ? parsed.value : null;
+  }, [budget]);
+
+  /**
+   * The split.
+   *
+   * Equal mode uses `splitPenniesEqually`, which is the app's existing
+   * remainder-distributing splitter — the same one the recipient editor uses.
+   * There is no second algorithm here, and no penny goes missing.
+   */
+  const allocations = useMemo(() => {
+    if (budgetPennies === null || chosen.length === 0) return null;
+    if (splitMode === "equal") {
+      try {
+        return splitPenniesEqually(budgetPennies, chosen)
+          .map((row) => ({ personId: row.contributorId, pennies: row.plannedAmountPennies }));
+      } catch {
+        return null;
+      }
+    }
+    const rows = chosen.map((id) => {
+      const parsed = parseMoneyToPennies(manual[id] ?? "", { field: "an amount" });
+      return { personId: id, pennies: parsed.ok && parsed.value !== null ? parsed.value : null };
+    });
+    return rows.some((row) => row.pennies === null)
+      ? null
+      : rows.map((row) => ({ personId: row.personId, pennies: row.pennies as number }));
+  }, [budgetPennies, chosen, manual, splitMode]);
+
+  const plannedTotal = allocations?.reduce((sum, row) => sum + row.pennies, 0) ?? null;
+  const totalsMatch = budgetPennies !== null && plannedTotal !== null && plannedTotal === budgetPennies;
+
+  const next = birthday ? nextBirthdayOccurrence(birthday, `${year}-01-01`) : null;
+
+  if (!birthday || !occurrenceDate) {
+    return (
+      <AppShell width="narrow">
+        <PageHeader eyebrow="Birthdays" title={personName} />
+        <EmptyState
+          className="mt-8"
+          illustration="star"
+          title="No birthday saved"
+          body={isAdmin
+            ? "Add the date on the Birthdays page first — planning is for a date the family knows."
+            : "An admin has not recorded this birthday yet."}
+        />
+        <div className="mt-6">
+          <ButtonLink href="/birthdays" variant="secondary">All birthdays</ButtonLink>
+        </div>
+      </AppShell>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <AppShell width="narrow">
+        <PageHeader
+          eyebrow="Birthdays"
+          title={personName}
+          description={`${formatBirthday(birthday.month, birthday.day)}${next ? ` · ${describeDaysAway(next.daysAway)}` : ""}`}
+        />
+        <Notice tone="info" className="mt-6">
+          Nothing has been planned for {firstName}&apos;s {year} birthday yet. An admin starts the
+          planning, and it will appear here once they have.
+        </Notice>
+        <div className="mt-6">
+          <ButtonLink href="/birthdays" variant="secondary">All birthdays</ButtonLink>
+        </div>
+      </AppShell>
+    );
+  }
+
+  const toggle = (id: string) => {
+    setError(null);
+    setChosen((current) => current.includes(id)
+      ? current.filter((entry) => entry !== id)
+      : [...current, id]);
+  };
+
+  const start = async () => {
+    setError(null);
+
+    if (budgetPennies === null) { setError("Enter a budget."); return; }
+    if (chosen.length === 0) { setError("Choose at least one person to contribute."); return; }
+    if (!allocations) { setError("Enter an amount for everybody contributing."); return; }
+    if (!totalsMatch) {
+      setError(
+        `The amounts add up to ${formatPennies(plannedTotal ?? 0)} but the budget is ${formatPennies(budgetPennies)}.`,
+      );
+      return;
+    }
+
+    setSaving(true);
+    try {
+      // ONE call. The database creates the occurrence, the recipient, the
+      // budget, the contributors and the plan together, or nothing at all.
+      const result = await createClient().rpc("start_birthday_planning", {
+        p_celebrant_person_id: personId,
+        p_name: suggestedBirthdayEventName(personName, year),
+        p_event_date: occurrenceDate,
+        p_budget_pennies: budgetPennies,
+        p_contributions: allocations.map((row) => ({ person_id: row.personId, pennies: row.pennies })),
+      });
+
+      if (result.error) {
+        setError(describeSupabaseError(result.error, "The birthday could not be set up."));
+        return;
+      }
+      const created = Array.isArray(result.data) ? result.data[0] : result.data;
+      if (!created?.id) {
+        setError("The setup could not be confirmed by the database, so nothing was created. Please try again.");
+        return;
+      }
+
+      // Straight to the real Event Home. No landing page in between, and no
+      // refresh of the route being left.
+      router.replace(`/events/${created.id}`);
+    } catch (thrown) {
+      setError(describeThrown(thrown, "The birthday could not be set up. Check your connection and try again."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <AppShell width="narrow" title="Start planning">
+      <PageHeader
+        eyebrow="Birthdays"
+        title={`Start ${suggestedBirthdayEventName(personName, year)}`}
+        description={`${formatBirthday(birthday.month, birthday.day)} ${year}${next ? ` · ${describeDaysAway(next.daysAway)}` : ""}`}
+        actions={<ButtonLink href="/birthdays" variant="secondary" size="lg" className="w-full sm:w-auto">Cancel</ButtonLink>}
+      />
+
+      {error && <Notice tone="danger" className="mt-6">{error}</Notice>}
+
+      <section className="mt-8 space-y-4">
+        <h2 className="font-display text-xl font-semibold text-ink-900">Budget</h2>
+        <GarlandRule />
+        <Field label="Budget" required hint={`What the family plans to spend on ${firstName} this year.`}>
+          <MoneyInput
+            value={budget}
+            maxLength={INPUT_LIMITS.money}
+            onValueChange={(next) => { setBudget(next); setError(null); }}
+          />
+        </Field>
+      </section>
+
+      <section className="mt-10">
+        <h2 className="font-display text-xl font-semibold text-ink-900">Who is contributing?</h2>
+        <p className="mt-1.5 text-sm leading-6 text-ink-600">
+          {contributors.length === 0
+            ? "Nobody is set up as a family contributor yet. Add somebody in Family access first."
+            : `${firstName} is not on this list — nobody chips in for their own present.`}
+        </p>
+        <GarlandRule className="mt-4" />
+
+        {contributors.length === 0
+          ? (
+            <div className="mt-5">
+              <ButtonLink href="/more/family-access" variant="tonal">Manage contributors</ButtonLink>
+            </div>
+          )
+          : (
+            <div className="mt-5 flex flex-wrap gap-2">
+              {contributors.map((person) => {
+                const on = chosen.includes(person.personId);
+                return (
+                  <button
+                    key={person.personId}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => toggle(person.personId)}
+                    className={cx(
+                      "min-h-11 rounded-xl border px-3.5 text-sm font-semibold",
+                      on ? "border-accent/40 bg-accent-soft text-accent" : "border-line text-ink-600 hover:bg-hover-veil",
+                    )}
+                  >
+                    {person.name}{on ? " ✓" : ""}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+      </section>
+
+      {chosen.length > 0 && (
+        <section className="mt-10">
+          <h2 className="font-display text-xl font-semibold text-ink-900">Split</h2>
+          <GarlandRule className="mt-4" />
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Button
+              variant={splitMode === "equal" ? "primary" : "secondary"}
+              className="min-h-11"
+              onClick={() => { setSplitMode("equal"); setError(null); }}
+            >
+              Split equally
+            </Button>
+            <Button
+              variant={splitMode === "manual" ? "primary" : "secondary"}
+              className="min-h-11"
+              onClick={() => {
+                // Seed the manual boxes from the equal split, so adjusting one
+                // amount does not mean typing all of them.
+                if (budgetPennies !== null && chosen.length > 0) {
+                  const seeded: Record<string, string> = {};
+                  for (const row of splitPenniesEqually(budgetPennies, chosen)) {
+                    seeded[row.contributorId] = (row.plannedAmountPennies / 100).toFixed(2);
+                  }
+                  setManual(seeded);
+                }
+                setSplitMode("manual");
+                setError(null);
+              }}
+            >
+              Adjust amounts
+            </Button>
+          </div>
+
+          <ul className="mt-5 divide-y divide-line rounded-2xl border border-line bg-surface">
+            {chosen.map((id) => {
+              const person = contributors.find((entry) => entry.personId === id);
+              const share = allocations?.find((row) => row.personId === id);
+              return (
+                <li key={id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5">
+                  <span className="min-w-0 font-semibold text-ink-900">{person?.name ?? "Someone"}</span>
+                  {splitMode === "equal"
+                    ? <span className="font-semibold tabular-nums text-ink-900">{formatPennies(share?.pennies ?? 0)}</span>
+                    : (
+                      <span className="w-32">
+                        <MoneyInput
+                          value={manual[id] ?? ""}
+                          maxLength={INPUT_LIMITS.money}
+                          compact
+                          onValueChange={(next) => { setManual((current) => ({ ...current, [id]: next })); setError(null); }}
+                        />
+                      </span>
+                    )}
+                </li>
+              );
+            })}
+          </ul>
+
+          <p className={cx(
+            "mt-3 text-sm font-semibold",
+            totalsMatch ? "text-ink-600" : "text-berry",
+          )}>
+            {plannedTotal === null || budgetPennies === null
+              ? "Enter a budget and the amounts."
+              : totalsMatch
+                ? `Total ${formatPennies(plannedTotal)} — matches the budget.`
+                : `Total ${formatPennies(plannedTotal)} of ${formatPennies(budgetPennies)}. They must match exactly.`}
+          </p>
+        </section>
+      )}
+
+      <div className="mt-10 flex flex-wrap gap-3">
+        <Button
+          size="lg"
+          className="min-h-11"
+          disabled={saving || !totalsMatch || chosen.length === 0}
+          onClick={() => void start()}
+        >
+          {saving ? "Starting…" : <><Plus size={18} aria-hidden />Start planning</>}
+        </Button>
+        <ButtonLink href="/birthdays" variant="secondary" size="lg" className="min-h-11">
+          <Cake size={18} aria-hidden />
+          All birthdays
+        </ButtonLink>
+      </div>
+    </AppShell>
+  );
+}
+
+-------------------------------------------------------------------------------
+NEW FILE: supabase/migrations/202608100030_family_contributors_and_atomic_setup.sql  (395 lines)
+-------------------------------------------------------------------------------
+-- Family-level contributor eligibility, atomic birthday setup, and a duplicate
+-- guard for recurring occasions.
+--
+-- THREE THINGS THAT GENUINELY NEED THE DATABASE
+--
+--   1. WHO MAY CONTRIBUTE AT ALL.
+--      Being in the family and being someone who chips in for gifts are
+--      different facts. Nineteen people are in this family; four of them share
+--      the cost. Until now every contributor selector offered all nineteen,
+--      because the app had nowhere to record the difference.
+--
+--   2. STARTING A BIRTHDAY IN ONE TRANSACTION.
+--      An occurrence, its recipient, its budget and its contribution plan have
+--      to arrive together or not at all. Four separate calls can leave an event
+--      with no plan -- and the monthly budget reminder reads the plan, so a
+--      half-created birthday is a birthday nobody is reminded to save for.
+--
+--   3. (NOT NEEDED.) A duplicate-Christmas guard was planned here and then
+--      removed: migration 025 already enforces one Christmas per year, and the
+--      runtime preflight proved it by refusing a second Christmas 2026. See the
+--      note where that section used to be.
+--
+-- WHAT THIS MIGRATION DOES NOT DO
+--   * It names nobody. The contributor backfill is derived from who is already
+--     an active contributor on an existing event, which is data.
+--   * It changes no budget, plan, purchase, allocation, settlement, receipt or
+--     Owed value that already exists, and redefines none of the functions that
+--     write them.
+--   * It rewrites no birthday, no reminder and no existing occurrence.
+--   * It touches Christmas 2026 in no way whatsoever.
+--
+-- MIGRATIONS 025-029 ARE LIVE AND ARE NOT EDITED.
+
+-- ---------------------------------------------------------------------------
+-- 0. Preflight
+-- ---------------------------------------------------------------------------
+
+do $$
+begin
+  if to_regclass('public.events') is null then
+    raise exception 'Migration 025 has not been applied.';
+  end if;
+  if to_regproc('public.create_event') is null then
+    raise exception 'Migration 026 has not been applied.';
+  end if;
+  if to_regclass('public.birthday_budget_summaries') is null then
+    raise exception 'Migration 029 has not been applied.';
+  end if;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 1. Family contributor eligibility
+--
+-- A column on `people`, not a table of its own. It is one boolean fact per
+-- person, 1:1, with no lifecycle -- the same reasoning that put birthdays here.
+-- `people` is already read-only to browsers and writable only through SECURITY
+-- DEFINER functions, so eligibility inherits exactly the authorization the rest
+-- of the person already has, and no selector gains a join.
+--
+-- DEFAULT FALSE. A new family member is a family member: a recipient, a
+-- birthday person, somebody with an account. They become a contributor when the
+-- Global Admin says so, and not before.
+-- ---------------------------------------------------------------------------
+
+alter table public.people
+  add column if not exists is_family_contributor boolean not null default false;
+
+comment on column public.people.is_family_contributor is
+  'May this person be offered when choosing who shares the cost of a gift? Eligibility only: it never changes an amount already planned or paid.';
+
+create index if not exists people_family_contributors_idx
+  on public.people (id) where is_family_contributor;
+
+-- ---------------------------------------------------------------------------
+-- 2. Backfill, from data and from nothing else
+--
+-- Anybody who is ALREADY an active contributor on an existing event is
+-- evidently somebody this family expects to chip in. That is a fact the
+-- database already holds; it needs no list of names and no guess.
+--
+-- Everybody else stays false. This is deliberately not "everyone in the
+-- family": the whole point of the column is that those are different sets.
+--
+-- If a family has no events yet -- a new household -- this sets nobody, and the
+-- Global Admin chooses in the app. That is the correct outcome, not a failure.
+-- ---------------------------------------------------------------------------
+
+do $$
+declare
+  eligible integer;
+  total integer;
+begin
+  update public.people
+  set is_family_contributor = true
+  where id in (select distinct person_id from public.contributors where active)
+    and is_family_contributor = false;
+
+  select count(*) filter (where is_family_contributor), count(*)
+  into eligible, total
+  from public.people;
+
+  raise notice 'Family contributors: % of % family members, derived from existing active event contributors.', eligible, total;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 3. Managing the pool
+--
+-- Global Admin only, checked here. Removing eligibility is deliberately
+-- SHALLOW: it stops the person being offered for NEW assignments and touches
+-- nothing that already exists. An allocation snapshot is immutable, a payment
+-- is history, and a plan somebody is already carrying stays theirs until the
+-- Global Admin edits that event on purpose.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.set_family_contributor(
+  p_person_id uuid,
+  p_eligible boolean
+)
+returns public.people
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  saved_person public.people;
+begin
+  if not public.is_app_admin() then
+    raise exception 'Global Admin access required to change who contributes'
+      using errcode = '42501';
+  end if;
+  if p_eligible is null then
+    raise exception 'Choose whether this person may contribute' using errcode = '23514';
+  end if;
+
+  update public.people
+  set is_family_contributor = p_eligible, updated_at = now()
+  where id = p_person_id
+  returning * into saved_person;
+
+  if not found then
+    raise exception 'That family member could not be found' using errcode = 'P0002';
+  end if;
+
+  return saved_person;
+end;
+$$;
+
+revoke all on function public.set_family_contributor(uuid, boolean) from public, anon;
+grant execute on function public.set_family_contributor(uuid, boolean) to authenticated;
+
+comment on function public.set_family_contributor(uuid, boolean) is
+  'Add or remove a family member from the contributor pool. Eligibility for FUTURE assignments only: it rewrites no plan, allocation or payment.';
+
+-- ---------------------------------------------------------------------------
+-- 4. One Christmas per year is ALREADY enforced -- nothing to add
+--
+-- Migration 025 created `events_one_christmas_per_year_idx`:
+--
+--     unique (year) where event_type = 'christmas'
+--
+-- so a second Christmas 2026 is refused by the database today, and this file
+-- adds no second guard. The runtime preflight confirms it rather than assuming
+-- it.
+--
+-- ONE BEHAVIOURAL NOTE WORTH KNOWING. That index has no `status` predicate, so
+-- it covers archived rows too: archiving Christmas 2027 does NOT free 2027 for a
+-- new one. Birthdays behave differently -- `events_one_birthday_per_person_per_year_idx`
+-- is scoped to active rows, so archiving a mistaken birthday does free that
+-- person's year.
+--
+-- That difference is defensible: a birthday occurrence is often created by
+-- mistake and replaced, whereas a second Christmas for a year the family has
+-- already archived is far more likely to be an error than an intention. It is
+-- called out here because it is the kind of asymmetry that looks like a bug
+-- when somebody meets it, and changing it is a product decision that does not
+-- belong in a migration about contributors.
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- 5. Starting a birthday, atomically
+--
+-- The occurrence, its recipient, that recipient's budget, the contributors and
+-- the contribution plan, in ONE transaction. Either the family has a birthday
+-- to plan or nothing happened -- there is no state where the event exists and
+-- the plan does not.
+--
+-- That matters beyond tidiness: the monthly budget reminder reads
+-- `recipient_contributions`, so a half-created birthday is one nobody is ever
+-- reminded to save for.
+--
+-- The plan arrives as [{ "person_id": uuid, "pennies": integer }] and must total
+-- the budget exactly. Migration 012's invariant says the same thing at commit;
+-- checking here as well means the caller is told which number is wrong rather
+-- than being handed a constraint violation.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.start_birthday_planning(
+  p_celebrant_person_id uuid,
+  p_name text,
+  p_event_date date,
+  p_budget_pennies integer,
+  p_contributions jsonb
+)
+returns public.events
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  current_member_id uuid;
+  saved_event public.events;
+  new_recipient_id uuid;
+  clean_name text;
+  planned_total integer;
+  contribution jsonb;
+  contributor_person_id uuid;
+  contributor_pennies integer;
+  new_contributor_id uuid;
+begin
+  if not public.is_app_admin() then
+    raise exception 'Global Admin access required to start birthday planning'
+      using errcode = '42501';
+  end if;
+  current_member_id := public.current_app_member_id();
+  if current_member_id is null then
+    raise exception 'An active membership is required' using errcode = '42501';
+  end if;
+
+  clean_name := nullif(trim(coalesce(p_name, '')), '');
+  if clean_name is null or length(clean_name) > 100 or clean_name ~ '[[:cntrl:]]' then
+    raise exception 'Enter a valid name for this birthday' using errcode = '23514';
+  end if;
+  if p_event_date is null then
+    raise exception 'Choose the date this birthday falls on' using errcode = '23514';
+  end if;
+  if p_budget_pennies is null or p_budget_pennies < 0 then
+    raise exception 'Enter a budget of zero or more' using errcode = '23514';
+  end if;
+  if not exists (select 1 from public.people where id = p_celebrant_person_id) then
+    raise exception 'That family member could not be found' using errcode = 'P0002';
+  end if;
+
+  -- The plan must add up to the budget, to the penny.
+  select coalesce(sum((entry ->> 'pennies')::integer), 0)
+  into planned_total
+  from jsonb_array_elements(coalesce(p_contributions, '[]'::jsonb)) as entry;
+
+  if planned_total <> p_budget_pennies then
+    raise exception 'The contributions add up to % but the budget is %',
+      planned_total, p_budget_pennies using errcode = '23514';
+  end if;
+
+  insert into public.events (
+    name, event_type, event_date, description, celebrant_person_id,
+    year, status, created_by_app_member_id
+  ) values (
+    clean_name, 'birthday', p_event_date, null, p_celebrant_person_id,
+    null, 'active', current_member_id
+  )
+  returning * into saved_event;
+
+  -- Contributors first: a recipient's plan has to name every active
+  -- contributor, so they must exist before the recipient does.
+  for contribution in
+    select entry from jsonb_array_elements(coalesce(p_contributions, '[]'::jsonb)) as entry
+  loop
+    contributor_person_id := (contribution ->> 'person_id')::uuid;
+    contributor_pennies := (contribution ->> 'pennies')::integer;
+
+    if contributor_pennies is null or contributor_pennies < 0 then
+      raise exception 'Every contribution must be zero or more' using errcode = '23514';
+    end if;
+    if contributor_person_id = p_celebrant_person_id then
+      raise exception 'Somebody cannot contribute towards their own birthday' using errcode = '23514';
+    end if;
+    if not exists (select 1 from public.people where id = contributor_person_id) then
+      raise exception 'A chosen contributor is not a family member' using errcode = 'P0002';
+    end if;
+    -- Eligibility is checked HERE, not only in the browser: a hand-made request
+    -- cannot assign money to somebody the family has not made a contributor.
+    if not exists (
+      select 1 from public.people
+      where id = contributor_person_id and is_family_contributor
+    ) then
+      raise exception 'That person is not one of the family''s contributors' using errcode = '42501';
+    end if;
+
+    insert into public.contributors (christmas_event_id, person_id, active)
+    values (saved_event.id, contributor_person_id, true)
+    on conflict (christmas_event_id, person_id) do nothing;
+  end loop;
+
+  -- The celebrant is the recipient. A birthday has exactly one.
+  insert into public.christmas_recipients (christmas_event_id, person_id, budget_pennies, active)
+  values (saved_event.id, p_celebrant_person_id, p_budget_pennies, true)
+  returning id into new_recipient_id;
+
+  -- Every active contributor gets a row, at their planned amount or at zero.
+  -- Migration 012's invariant requires the full set, and the sum to equal the
+  -- budget -- which the check above already guaranteed.
+  insert into public.recipient_contributions (
+    christmas_recipient_id, contributor_id, planned_amount_pennies
+  )
+  select
+    new_recipient_id,
+    contributor.id,
+    coalesce((
+      select (entry ->> 'pennies')::integer
+      from jsonb_array_elements(coalesce(p_contributions, '[]'::jsonb)) as entry
+      where (entry ->> 'person_id')::uuid = contributor.person_id
+    ), 0)
+  from public.contributors as contributor
+  where contributor.christmas_event_id = saved_event.id
+    and contributor.active = true;
+
+  return saved_event;
+end;
+$$;
+
+revoke all on function public.start_birthday_planning(uuid, text, date, integer, jsonb) from public, anon;
+grant execute on function public.start_birthday_planning(uuid, text, date, integer, jsonb) to authenticated;
+
+comment on function public.start_birthday_planning(uuid, text, date, integer, jsonb) is
+  'Create one year of a person''s birthday planning in a single transaction: the occurrence, the celebrant as its recipient, the budget, the contributors and a plan that totals the budget exactly. Global Admin only.';
+
+-- ---------------------------------------------------------------------------
+-- 6. End state
+-- ---------------------------------------------------------------------------
+
+do $$
+declare
+  problems text[] := array[]::text[];
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'people' and column_name = 'is_family_contributor'
+  ) then
+    problems := problems || ('people.is_family_contributor is missing')::text;
+  end if;
+
+  -- Nobody was made eligible who is not already an active event contributor.
+  if exists (
+    select 1 from public.people
+    where is_family_contributor
+      and id not in (select distinct person_id from public.contributors where active)
+  ) then
+    problems := problems || ('the backfill made somebody eligible who is not an existing contributor')::text;
+  end if;
+
+  -- Both functions are definer, pinned, and closed to anon.
+  if not exists (
+    select 1 from pg_proc
+    where proname in ('set_family_contributor', 'start_birthday_planning')
+      and pronamespace = 'public'::regnamespace
+      and prosecdef
+      and exists (select 1 from unnest(coalesce(proconfig, array[]::text[])) as setting
+                  where setting like 'search_path=%')
+    having count(*) = 2
+  ) then
+    problems := problems || ('a new function is missing, not definer, or not search_path-pinned')::text;
+  end if;
+
+  if has_function_privilege('anon', 'public.set_family_contributor(uuid, boolean)', 'execute')
+    or has_function_privilege('anon', 'public.start_birthday_planning(uuid, text, date, integer, jsonb)', 'execute') then
+    problems := problems || ('a new function is executable by anon')::text;
+  end if;
+
+  -- 025's guard is still there. This file did not add one and must not have
+  -- removed one either.
+  if not exists (
+    select 1 from pg_indexes
+    where schemaname = 'public' and indexname = 'events_one_christmas_per_year_idx'
+  ) then
+    problems := problems || ('migration 025''s one-Christmas-per-year guard has gone missing')::text;
+  end if;
+
+  -- Nothing that was already there has moved.
+  if exists (
+    select 1 from pg_proc
+    where proname = 'due_birthday_budget_summaries'
+      and pronamespace = 'public'::regnamespace
+      and prosrc not like '%extract(day from p_today) = 1%'
+  ) then
+    problems := problems || ('the monthly reminder sweep changed')::text;
+  end if;
+
+  if array_length(problems, 1) is not null then
+    raise exception 'Migration 030 did not reach its end state: %', array_to_string(problems, '; ');
+  end if;
+
+  raise notice 'Family contributors, atomic birthday setup and the one-Christmas-per-year guard are installed. No budget, plan, purchase, payment or birthday was changed.';
+end;
+$$;
+

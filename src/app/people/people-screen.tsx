@@ -62,20 +62,43 @@ const filters = ["All", "Not started", "In progress", "Budget reached", "Over bu
  *   none          A setup step, with "Add recipient" for the Global Admin --
  *                 rather than an empty list and a filter bar over nothing.
  *
+ * AN EVENT WITH A CELEBRANT NEVER OFFERS "ADD RECIPIENT"
+ *   A birthday is about one person by definition, so a second recipient is a
+ *   mistake waiting to be made rather than a feature. The test is the
+ *   celebrant, not the event type -- any single-celebrant event behaves the
+ *   same way, and no event type is named here.
+ *
  * This is presentation. The recipient row, the contributor plan, the purchase
  * allocations, Owed and the payment log are identical in all three: the single
  * shape renders the SAME component the list opens in a dialog, so there is one
  * budget editor, one contributor editor and one purchase list in the codebase.
  */
-export function PeopleScreen({ eventId, eventName }: { eventId: string; eventName: string }) {
+export function PeopleScreen({
+  eventId,
+  eventName,
+  celebrantPersonId = null,
+}: {
+  eventId: string;
+  eventName: string;
+  /** Set when the event is ABOUT one person; that person is its only recipient. */
+  celebrantPersonId?: string | null;
+}) {
   return (
     <Suspense fallback={null}>
-      <PeopleView eventId={eventId} eventName={eventName} />
+      <PeopleView eventId={eventId} eventName={eventName} celebrantPersonId={celebrantPersonId} />
     </Suspense>
   );
 }
 
-function PeopleView({ eventId, eventName }: { eventId: string; eventName: string }) {
+function PeopleView({
+  eventId,
+  eventName,
+  celebrantPersonId,
+}: {
+  eventId: string;
+  eventName: string;
+  celebrantPersonId: string | null;
+}) {
   const { people, saveRecipient, restore, loading, error, isAdmin } = useFamily();
   const { budgetPennies } = useTotals();
   const [query, setQuery] = useState("");
@@ -130,14 +153,14 @@ function PeopleView({ eventId, eventName }: { eventId: string; eventName: string
   const mode = eventNavMode(loading || error ? null : active.length);
   const soleRecipient = mode === "single" ? active[0] : null;
 
-  const addButton = isAdmin ? (
+  const addButton = isAdmin && celebrantPersonId === null ? (
     <Button size="lg" onClick={() => setAdding(true)} className="w-full sm:w-auto">
       <IconPlus size={18} />
       {mode === "multi" ? "Add person" : "Add recipient"}
     </Button>
   ) : undefined;
 
-  const addForm = isAdmin && adding ? (
+  const addForm = isAdmin && celebrantPersonId === null && adding ? (
     <AddForm
       eventId={eventId}
       eventName={eventName}
@@ -456,7 +479,7 @@ function AddForm({ eventId, eventName, onCancel, onSave }: { eventId: string; ev
     event.preventDefault();
     const validName = validateRequiredText(name, { field: "a name", maxLength: INPUT_LIMITS.name });
     if (!validName.ok) { setError(validName.error); return; }
-    if (!parsedBudget.ok || parsedBudget.value === null) { setError(parsedBudget.ok ? "Enter a Christmas budget." : parsedBudget.error); return; }
+    if (!parsedBudget.ok || parsedBudget.value === null) { setError(parsedBudget.ok ? "Enter a budget." : parsedBudget.error); return; }
     if (!parsedDraft.ok) { setError(parsedDraft.error); return; }
     const validPlan = validateRecipientAllocationSnapshot(parsedBudget.value, parsedDraft.value);
     if (!validPlan.ok) {
@@ -485,7 +508,7 @@ function AddForm({ eventId, eventName, onCancel, onSave }: { eventId: string; ev
           <Field label="Name" required>
             <Input required maxLength={INPUT_LIMITS.name} value={name} onChange={(event) => setName(event.target.value)} />
           </Field>
-          <Field label="Christmas budget" className="mt-4">
+          <Field label="Budget" className="mt-4">
             <MoneyInput maxLength={INPUT_LIMITS.money} value={budget} onValueChange={setBudget} />
           </Field>
           <div className="mt-6 border-t border-line pt-5">

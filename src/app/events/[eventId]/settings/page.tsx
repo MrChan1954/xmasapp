@@ -18,7 +18,7 @@ export default async function EventSettingsPage({ params }: PageProps<"/events/[
   const [{ member }, db] = await Promise.all([getCurrentMember(), createClient()]);
 
   const [peopleResult, recipientResult, contributorResult] = await Promise.all([
-    db.from("people").select("id,name").order("name"),
+    db.from("people").select("id,name,is_family_contributor").order("name"),
     db.from("christmas_recipients").select("id,person_id,active").eq("christmas_event_id", event.id),
     db.from("contributors").select("person_id,active").eq("christmas_event_id", event.id),
   ]);
@@ -47,6 +47,7 @@ export default async function EventSettingsPage({ params }: PageProps<"/events/[
   const people: SettingsPerson[] = (peopleResult.data ?? []).map((row) => ({
     personId: row.id as string,
     name: row.name as string,
+    isFamilyContributor: Boolean(row.is_family_contributor),
   }));
 
   return (

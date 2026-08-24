@@ -1,24 +1,58 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { eventPath } from "@/lib/events.ts";
 import { loadBirthdayWorkspace } from "@/utils/supabase/birthdays-server";
-import { BirthdayWorkspaceScreen } from "./workspace-screen";
+import { StartPlanningScreen } from "./start-planning-screen";
 
 export const dynamic = "force-dynamic";
 
 /**
- * One person's birthday.
+ * One person's birthday — a RESOLVER, not a screen.
  *
- * The route is the PERSON, not an event: `/birthdays/<personId>`. A birthday
- * belongs to somebody permanently, and the year being planned is derived from
- * today, so this URL keeps working every year with nothing renamed or
- * recreated.
+ * WHY THIS ROUTE STILL EXISTS
+ *   A birthday belongs to a person all year round, so the person is the stable
+ *   thing to link to. `/birthdays/<personId>` keeps working every year with
+ *   nothing renamed or recreated, and every card in the app points at it.
  *
- * A person id that does not exist, or a visitor who is not an active family
- * member, both get a plain 404. The loader returns null for each without saying
- * which, and every read inside it is behind the same RLS as the rest of the app.
+ * WHAT IT DOES
+ *   Works out which birthday is coming, looks for that year's planning, and
+ *   then gets out of the way:
+ *
+ *     planning exists      -> redirect to its Event Home
+ *     planning does not    -> the focused setup screen, for the Global Admin
+ *
+ *   There used to be a financial landing page in between, with its own budget,
+ *   spend and links to Ideas, Add, Owed and Payments. It was a second copy of
+ *   Event Home reached one tap earlier, and it is gone: the money lives in one
+ *   place.
+ *
+ * REDIRECTS AND `notFound` ARE THROWN CONTROL FLOW
+ *   Both are called at the top level of this function, never inside a try/catch,
+ *   because catching them would turn a redirect into a crash. The loader returns
+ *   `null` for "no such person" and for "not an active member" without saying
+ *   which, so an unknown id and an unauthorised reader look identical.
  */
-export default async function BirthdayWorkspacePage({ params }: PageProps<"/birthdays/[personId]">) {
+export default async function BirthdayPage({ params }: PageProps<"/birthdays/[personId]">) {
   const { personId } = await params;
   const workspace = await loadBirthdayWorkspace(personId);
   if (!workspace) notFound();
-  return <BirthdayWorkspaceScreen workspace={workspace} />;
+
+  // The occurrence for the birthday that is COMING. A past year's planning is
+  // history and must never stand in for it.
+  if (workspace.current) {
+    const destination = eventPath(workspace.current.eventId);
+    if (destination) redirect(destination);
+  }
+
+  return (
+    <StartPlanningScreen
+      personId={workspace.person.personId}
+      personName={workspace.person.name}
+      birthday={workspace.person.birthday}
+      year={workspace.currentYear}
+      occurrenceDate={workspace.nextOccurrenceDate}
+      contributors={workspace.eligibleContributors}
+      isAdmin={workspace.isAdmin}
+    />
+  );
 }

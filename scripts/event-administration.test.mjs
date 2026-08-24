@@ -29,6 +29,9 @@ const occasionSql = read("supabase", "migrations", OCCASION_MIGRATION);
 const BUDGET_MIGRATION = "202608100029_add_monthly_birthday_budget_reminder.sql";
 const budgetSql = read("supabase", "migrations", BUDGET_MIGRATION);
 
+const CONTRIBUTOR_MIGRATION = "202608100030_family_contributors_and_atomic_setup.sql";
+const contributorSql = read("supabase", "migrations", CONTRIBUTOR_MIGRATION);
+
 /** The body of one `create ... function public.<name>(` block. */
 function functionBody(name) {
   const start = sql.indexOf(`function public.${name}(`);
@@ -51,19 +54,43 @@ const ADMIN_WRITES = [
 // 1. Migration hygiene -- the same invariants every applied migration holds
 // ---------------------------------------------------------------------------
 
-test("026 to 029 are the four newest migrations, in that order", () => {
+test("026 to 030 are the five newest migrations, in that order", () => {
   const files = readdirSync(join(root, "supabase", "migrations")).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(files.at(-4), MIGRATION, "026 must be fourth-newest");
-  assert.equal(files.at(-3), REMINDER_MIGRATION, "027 must be third-newest");
-  assert.equal(files.at(-2), OCCASION_MIGRATION, "028 must be second-newest");
-  assert.equal(files.at(-1), BUDGET_MIGRATION, "029 must be the newest");
-  for (const prefix of ["202608100026", "202608100027", "202608100028", "202608100029"]) {
+  assert.equal(files.at(-5), MIGRATION, "026 must be fifth-newest");
+  assert.equal(files.at(-4), REMINDER_MIGRATION, "027 must be fourth-newest");
+  assert.equal(files.at(-3), OCCASION_MIGRATION, "028 must be third-newest");
+  assert.equal(files.at(-2), BUDGET_MIGRATION, "029 must be second-newest");
+  assert.equal(files.at(-1), CONTRIBUTOR_MIGRATION, "030 must be the newest");
+  for (const prefix of ["202608100026", "202608100027", "202608100028", "202608100029", "202608100030"]) {
     assert.equal(
       files.filter((name) => name.startsWith(prefix)).length,
       1,
       `there must be exactly one migration ${prefix.slice(-3)}`,
     );
   }
+});
+
+test("030 adds two admin paths and rewrites no financial history", () => {
+  const redefined = [...contributorSql.matchAll(/create or replace function public\.(\w+)\(/gu)]
+    .map((match) => match[1])
+    .sort();
+  assert.deepEqual(
+    redefined,
+    ["set_family_contributor", "start_birthday_planning"],
+    "030 may define only its own two functions",
+  );
+  for (const untouched of ADMIN_WRITES) {
+    assert.ok(!redefined.includes(untouched), `${untouched} must be left exactly as it was`);
+  }
+  // It writes only the new column and the rows a new birthday needs.
+  for (const table of ["purchases", "purchase_allocations", "settlements", "payment_receipts"]) {
+    assert.doesNotMatch(
+      contributorSql,
+      new RegExp(String.raw`(insert into|update|delete from)\s+public\.${table}\b`, "iu"),
+      `030 must not write ${table}`,
+    );
+  }
+  assert.doesNotMatch(contributorSql, /drop table|truncate/iu, "it removes nothing");
 });
 
 test("029 adds the budget reminder and touches no admin write path", () => {

@@ -31,6 +31,14 @@ type MembershipRow = {
 type PersonRow = {
   id: string;
   name: string;
+  /**
+   * May this person be offered when choosing who shares the cost of a gift?
+   *
+   * Family membership and contributor eligibility are different facts. Somebody
+   * is in the family because they exist; they contribute because the Global
+   * Admin says so.
+   */
+  is_family_contributor: boolean;
 };
 
 type Action =
@@ -74,7 +82,7 @@ export async function GET() {
     // Route handlers are public entry points. Do not rely on Proxy or UI checks.
     const context = await requireFamilyAccessAdmin();
     const [peopleResult, membershipResult, authUsers] = await Promise.all([
-      context.admin.from("people").select("id, name").order("name"),
+      context.admin.from("people").select("id, name, is_family_contributor").order("name"),
       context.admin
         .from("app_members")
         .select("id, person_id, contributor_id, user_id, email, role, active"),
@@ -118,6 +126,7 @@ export async function GET() {
       return {
         personId: person.id,
         name: person.name,
+        isFamilyContributor: Boolean(person.is_family_contributor),
         email: membership?.email ?? authUser?.email ?? null,
         role,
         active: hasAccountDetails ? Boolean(membership?.active) : null,

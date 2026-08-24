@@ -248,11 +248,18 @@ test("8. a repeated delete is refused cleanly and changes nothing", () => {
 
 test("9. deleting a birthday occurrence lands on that person's birthdays", () => {
   assert.match(settingsScreen, /`\/birthdays\/\$\{event\.celebrantPersonId\}`/u);
-  // The workspace is where an unused occurrence is reachable from in the first
-  // place, so this returns the reader to where they started.
-  const workspace = read("src", "app", "birthdays", "[personId]", "workspace-screen.tsx");
-  assert.match(workspace, /eventPath\(occurrence\.eventId, "settings"\)/u);
-  assert.match(workspace, /\{isAdmin && unused\.length > 0 && \(/u);
+  // `/birthdays/<personId>` is now a resolver: with the occurrence deleted it
+  // has nothing to redirect to and shows the setup screen, which is exactly
+  // where somebody who has just removed a mistaken occurrence should land.
+  const resolver = read("src", "app", "birthdays", "[personId]", "page.tsx");
+  assert.match(resolver, /if \(workspace\.current\) \{/u);
+  assert.match(resolver, /<StartPlanningScreen/u);
+
+  // An unused occurrence is still reachable — from the history page, which is
+  // where it is listed for the Global Admin to tidy up.
+  const history = read(...["src","app","birthdays","[personId]","history","history-screen.tsx"]);
+  assert.match(history, /eventPath\(occurrence\.eventId, "settings"\)/u);
+  assert.match(history, /\{isAdmin && unused\.length > 0 && \(/u);
 });
 
 // ---------------------------------------------------------------------------

@@ -34,7 +34,7 @@ test("a purchase notification names the recipient and the amount, and nothing el
 test("every notification opens a real in-app route", () => {
   const payloads = [
     purchaseAddedNotification(PURCHASE),
-    youOweNotification({ creditorName: "Taylor", amountPennies: 833 }),
+    youOweNotification({ creditorName: "Taylor", amountPennies: 833, increasePennies: 166 }),
     owedToYouNotification({ debtorName: "Jade", amountPennies: 833 }),
     paymentRecordedNotification({ actorName: "Paige", amountPennies: 1500, audience: "payee", settlementId: "s1" }),
     paymentClaimedNotification({ payerName: "Jade", amountPennies: 2000, settlementId: "s1" }),
@@ -56,15 +56,81 @@ test("every notification opens a real in-app route", () => {
 });
 
 test("money notifications point at Owed and money categories", () => {
-  const owe = youOweNotification({ creditorName: "Taylor", amountPennies: 833 });
+  const owe = youOweNotification({ creditorName: "Taylor", amountPennies: 833, increasePennies: 166 });
   assert.equal(owe.title, "💷 You owe Taylor");
-  assert.equal(owe.body, "A new purchase means you now owe Taylor £8.33.");
+  assert.equal(owe.body, "This purchase adds £1.66. You now owe Taylor £8.33 in total.");
   assert.equal(owe.url, "/owed");
   assert.equal(owe.category, "money_i_owe");
 
   const owed = owedToYouNotification({ debtorName: "Jade", amountPennies: 833 });
   assert.equal(owed.title, "💰 Jade owes you");
   assert.equal(owed.category, "money_owed_to_me");
+});
+
+/**
+ * The two figures in a "you owe" notification, and what each of them is for.
+ *
+ * A reader watching their balance move needs to know BOTH what just happened
+ * and where they now stand. The old copy gave only the second, so a figure that
+ * jumped by £1.66 and one that jumped by £16.60 read identically.
+ */
+test("a you-owe notification names the increase and the running total, in that order", () => {
+  const payload = youOweNotification({
+    creditorName: "Ash",
+    amountPennies: 2201,
+    increasePennies: 166,
+  });
+
+  assert.equal(payload.body, "This purchase adds £1.66. You now owe Ash £22.01 in total.");
+
+  // What just happened comes first; the standing figure is the second half.
+  assert.ok(
+    payload.body.indexOf("£1.66") < payload.body.indexOf("£22.01"),
+    "the new information leads",
+  );
+
+  // The title still says what to do about it. Replacing it with the occasion
+  // would make every notification from one event identical in the tray.
+  assert.equal(payload.title, "💷 You owe Ash");
+  assert.doesNotMatch(payload.title, /£/u, "money belongs in the body");
+});
+
+test("the increase and the total are independent; neither stands in for the other", () => {
+  // First purchase against a clean slate: the two figures agree, and they agree
+  // because both are correct, not because one is derived from the other.
+  const first = youOweNotification({ creditorName: "Ash", amountPennies: 166, increasePennies: 166 });
+  assert.equal(first.body, "This purchase adds £1.66. You now owe Ash £1.66 in total.");
+
+  // A large purchase on top of a small debt, and the other way round. If either
+  // figure were computed from the other, one of these would be wrong.
+  const bigOnSmall = youOweNotification({ creditorName: "Ash", amountPennies: 5100, increasePennies: 5000 });
+  assert.equal(bigOnSmall.body, "This purchase adds £50. You now owe Ash £51 in total.");
+
+  const smallOnBig = youOweNotification({ creditorName: "Ash", amountPennies: 5100, increasePennies: 100 });
+  assert.equal(smallOnBig.body, "This purchase adds £1. You now owe Ash £51 in total.");
+});
+
+test("a non-positive increase is not announced as £0", () => {
+  // The audience layer never builds one of these -- somebody with no share
+  // reads the ordinary purchase notice instead. This is the second lock: even
+  // if it were built, it must not assert an obligation that does not exist.
+  for (const increasePennies of [0, -1]) {
+    const payload = youOweNotification({ creditorName: "Ash", amountPennies: 2201, increasePennies });
+    assert.equal(payload.body, "You now owe Ash £22.01 in total.");
+    assert.doesNotMatch(payload.body, /adds/u, `increase of ${increasePennies}`);
+    assert.doesNotMatch(payload.body, /£0/u, `increase of ${increasePennies}`);
+  }
+});
+
+test("both figures are integer pennies, formatted once, never rounded twice", () => {
+  // A penny that cannot divide evenly must survive to the screen intact.
+  const payload = youOweNotification({ creditorName: "Ash", amountPennies: 1, increasePennies: 1 });
+  assert.equal(payload.body, "This purchase adds £0.01. You now owe Ash £0.01 in total.");
+
+  // No floating point anywhere: 0.1 + 0.2 pounds would print £0.30000000000000004.
+  const awkward = youOweNotification({ creditorName: "Ash", amountPennies: 30, increasePennies: 10 });
+  assert.equal(awkward.body, "This purchase adds £0.10. You now owe Ash £0.30 in total.");
+  assert.doesNotMatch(awkward.body, /\.\d{3}/u, "no fractional pennies reach the copy");
 });
 
 test("the two readings of a payment are addressed to the right side", () => {

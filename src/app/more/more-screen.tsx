@@ -7,13 +7,23 @@ import { eventPath } from "@/lib/events.ts";
 import { AppShell, PageHeader } from "../components/app-shell";
 import { useFestive } from "../components/festive/festive-context";
 import { IconBell, IconCake, IconChevronRight, IconHistory, IconPeople, IconReceipt, IconSettings, IconUser } from "../components/icons";
+import { IconGift } from "../components/icons";
 import { InstallCard } from "../components/install-card";
 import { Notice, Skeleton, cx } from "../components/ui";
 
 type AccessState = "checking" | "admin" | "member" | "error";
 
 /** The More screen for one event: its Payment Log, plus family-level tools. */
-export function MoreScreen({ eventId, eventName }: { eventId: string; eventName: string }) {
+export function MoreScreen({
+  eventId,
+  eventName,
+  celebrantPersonId = null,
+}: {
+  eventId: string;
+  eventName: string;
+  /** Set only for a birthday: whose birthday this year's planning is for. */
+  celebrantPersonId?: string | null;
+}) {
   const [access, setAccess] = useState<AccessState>("checking");
   const { snow, setSnow, reducedMotion } = useFestive();
 
@@ -122,6 +132,16 @@ export function MoreScreen({ eventId, eventName }: { eventId: string; eventName:
       </Group>
 
       <Group label="Records">
+        {celebrantPersonId && (
+          <div className="mb-3">
+            <SettingsLink
+              href={`/birthdays/${celebrantPersonId}/history`}
+              title="Previous birthdays"
+              description="What was bought in earlier years, what it cost, and who paid."
+              icon={<IconGift size={20} />}
+            />
+          </div>
+        )}
         <SettingsLink
           href={eventPath(eventId, "payment-log") ?? "/"}
           title="Payment log"
