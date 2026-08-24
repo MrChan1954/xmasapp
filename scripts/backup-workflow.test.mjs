@@ -24,7 +24,7 @@ import test from "node:test";
 const root = process.cwd();
 const workflowPath = join(root, ".github", "workflows", "database-backup.yml");
 const docsPath = join(root, "docs", "database-backups.md");
-const workflow = existsSync(workflowPath) ? readFileSync(workflowPath, "utf8") : "";
+const workflow = existsSync(workflowPath) ? readFileSync(workflowPath, "utf8").replace(/\r\n/gu, "\n") : "";
 const parserPath = join(root, "scripts", "verify-backup-dump.awk");
 
 test("the backup workflow exists", () => {

@@ -18,7 +18,11 @@ import test from "node:test";
  */
 
 const root = process.cwd();
-const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
+// Line endings are normalised on the way in. Git stores LF and checks files out
+// as CRLF on Windows, so a multi-line pattern written with \n silently stops
+// matching a file nobody has edited -- a false failure about the product,
+// caused by a checkout setting.
+const read = (...parts) => readFileSync(join(root, ...parts), "utf8").replace(/\r\n/gu, "\n");
 const exists = (...parts) => existsSync(join(root, ...parts));
 
 const { EVENT_SECTIONS, eventIdFromPath, eventPath, eventSectionFromPath, partitionEvents } =

@@ -29,26 +29,26 @@ const migrationFiles = readdirSync(migrationsDirectory)
 
 const eventMigrationName = "202608100025_generalise_christmas_into_events.sql";
 const birthdayMigrationName = "202608100026_add_birthdays_and_event_administration.sql";
-const birthdayMigration = readFileSync(join(migrationsDirectory, birthdayMigrationName), "utf8");
+const birthdayMigration = readFileSync(join(migrationsDirectory, birthdayMigrationName), "utf8").replace(/\r\n/gu, "\n");
 const birthdayMigrationCode = birthdayMigration.replace(/--[^\n]*/g, "");
 
 const reminderMigrationName = "202608100027_two_stage_birthday_reminders_and_safe_event_deletion.sql";
-const reminderMigration = readFileSync(join(migrationsDirectory, reminderMigrationName), "utf8");
+const reminderMigration = readFileSync(join(migrationsDirectory, reminderMigrationName), "utf8").replace(/\r\n/gu, "\n");
 const reminderMigrationCode = reminderMigration.replace(/--[^\n]*/g, "");
 
 const occasionMigrationName = "202608100028_add_mothers_and_fathers_day.sql";
-const occasionMigration = readFileSync(join(migrationsDirectory, occasionMigrationName), "utf8");
+const occasionMigration = readFileSync(join(migrationsDirectory, occasionMigrationName), "utf8").replace(/\r\n/gu, "\n");
 const occasionMigrationCode = occasionMigration.replace(/--[^\n]*/g, "");
 
 const budgetMigrationName = "202608100029_add_monthly_birthday_budget_reminder.sql";
-const budgetMigration = readFileSync(join(migrationsDirectory, budgetMigrationName), "utf8");
+const budgetMigration = readFileSync(join(migrationsDirectory, budgetMigrationName), "utf8").replace(/\r\n/gu, "\n");
 const budgetMigrationCode = budgetMigration.replace(/--[^\n]*/g, "");
 
 const contributorMigrationName = "202608100030_family_contributors_and_atomic_setup.sql";
 const privacyMigrationName = "202608100031_birthday_privacy_and_contributor_birthday_edits.sql";
-const contributorMigration = readFileSync(join(migrationsDirectory, contributorMigrationName), "utf8");
+const contributorMigration = readFileSync(join(migrationsDirectory, contributorMigrationName), "utf8").replace(/\r\n/gu, "\n");
 const contributorMigrationCode = contributorMigration.replace(/--[^\n]*/g, "");
-const eventMigration = readFileSync(join(migrationsDirectory, eventMigrationName), "utf8");
+const eventMigration = readFileSync(join(migrationsDirectory, eventMigrationName), "utf8").replace(/\r\n/gu, "\n");
 /** Comments explain the reasoning at length; assertions about CODE must ignore them. */
 const eventMigrationCode = eventMigration.replace(/--[^\n]*/g, "");
 
@@ -94,7 +94,7 @@ test("migration 031 is the newest migration, and nothing else has been added", (
   // policies, predicates and two triggers -- and touches no table, no column
   // and no row. If it ever grows a DDL statement against family data, that is a
   // different kind of migration and belongs in a different review.
-  const privacy = readFileSync(join(migrationsDirectory, privacyMigrationName), "utf8");
+  const privacy = readFileSync(join(migrationsDirectory, privacyMigrationName), "utf8").replace(/\r\n/gu, "\n");
   for (const forbidden of [
     "drop table", "drop column", "alter table public.purchases",
     "alter table public.settlements", "delete from public.", "truncate",

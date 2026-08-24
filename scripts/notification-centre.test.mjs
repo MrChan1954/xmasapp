@@ -16,7 +16,11 @@ import test from "node:test";
  */
 
 const root = process.cwd();
-const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
+// Line endings are normalised on the way in. Git stores LF and checks files out
+// as CRLF on Windows, so a multi-line pattern written with \n silently stops
+// matching a file nobody has edited -- a false failure about the product,
+// caused by a checkout setting.
+const read = (...parts) => readFileSync(join(root, ...parts), "utf8").replace(/\r\n/gu, "\n");
 
 const migration = read("supabase", "migrations", "202608100019_add_notification_centre.sql");
 const outboxMigration = read("supabase", "migrations", "202608100020_add_notification_outbox.sql");

@@ -38,31 +38,95 @@ export const EVENT_TYPES = [
 
 export type EventType = (typeof EVENT_TYPES)[number];
 
-/**
- * The occasions the Create Event form offers.
+/*
+ * THERE IS NO LONGER A LIST OF OFFERED OCCASIONS.
  *
- * CHRISTMAS IS HERE. A family needs Christmas 2027 after 2026, and a household
- * signing up for the first time has none at all — so "the family already has
- * its Christmas" is an assumption the app must not make. Creating a duplicate
- * is prevented by the database (migration 025 enforces one Christmas per year),
- * not by hiding the option.
+ * `SPECIAL_EVENT_TYPES` used to live here: seven values, and Create Event
+ * rendered one button per entry. That list WAS the product -- an occasion the
+ * family wanted but it did not contain could not be created at all, so adding
+ * Halloween meant a new type, a new CHECK constraint, a new metadata entry, a
+ * migration and a deploy.
  *
- * BIRTHDAY IS NOT. A birthday belongs to a PERSON, and is started from
- * Birthdays → that person, where the date and the celebrant are already known
- * and cannot be mistyped. Offering it here is how an event dated 1995 gets
- * created by somebody who meant to record a date of birth.
+ * It is replaced by `EVENT_TEMPLATES` below: Christmas, which genuinely behaves
+ * differently, and Custom, where the family types the name. `EVENT_TYPES` is
+ * unchanged and still holds every value the database accepts, because every one
+ * of them is still in production and must keep working.
  */
-export const SPECIAL_EVENT_TYPES = [
-  "christmas",
-  "mothers_day",
-  "fathers_day",
-  "easter",
-  "wedding",
-  "anniversary",
-  "other",
-] as const;
 
-export type SpecialEventType = (typeof SPECIAL_EVENT_TYPES)[number];
+// ---------------------------------------------------------------------------
+// Templates, and why they are not the same thing as types
+//
+// `event_type` is a STORAGE detail with a CHECK constraint behind it, and every
+// value it has ever held is still valid and still in production. A TEMPLATE is
+// what Create Event offers, and there are only two:
+//
+//   christmas   first-class. It has a year, a per-year uniqueness index, its
+//               own presentation, and history going back to the first version
+//               of this app.
+//   custom      everything else. The user types the title.
+//
+// Birthday is neither, on purpose: it is created from a PERSON, where the date
+// and the celebrant are already known and cannot be mistyped.
+//
+// THE POINT OF THE SPLIT. Adding Halloween used to mean a new type value, a new
+// CHECK constraint, a new entry in the metadata table and a migration. It now
+// means somebody typing "Halloween". The database has always allowed this --
+// `event_type = 'other'` with a free-text name -- and the rigidity was entirely
+// in the form that refused to offer it.
+// ---------------------------------------------------------------------------
+
+export const EVENT_TEMPLATES = ["christmas", "custom"] as const;
+export type EventTemplate = (typeof EVENT_TEMPLATES)[number];
+
+/**
+ * What a custom event is STORED as.
+ *
+ * Deliberately an existing, already-constrained value rather than a new one:
+ * `other` has been legal since migration 025, so a family can invent an
+ * occasion without a schema change, a deploy, or anybody being asked.
+ */
+export const GENERIC_EVENT_TYPE = "other";
+
+export function eventTypeForTemplate(template: EventTemplate): EventType {
+  return template === "christmas" ? "christmas" : GENERIC_EVENT_TYPE;
+}
+
+/**
+ * Is this a generic, title-driven occasion?
+ *
+ * DEFINED BY EXCLUSION, which is what makes it work for rows that predate the
+ * idea. An Easter created last year is stored as `easter`, a wedding as
+ * `wedding`; both are generic events now, and neither needed a single row
+ * rewritten to become one. Anything that is not a birthday and not a Christmas
+ * is a generic event, including values this build has never heard of.
+ */
+export function isGenericEvent(event: Pick<EventSummary, "type">): boolean {
+  return event.type !== "birthday" && event.type !== "christmas";
+}
+
+/**
+ * Convenience presets: a title and a date, and nothing else.
+ *
+ * These are NOT event types and confer no behaviour. Choosing "Easter" fills in
+ * two form fields the user may then edit; the event it creates is an ordinary
+ * custom event, indistinguishable from one where somebody typed "Easter"
+ * themselves. That is the test of whether a preset is really a convenience.
+ *
+ * `occasion` is the key `uk-occasions` computes a date from. It stays the
+ * historical string so the existing, correct date arithmetic is reused rather
+ * than reimplemented -- and so a legacy `easter` row and a new "Easter" agree
+ * about when Easter is.
+ *
+ * Halloween is deliberately NOT here. It has a fixed date somebody can type,
+ * and adding it would suggest the list is where occasions come from.
+ */
+export type EventPreset = { occasion: string; title: string; icon: string };
+
+export const EVENT_PRESETS: readonly EventPreset[] = [
+  { occasion: "easter", title: "Easter", icon: "🐣" },
+  { occasion: "mothers_day", title: "Mother's Day", icon: "💐" },
+  { occasion: "fathers_day", title: "Father's Day", icon: "🎣" },
+];
 
 export const EVENT_STATUSES = ["active", "archived"] as const;
 export type EventStatus = (typeof EVENT_STATUSES)[number];

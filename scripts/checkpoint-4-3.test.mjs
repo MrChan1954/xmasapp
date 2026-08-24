@@ -6,7 +6,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
+// Line endings are normalised on the way in. Git stores LF and checks files out
+// as CRLF on Windows, so a multi-line pattern written with \n silently stops
+// matching a file nobody has edited -- a false failure about the product,
+// caused by a checkout setting.
+const read = (...parts) => readFileSync(join(root, ...parts), "utf8").replace(/\r\n/gu, "\n");
 const APP = ["src", "app"];
 
 // The rule under test is a real function, so it is exercised as one rather than
@@ -549,14 +553,21 @@ test("that rule is decided by the event TYPE, and lives in exactly one place", (
 // Event creation
 // ---------------------------------------------------------------------------
 
-test("Christmas can be created from Create Event again", () => {
+test("Christmas can be created from Create Event, and a birthday still cannot", () => {
   const events = read("src", "lib", "events.ts");
-  assert.match(events, /SPECIAL_EVENT_TYPES[\s\S]{0,200}?"christmas"/);
+
+  // Christmas keeps its own template: a family needs 2027 after 2026, and a
+  // household signing up has none at all. A duplicate is refused by the
+  // database (migration 025's one-per-year index), not by hiding the option.
+  assert.match(events, /export const EVENT_TEMPLATES = \["christmas", "custom"\] as const;/u);
 
   // Birthdays are the exception, and for a reason: they are started from the
   // person, in one transaction, with a budget and a plan.
-  const block = events.slice(events.indexOf("SPECIAL_EVENT_TYPES"), events.indexOf("SPECIAL_EVENT_TYPES") + 400);
+  const block = events.slice(events.indexOf("EVENT_TEMPLATES"), events.indexOf("EVENT_TEMPLATES") + 400);
   assert.ok(!block.includes('"birthday"'), "birthdays start from the person");
+
+  const form = read(...APP, "events", "new", "create-event-form.tsx");
+  assert.match(form, /href="\/birthdays"/u, "and the form says where");
 });
 
 test("one Christmas per year is enforced by the database, not by hiding the option", () => {
@@ -569,7 +580,12 @@ test("one Christmas per year is enforced by the database, not by hiding the opti
 
 test("the year and date default to the next occurrence that is still available", () => {
   const form = read(...APP, "events", "new", "create-event-form.tsx");
-  assert.match(form, /nextOccurrenceYear\(nextType, today, takenYears\[nextType\] \?\? \[\]\)/);
+
+  // Christmas skips years already taken, because the database enforces one per
+  // year and offering a year that cannot save is worse than offering none.
+  assert.match(form, /nextOccurrenceYear\("christmas", today, takenYears\.christmas \?\? \[\]\)/);
+  // A preset asks the same question for its own occasion.
+  assert.match(form, /nextOccurrenceYear\(preset\.occasion, today, takenYears\[preset\.occasion\] \?\? \[\]\)/);
 
   const occasions = read("src", "lib", "uk-occasions.ts");
   assert.match(occasions, /export function nextOccurrenceYear\(/);
@@ -700,7 +716,12 @@ test("the Owed engine and the payment rules are byte-for-byte unchanged", () => 
   const fingerprints = {
     "owed.ts": "429c11a3be054c51030b793018596c38404ec4c354d95b58a6d206fdbb230c9f",
     "payment-confirmation.ts": "ccbdc1a1b24e2a3f01c2aafaaf63f9c2e520ac210f519be9b05e4a00df8657d8",
-    "recipient-allocations.ts": "147398a98033d567ea55d0aa498987159f4553261541de509d641e02044b5eed",
+    // Updated deliberately in Phase 2: the budget validation message said
+    // "Enter a valid Christmas budget" on a screen that now sets budgets for
+    // birthdays, Halloweens and anything else. WORDING ONLY -- the arithmetic,
+    // the bounds and the return shapes are untouched, which is the whole reason
+    // this fingerprint exists to make somebody say so.
+    "recipient-allocations.ts": "ddf1cb50f75691ad98bfc3d8f2b3582309b14e343d32ba1c94d4aa7dc66e9a09",
   };
 
   for (const [file, expected] of Object.entries(fingerprints)) {

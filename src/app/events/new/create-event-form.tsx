@@ -5,11 +5,10 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Check, ChevronLeft } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { EVENT_TYPES, SPECIAL_EVENT_TYPES, birthdayDateLooksLikeDateOfBirth, eventTypeMeta, formatEventDate, validateEventInput, type EventType } from "@/lib/events.ts";
+import { EVENT_PRESETS, birthdayDateLooksLikeDateOfBirth, eventTypeForTemplate, formatEventDate, validateEventInput, type EventPreset, type EventTemplate } from "@/lib/events.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { nextOccurrenceYear, occasionDateExplanation, suggestedOccasionDate } from "@/lib/uk-occasions.ts";
-// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { birthdayOccurrence, suggestedBirthdayEventName } from "@/lib/birthdays.ts";
+
 import { INPUT_LIMITS } from "@/lib/input-validation";
 import { createClient } from "@/utils/supabase/client";
 import { AppShell, PageHeader } from "../../components/app-shell";
@@ -32,13 +31,36 @@ export type CreatablePerson = {
   isFamilyContributor: boolean;
 };
 
-type Step = "type" | "details" | "people" | "review";
+type Step = "template" | "details" | "people" | "review";
 
 const STEPS: Array<{ step: Step; label: string }> = [
-  { step: "type", label: "Type" },
+  { step: "template", label: "Template" },
   { step: "details", label: "Details" },
   { step: "people", label: "People" },
   { step: "review", label: "Review" },
+];
+
+/**
+ * The two things Create Event offers.
+ *
+ * There used to be seven, one per event type, and the list WAS the product: an
+ * occasion the family wanted that was not on it could not be created without a
+ * code change. Now there are two -- Christmas, because it genuinely behaves
+ * differently, and Custom Event, which is a title and a date.
+ */
+const TEMPLATE_CHOICES: Array<{ template: EventTemplate; icon: string; label: string; blurb: string }> = [
+  {
+    template: "christmas",
+    icon: "🎄",
+    label: "Christmas",
+    blurb: "The family's next Christmas, with the date and year filled in.",
+  },
+  {
+    template: "custom",
+    icon: "🎁",
+    label: "Custom event",
+    blurb: "Anything else — Halloween, Easter, a wedding, a graduation. You choose the name.",
+  },
 ];
 
 /**
@@ -66,26 +88,35 @@ export function CreateEventForm({
   const router = useRouter();
   const params = useSearchParams();
 
-  // Pre-filled when arriving from the Birthdays calendar, so nothing is retyped.
-  const presetType = params.get("type");
-  const presetCelebrant = params.get("celebrant");
-  const [step, setStep] = useState<Step>(presetType ? "details" : "type");
-  const [type, setType] = useState<EventType>(
-    (EVENT_TYPES as readonly string[]).includes(presetType ?? "") ? (presetType as EventType) : "christmas",
-  );
-  const [celebrantId, setCelebrantId] = useState<string>(presetCelebrant ?? "");
+  const [step, setStep] = useState<Step>("template");
+  const [template, setTemplate] = useState<EventTemplate>("custom");
+  /**
+   * Which preset filled the date in, if one did.
+   *
+   * Only so the field can explain a date the user did not choose -- "Easter
+   * Sunday, which moves every year". It is a note about where a SUGGESTION came
+   * from, not a property of the event: nothing is stored, and the event is an
+   * ordinary custom event either way.
+   */
+  const [datedByPreset, setDatedByPreset] = useState<string | null>(null);
   const [name, setName] = useState(params.get("name") ?? "");
   const [date, setDate] = useState(params.get("date") ?? "");
   const [description, setDescription] = useState("");
-  const [recipientIds, setRecipientIds] = useState<string[]>(presetCelebrant ? [presetCelebrant] : []);
+  const [recipientIds, setRecipientIds] = useState<string[]>([]);
   const [contributorIds, setContributorIds] = useState<string[]>(
-    people.filter((person) => person.personId !== presetCelebrant).map((person) => person.personId),
+    people.map((person) => person.personId),
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const meta = eventTypeMeta(type);
-  const celebrant = people.find((person) => person.personId === celebrantId) ?? null;
+  /**
+   * The stored type follows from the template, and is never chosen directly.
+   *
+   * A custom event is `other` -- a value the database has accepted since
+   * migration 025 -- so "Halloween" needs no new type, no CHECK constraint and
+   * no migration. The event's own NAME is its identity everywhere it is shown.
+   */
+  const type = eventTypeForTemplate(template);
 
   /**
    * Sensible defaults, offered rather than imposed: everything below is a
@@ -94,84 +125,59 @@ export function CreateEventForm({
   // Everyone can receive; only the pool can contribute.
   const contributorPool = people.filter((person) => person.isFamilyContributor);
 
-  const applyTypeDefaults = (nextType: EventType) => {
-    setType(nextType);
+  const chooseTemplate = (next: EventTemplate) => {
+    setTemplate(next);
     setError(null);
-    const nextMeta = eventTypeMeta(nextType);
-    // The NEXT occurrence that has not happened and is not already planned.
-    // Defaulting to the current calendar year is wrong for most of the year:
-    // on the 24th of August, Mother's Day was five months ago.
-    const year = nextOccurrenceYear(nextType, today, takenYears[nextType] ?? [])
-      ?? Number(today.slice(0, 4));
-
-    if (nextType === "christmas") {
-      setName(`Christmas ${year}`);
-      setDate(`${year}-12-25`);
-      setCelebrantId("");
-      // Christmas does not assume everybody receives: the admin chooses.
-      setRecipientIds([]);
-      setContributorIds(contributorPool.map((person) => person.personId));
-      return;
-    }
-    // The occasions that move every year but move by a RULE. Easter Sunday,
-    // Mothering Sunday (three weeks before it) and the third Sunday in June are
-    // all computable, so the form offers the right date instead of asking
-    // somebody to look it up — which is how "Easter 2026" came to be dated in
-    // 2027. Every one of them stays editable.
-    // Christmas has already returned above, so anything with a suggestion here
-    // is one of the moving occasions.
-    const suggested = suggestedOccasionDate(nextType, year);
-    if (suggested) {
-      setName(`${nextMeta.label} ${year}`);
-      setDate(suggested);
-      setCelebrantId("");
-      setRecipientIds([]);
-      setContributorIds(contributorPool.map((person) => person.personId));
-      return;
-    }
-    if (nextType === "easter") {
-      setName(`Easter ${year}`);
-      setDate("");
-      setCelebrantId("");
-      setRecipientIds([]);
-      setContributorIds(contributorPool.map((person) => person.personId));
-      return;
-    }
-    if (!nextMeta.allowsCelebrant) setCelebrantId("");
-    setName("");
-    setDate("");
+    setDatedByPreset(next === "christmas" ? "christmas" : null);
     setRecipientIds([]);
     setContributorIds(contributorPool.map((person) => person.personId));
+
+    if (next === "christmas") {
+      // The NEXT Christmas that has not happened and is not already planned.
+      // Defaulting to the current calendar year is wrong from Boxing Day
+      // onwards, and the database refuses a second Christmas for a year that
+      // already has one -- so the form offers the one that will actually save.
+      const year = nextOccurrenceYear("christmas", today, takenYears.christmas ?? [])
+        ?? Number(today.slice(0, 4));
+      setName(`Christmas ${year}`);
+      setDate(`${year}-12-25`);
+      return;
+    }
+
+    // A custom event starts EMPTY. Suggesting a name would be guessing at an
+    // occasion the family has not told us about yet, and the whole point is
+    // that they get to say.
+    setName("");
+    setDate("");
   };
 
   /**
-   * Choosing the birthday person fills in the rest: their saved birthday gives
-   * the date, the date gives the name, they become the recipient, and they are
-   * left out of the contributors — nobody chips in for their own present.
+   * A preset fills in two fields, and does nothing else.
+   *
+   * The event it produces is an ordinary custom event -- same stored type, same
+   * behaviour, same everything -- as though the title had been typed by hand.
+   * That is the difference between a convenience and a structural type, and it
+   * is why "Easter" and "Halloween" are the same kind of thing to this form
+   * even though only one of them has a computable date.
    */
-  const chooseCelebrant = (personId: string) => {
-    setCelebrantId(personId);
+  const applyPreset = (preset: EventPreset) => {
     setError(null);
-    const person = people.find((row) => row.personId === personId);
-    if (!person || type !== "birthday") return;
-
-    if (person.birthday) {
-      const year = nextBirthdayYear(person.birthday, today);
-      setDate(birthdayOccurrence(person.birthday.month, person.birthday.day, year));
-      setName(suggestedBirthdayEventName(person.name, year));
-    } else if (!name) {
-      setName(`${person.name}'s Birthday`);
-    }
-    setRecipientIds([personId]);
-    setContributorIds(people.filter((row) => row.personId !== personId).map((row) => row.personId));
+    const year = nextOccurrenceYear(preset.occasion, today, takenYears[preset.occasion] ?? [])
+      ?? Number(today.slice(0, 4));
+    const suggested = suggestedOccasionDate(preset.occasion, year);
+    setName(`${preset.title} ${year}`);
+    if (suggested) setDate(suggested);
+    setDatedByPreset(preset.occasion);
   };
 
   const validation = useMemo(() => validateEventInput({
     name,
     type,
     eventDate: date,
-    celebrantPersonId: celebrantId || null,
-  }), [celebrantId, date, name, type]);
+    // A generic event is not about one named person. Only a birthday is, and a
+    // birthday is never created here.
+    celebrantPersonId: null,
+  }), [date, name, type]);
 
   /**
    * The mistake this catches actually happened, in production.
@@ -249,33 +255,34 @@ export function CreateEventForm({
       {error && <Notice tone="danger" className="mt-6">{error}</Notice>}
       <GarlandRule className="mt-6" />
 
-      {step === "type" && (
+      {step === "template" && (
         <section className="mt-6">
-          <h2 className="font-display text-xl font-semibold text-ink-900">What kind of event?</h2>
+          <h2 className="font-display text-xl font-semibold text-ink-900">What are you planning?</h2>
           <p className="mt-1.5 text-sm leading-6 text-ink-600">
-            Christmas and birthdays are not here on purpose. The family has one Christmas,
-            and a birthday belongs to a person — start one from{" "}
+            Birthdays are not here on purpose: a birthday belongs to a person, so start one
+            from{" "}
             <Link href="/birthdays" className="font-semibold underline">Birthdays</Link>, where the
-            date is already known.
+            date is already known. Everything else is a custom event — name it whatever the
+            family calls it.
           </p>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            {SPECIAL_EVENT_TYPES.map((option: EventType) => {
-              const optionMeta = eventTypeMeta(option);
-              return (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => { applyTypeDefaults(option); setStep("details"); }}
-                  className={cx(
-                    "flex min-h-16 items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-3 text-left",
-                    "hover:border-accent/40 hover:shadow-lift focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-                  )}
-                >
-                  <span aria-hidden className="text-2xl leading-none">{optionMeta.icon}</span>
-                  <span className="font-display text-base font-semibold text-ink-900">{optionMeta.label}</span>
-                </button>
-              );
-            })}
+            {TEMPLATE_CHOICES.map((choice) => (
+              <button
+                key={choice.template}
+                type="button"
+                onClick={() => { chooseTemplate(choice.template); setStep("details"); }}
+                className={cx(
+                  "flex min-h-16 flex-col gap-1 rounded-2xl border border-line bg-surface px-4 py-3.5 text-left",
+                  "hover:border-accent/40 hover:shadow-lift focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                )}
+              >
+                <span className="flex items-center gap-3">
+                  <span aria-hidden className="text-2xl leading-none">{choice.icon}</span>
+                  <span className="font-display text-base font-semibold text-ink-900">{choice.label}</span>
+                </span>
+                <span className="text-xs leading-5 text-ink-600">{choice.blurb}</span>
+              </button>
+            ))}
           </div>
         </section>
       )}
@@ -283,28 +290,38 @@ export function CreateEventForm({
       {step === "details" && (
         <section className="mt-6 space-y-4">
           <h2 className="font-display text-xl font-semibold text-ink-900">
-            {meta.icon} {meta.label} details
+            {template === "christmas" ? "🎄 Christmas details" : "🎁 Event details"}
           </h2>
 
-          {meta.allowsCelebrant && (
-            <Field
-              label={type === "birthday" ? "Whose birthday?" : "Who is it for?"}
-              required={meta.requiresCelebrant}
-              hint={type === "birthday" ? "Their saved birthday fills in the date and name." : undefined}
-            >
-              <select
-                value={celebrantId}
-                onChange={(event) => chooseCelebrant(event.target.value)}
-                className="h-12 w-full rounded-xl border border-line-strong bg-surface px-3.5 text-base text-ink-900 shadow-card outline-none focus:border-accent/60 focus:ring-4 focus:ring-accent/20"
-              >
-                <option value="">Choose…</option>
-                {people.map((person) => (
-                  <option key={person.personId} value={person.personId}>
-                    {person.name}{person.birthday ? "" : " (no birthday saved)"}
-                  </option>
+          {/* Presets are a shortcut to two fields, offered only where they
+              help. They are not a list of the occasions the app supports:
+              anything typed into the box below works exactly as well, which is
+              why Halloween is not among them. */}
+          {template === "custom" && (
+            <div>
+              <p className="text-xs font-semibold tracking-eyebrow text-ink-600 uppercase">
+                Quick start
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {EVENT_PRESETS.map((preset) => (
+                  <button
+                    key={preset.occasion}
+                    type="button"
+                    onClick={() => applyPreset(preset)}
+                    className={cx(
+                      "inline-flex min-h-11 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-ink-900",
+                      "hover:border-accent/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                    )}
+                  >
+                    <span aria-hidden>{preset.icon}</span>
+                    {preset.title}
+                  </button>
                 ))}
-              </select>
-            </Field>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-ink-600">
+                Or just type a name — Halloween, a graduation, a leaving do, anything.
+              </p>
+            </div>
           )}
 
           <Field label="Event name" required>
@@ -312,12 +329,25 @@ export function CreateEventForm({
               value={name}
               maxLength={INPUT_LIMITS.name}
               onChange={(event) => setName(event.target.value)}
-              placeholder={meta.label}
+              placeholder={template === "christmas" ? "Christmas" : "Halloween"}
             />
           </Field>
 
-          <Field label="Date" required hint={occasionDateExplanation(type) ?? undefined}>
-            <Input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+          {/* The explanation follows the PRESET, not the event type: a custom
+              event has no formula, and one dated from the Easter preset should
+              still say where that date came from. Editing the date by hand
+              clears it, because it is then the user's date and not a
+              suggestion. */}
+          <Field
+            label="Date"
+            required
+            hint={(datedByPreset ? occasionDateExplanation(datedByPreset) : null) ?? undefined}
+          >
+            <Input
+              type="date"
+              value={date}
+              onChange={(event) => { setDate(event.target.value); setDatedByPreset(null); }}
+            />
           </Field>
 
           {dateOfBirthWarning && (
@@ -338,7 +368,7 @@ export function CreateEventForm({
           </Field>
 
           <div className="flex flex-wrap gap-3 pt-2">
-            <Button variant="ghost" className="min-h-11" onClick={() => setStep("type")}>
+            <Button variant="ghost" className="min-h-11" onClick={() => setStep("template")}>
               <ChevronLeft size={16} aria-hidden />
               Back
             </Button>
@@ -364,9 +394,7 @@ export function CreateEventForm({
             title="Who is chipping in?"
             hint={contributorPool.length === 0
               ? "Nobody is set up as a family contributor yet. Add somebody in Family access first."
-              : celebrant
-                ? `${celebrant.name.split(" ")[0]} is left out by default — nobody pays for their own present. You can change that.`
-                : "Contributors share the cost of every purchase in this event."}
+              : "Contributors share the cost of every purchase in this event."}
             people={contributorPool}
             selected={contributorIds}
             onChange={setContributorIds}
@@ -385,16 +413,14 @@ export function CreateEventForm({
         <section className="mt-6 space-y-5">
           <div className="rounded-2xl border border-line bg-surface p-5">
             <p className="text-xs font-semibold tracking-eyebrow text-gold uppercase">
-              {meta.icon} {meta.label}
+              {template === "christmas" ? "🎄 Christmas" : "🎁 Custom event"}
             </p>
             <h2 className="mt-1.5 font-display text-2xl font-semibold break-words text-ink-900">
               {validation.value.name}
             </h2>
             <p className="mt-1 text-sm text-ink-600">{formatEventDate(validation.value.eventDate)}</p>
             <dl className="mt-4 space-y-1.5 text-sm">
-              {celebrant && (
-                <div className="flex gap-2"><dt className="text-ink-600">For</dt><dd className="font-semibold text-ink-900">{celebrant.name}</dd></div>
-              )}
+
               <div className="flex gap-2">
                 <dt className="text-ink-600">Recipients</dt>
                 <dd className="font-semibold text-ink-900">{describePeople(people, recipientIds)}</dd>
@@ -478,13 +504,7 @@ function describePeople(people: CreatablePerson[], ids: string[]): string {
  * the wrong day for part of every evening in British Summer Time, and this
  * decides which YEAR somebody is planning.
  *
- * Named for birthdays specifically. `nextOccurrenceYear` in `uk-occasions`
- * answers the same question for the recurring occasions that move by a rule.
- */
-function nextBirthdayYear(birthday: { month: number; day: number }, today: string): number {
-  const year = Number(today.slice(0, 4));
-  return birthdayOccurrence(birthday.month, birthday.day, year) >= today ? year : year + 1;
-}
+
 
 /** The database's own message, unless it is one the reader cannot act on. */
 function friendlyCreateError(message: string): string {

@@ -23,12 +23,17 @@ import test from "node:test";
 // ---------------------------------------------------------------------------
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
+// Line endings are normalised on the way in. Git stores LF and checks files out
+// as CRLF on Windows, so a multi-line pattern written with \n silently stops
+// matching a file nobody has edited -- a false failure about the product,
+// caused by a checkout setting.
+const read = (...parts) => readFileSync(join(root, ...parts), "utf8").replace(/\r\n/gu, "\n");
 
 const { easterSunday, motheringSunday, fathersDay, suggestedOccasionDate } =
   await import("../src/lib/uk-occasions.ts");
 const {
-  EVENT_TYPES, SPECIAL_EVENT_TYPES, eventTypeMeta, groupDashboardEvents,
+  EVENT_PRESETS, EVENT_TEMPLATES, EVENT_TYPES, GENERIC_EVENT_TYPE,
+  eventTypeForTemplate, eventTypeMeta, groupDashboardEvents, hasFixedSingleRecipient, isGenericEvent,
   validateEventInput, yearStatedInName, eventNavMode,
 } = await import("../src/lib/events.ts");
 
@@ -255,31 +260,165 @@ test("15-16. both group under Special events, and neither is a birthday", () => 
   assert.ok(!grouped.special.upcoming.some((e) => e.type === "birthday"));
 });
 
-test("Create Event offers Christmas, and still not Birthday", () => {
-  // Christmas is back: a family needs 2027 after 2026, and a new household
-  // starts with none. A duplicate is refused by the database, not by hiding
-  // the option.
-  assert.deepEqual(
-    [...SPECIAL_EVENT_TYPES],
-    ["christmas", "mothers_day", "fathers_day", "easter", "wedding", "anniversary", "other"],
-  );
-  assert.ok(SPECIAL_EVENT_TYPES.includes("christmas"), "Christmas must be creatable");
-  assert.ok(!SPECIAL_EVENT_TYPES.includes("birthday"), "a birthday belongs to a person");
+// ---------------------------------------------------------------------------
+// Generic, title-driven events
+//
+// The property: adding an occasion is something a FAMILY does, not something
+// engineering does. Everything below is about keeping it that way.
+// ---------------------------------------------------------------------------
 
-  assert.match(createForm, /SPECIAL_EVENT_TYPES\.map\(\(option: EventType\) => \{/u);
+test("anything that is not a birthday and not a Christmas is a generic event", () => {
+  // Defined by exclusion, which is what makes it true for rows created before
+  // the idea existed. No legacy row had to change to become generic.
+  for (const type of ["other", "easter", "mothers_day", "fathers_day", "wedding", "anniversary"]) {
+    assert.equal(isGenericEvent({ type }), true, type);
+  }
+  assert.equal(isGenericEvent({ type: "birthday" }), false, "a birthday is not generic");
+  assert.equal(isGenericEvent({ type: "christmas" }), false, "and neither is Christmas");
+
+  // Including a value this build has never heard of, which is the point: a
+  // future type must not fall through into birthday or Christmas behaviour.
+  assert.equal(isGenericEvent({ type: "something_invented_later" }), true);
+});
+
+test("an unknown event type still renders, and renders as generic", () => {
+  // `eventTypeMeta` falls back rather than returning undefined, so a row the
+  // database has learned about and this build has not cannot blank a card.
+  const meta = eventTypeMeta("halloween");
+  assert.equal(meta.type, "other");
+  assert.equal(meta.icon, "🎁");
+  assert.equal(meta.requiresCelebrant, false, "an unknown type must not demand a celebrant");
+});
+
+test("a custom event is stored as a type the database already accepts", () => {
+  // THE WHOLE PHASE, IN ONE ASSERTION. `other` has been legal since migration
+  // 025, so "Halloween" needs no new enum value, no CHECK constraint, no
+  // migration and no deploy -- only somebody typing it.
+  assert.equal(GENERIC_EVENT_TYPE, "other");
+  assert.ok(EVENT_TYPES.includes(GENERIC_EVENT_TYPE), "and it is a value the model already knows");
+
+  const migrations = readdirSync(join(root, "supabase", "migrations")).filter((f) => f.endsWith(".sql"));
+  assert.equal(migrations.length, 31, "Phase 2 adds no migration");
+  assert.ok(migrations.at(-1).startsWith("202608100031"), "031 is still the newest");
+});
+
+test("arbitrary titles are accepted by the model, with no list to be on", () => {
+  // Each of these is an occasion the source code has never heard of.
+  for (const name of ["Halloween", "Graduation Party", "Diwali", "Secret Santa at work", "Mum & Dad Anniversary"]) {
+    const result = validateEventInput({ name, type: GENERIC_EVENT_TYPE, eventDate: "2027-10-31" });
+    assert.ok(result.ok, `${name} must be creatable: ${result.ok ? "" : result.error}`);
+    assert.equal(result.value.name, name, "and stored under its own name");
+    assert.equal(result.value.type, "other");
+    assert.equal(result.value.celebrantPersonId, null, "a generic event is not about one named person");
+  }
+
+  // The name is the identity, so an empty one is refused.
+  assert.equal(validateEventInput({ name: "   ", type: GENERIC_EVENT_TYPE, eventDate: "2027-10-31" }).ok, false);
+});
+
+test("no occasion is named in the source outside the presets and the legacy types", () => {
+  // The regression this guards: somebody adding `if (name === "Halloween")`.
+  const form = read("src", "app", "events", "new", "create-event-form.tsx");
+  const logic = form.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, "");
+  for (const occasion of ["Halloween", "Graduation", "Diwali", "Valentine"]) {
+    assert.ok(
+      !new RegExp(`["'\`]${occasion}`, "u").test(logic.replace(/placeholder=\{[^}]*\}/gu, "")),
+      `${occasion} must not be a special case in the form's logic`,
+    );
+  }
+});
+
+test("the recipient count decides the workspace, not the title and not the type", () => {
+  // Halloween for one person reads as Gifts; for several, as People. Easter
+  // behaves identically, because they are the same kind of thing.
+  assert.equal(eventNavMode(0), "empty");
+  assert.equal(eventNavMode(1), "single");
+  assert.equal(eventNavMode(2), "multi");
+  assert.equal(eventNavMode(7), "multi");
+  // A list that has not loaded yet is NOT "no recipients". Defaulting to the
+  // full view means a slow load shows the People screen a moment early;
+  // defaulting to empty would flash a setup state at an event that has been
+  // fully configured for months.
+  assert.equal(eventNavMode(null), "multi", "an unloaded list must not read as an empty one");
+
+  // The structural lock is the type, and only a birthday has it.
+  assert.equal(hasFixedSingleRecipient({ type: "birthday" }), true);
+  for (const type of ["other", "easter", "wedding", "anniversary", "christmas", "mothers_day"]) {
+    assert.equal(hasFixedSingleRecipient({ type }), false, `${type} keeps editable recipients`);
+  }
+});
+
+test("a generic event is grouped by what it is not, so any title lands correctly", () => {
+  const events = [
+    { id: "c", name: "Christmas 2026", type: "christmas", eventDate: "2026-12-25", status: "active" },
+    { id: "h", name: "Halloween", type: "other", eventDate: "2026-10-31", status: "active" },
+    { id: "e", name: "Easter 2027", type: "easter", eventDate: "2027-03-28", status: "active" },
+    { id: "g", name: "Graduation", type: "other", eventDate: "2027-07-04", status: "active" },
+    { id: "b", name: "A birthday", type: "birthday", eventDate: "2027-01-15", status: "active" },
+  ];
+  const grouped = groupDashboardEvents(events, "2026-08-24");
+
+  assert.deepEqual(grouped.christmas.map((event) => event.id), ["c"]);
+  assert.deepEqual(grouped.birthdayOccurrences.map((event) => event.id), ["b"]);
+  // One section for every user-created occasion, whatever it is called. There
+  // is no per-occasion section to add.
+  assert.deepEqual(
+    [...grouped.special.upcoming, ...grouped.special.past].map((event) => event.id).sort(),
+    ["e", "g", "h"],
+  );
+});
+
+test("Create Event offers two templates, and still not Birthday", () => {
+  // TWO, not seven. The list used to BE the product: an occasion that was not
+  // on it could not be created without a code change, which is how "we want
+  // Halloween" became an engineering task.
+  assert.deepEqual([...EVENT_TEMPLATES], ["christmas", "custom"]);
+
+  assert.match(createForm, /TEMPLATE_CHOICES\.map\(\(choice\) => \(/u);
+  assert.match(createForm, /template: "christmas"/u, "Christmas keeps its own template");
+  assert.match(createForm, /template: "custom"/u);
+  assert.ok(!createForm.includes("SPECIAL_EVENT_TYPES"), "the form no longer enumerates types");
   assert.match(createForm, /href="\/birthdays"/u, "and it says where a birthday is started");
 
-  // The date is suggested for the NEXT occurrence, explained, and editable.
-  assert.match(createForm, /nextOccurrenceYear\(nextType, today, takenYears\[nextType\] \?\? \[\]\)/u);
-  assert.match(createForm, /suggestedOccasionDate\(nextType, year\)/u);
-  assert.match(createForm, /occasionDateExplanation\(type\)/u);
-  assert.match(createForm, /<Input type="date" value=\{date\} onChange=/u, "the admin can change it");
+  // Christmas is still first-class: a family needs 2027 after 2026, and a
+  // duplicate is refused by the database rather than by hiding the option.
+  assert.equal(eventTypeForTemplate("christmas"), "christmas");
+  assert.match(createForm, /nextOccurrenceYear\("christmas", today, takenYears\.christmas \?\? \[\]\)/u);
 
+  // A custom event is stored as a type the database has accepted since
+  // migration 025, so an occasion nobody has thought of needs no schema change.
+  assert.equal(eventTypeForTemplate("custom"), "other");
+  assert.equal(GENERIC_EVENT_TYPE, "other");
+});
+
+test("presets fill in two fields and confer nothing", () => {
+  // The date arithmetic is kept -- it is correct and hard to redo -- but it now
+  // feeds a suggestion rather than deciding what the system supports.
   assert.equal(suggestedOccasionDate("mothers_day", 2027), "2027-03-07");
   assert.equal(suggestedOccasionDate("fathers_day", 2027), "2027-06-20");
   assert.equal(suggestedOccasionDate("easter", 2027), "2027-03-28");
   assert.equal(suggestedOccasionDate("christmas", 2026), "2026-12-25");
   assert.equal(suggestedOccasionDate("wedding", 2026), null, "a wedding has no formula");
+
+  // A preset sets the title and the date, and nothing else. If it ever set the
+  // TYPE it would have become a structural event type again.
+  const applyPreset = createForm.slice(createForm.indexOf("const applyPreset"), createForm.indexOf("const validation"));
+  assert.match(applyPreset, /setName\(`\$\{preset\.title\} \$\{year\}`\)/u);
+  assert.match(applyPreset, /if \(suggested\) setDate\(suggested\)/u);
+  assert.ok(!applyPreset.includes("setTemplate"), "a preset must not change the template");
+  assert.ok(!applyPreset.includes("event_type"), "nor the stored type");
+
+  // Presets are Easter, Mother's Day and Father's Day -- the three with a
+  // formula. Halloween is deliberately absent: it has a fixed date somebody can
+  // type, and listing it would suggest the list is where occasions come from.
+  assert.deepEqual(EVENT_PRESETS.map((preset) => preset.occasion), ["easter", "mothers_day", "fathers_day"]);
+  assert.ok(!EVENT_PRESETS.some((preset) => /halloween/iu.test(preset.title)));
+  assert.match(createForm, /Or just type a name/u, "and the form says so");
+
+  // The date field explains a date the USER did not choose, and stops
+  // explaining once they choose one.
+  assert.match(createForm, /datedByPreset \? occasionDateExplanation\(datedByPreset\) : null/u);
+  assert.match(createForm, /setDate\(event\.target\.value\); setDatedByPreset\(null\)/u);
 });
 
 // ---------------------------------------------------------------------------

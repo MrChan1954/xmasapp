@@ -33,7 +33,10 @@ export function validateRecipientAllocationSnapshot(
   allocations: readonly RecipientAllocation[],
 ): ValidationResult<RecipientAllocation[]> {
   if (!Number.isSafeInteger(budgetPennies) || budgetPennies < 0 || budgetPennies > MAX_PENNIES) {
-    return { ok: false, error: "Enter a valid Christmas budget." };
+    // "Christmas budget" was accurate when Christmas was the only event. It
+    // is now shown while setting a budget for a birthday, a Halloween or
+    // anything else the family invents, so it says what it means.
+    return { ok: false, error: "Enter a valid budget." };
   }
 
   const contributorIds = new Set<string>();

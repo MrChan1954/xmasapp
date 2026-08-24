@@ -23,7 +23,7 @@ const authorizationMigration = readFileSync(
   join(migrationsDirectory, authorizationMigrationName),
   "utf8",
 );
-const validationMigration = readFileSync(join(migrationsDirectory, validationMigrationName), "utf8");
+const validationMigration = readFileSync(join(migrationsDirectory, validationMigrationName), "utf8").replace(/\r\n/gu, "\n");
 const atomicRecipientMigration = readFileSync(
   join(migrationsDirectory, atomicRecipientMigrationName),
   "utf8",
@@ -32,41 +32,41 @@ const purchaseTrackingMigration = readFileSync(
   join(migrationsDirectory, purchaseTrackingMigrationName),
   "utf8",
 );
-const realtimeMigration = readFileSync(join(migrationsDirectory, realtimeMigrationName), "utf8");
-const auditMigration = readFileSync(join(migrationsDirectory, auditMigrationName), "utf8");
-const auditOpenMigration = readFileSync(join(migrationsDirectory, auditOpenMigrationName), "utf8");
-const photosMigration = readFileSync(join(migrationsDirectory, photosMigrationName), "utf8");
-const notificationsMigration = readFileSync(join(migrationsDirectory, notificationsMigrationName), "utf8");
-const notificationCentreMigration = readFileSync(join(migrationsDirectory, notificationCentreMigrationName), "utf8");
-const notificationOutboxMigration = readFileSync(join(migrationsDirectory, notificationOutboxMigrationName), "utf8");
+const realtimeMigration = readFileSync(join(migrationsDirectory, realtimeMigrationName), "utf8").replace(/\r\n/gu, "\n");
+const auditMigration = readFileSync(join(migrationsDirectory, auditMigrationName), "utf8").replace(/\r\n/gu, "\n");
+const auditOpenMigration = readFileSync(join(migrationsDirectory, auditOpenMigrationName), "utf8").replace(/\r\n/gu, "\n");
+const photosMigration = readFileSync(join(migrationsDirectory, photosMigrationName), "utf8").replace(/\r\n/gu, "\n");
+const notificationsMigration = readFileSync(join(migrationsDirectory, notificationsMigrationName), "utf8").replace(/\r\n/gu, "\n");
+const notificationCentreMigration = readFileSync(join(migrationsDirectory, notificationCentreMigrationName), "utf8").replace(/\r\n/gu, "\n");
+const notificationOutboxMigration = readFileSync(join(migrationsDirectory, notificationOutboxMigrationName), "utf8").replace(/\r\n/gu, "\n");
 const paymentConfirmationsMigrationName = "202608100021_add_payment_confirmations.sql";
 const adminOverrideMigrationName = "202608100022_separate_admin_payment_override.sql";
-const paymentConfirmationsMigration = readFileSync(join(migrationsDirectory, paymentConfirmationsMigrationName), "utf8");
-const adminOverrideMigration = readFileSync(join(migrationsDirectory, adminOverrideMigrationName), "utf8");
+const paymentConfirmationsMigration = readFileSync(join(migrationsDirectory, paymentConfirmationsMigrationName), "utf8").replace(/\r\n/gu, "\n");
+const adminOverrideMigration = readFileSync(join(migrationsDirectory, adminOverrideMigrationName), "utf8").replace(/\r\n/gu, "\n");
 const notificationRepairMigrationName = "202608100023_repair_notification_centre_and_outbox.sql";
-const notificationRepairMigration = readFileSync(join(migrationsDirectory, notificationRepairMigrationName), "utf8");
+const notificationRepairMigration = readFileSync(join(migrationsDirectory, notificationRepairMigrationName), "utf8").replace(/\r\n/gu, "\n");
 const balanceVisibilityMigrationName = "202608100024_family_wide_balance_visibility.sql";
-const balanceVisibilityMigration = readFileSync(join(migrationsDirectory, balanceVisibilityMigrationName), "utf8");
+const balanceVisibilityMigration = readFileSync(join(migrationsDirectory, balanceVisibilityMigrationName), "utf8").replace(/\r\n/gu, "\n");
 const eventLayerMigrationName = "202608100025_generalise_christmas_into_events.sql";
-const eventLayerMigration = readFileSync(join(migrationsDirectory, eventLayerMigrationName), "utf8");
+const eventLayerMigration = readFileSync(join(migrationsDirectory, eventLayerMigrationName), "utf8").replace(/\r\n/gu, "\n");
 
 const birthdayMigrationName = "202608100026_add_birthdays_and_event_administration.sql";
-const birthdayMigration = readFileSync(join(migrationsDirectory, birthdayMigrationName), "utf8");
+const birthdayMigration = readFileSync(join(migrationsDirectory, birthdayMigrationName), "utf8").replace(/\r\n/gu, "\n");
 
 const reminderMigrationName = "202608100027_two_stage_birthday_reminders_and_safe_event_deletion.sql";
-const reminderMigration = readFileSync(join(migrationsDirectory, reminderMigrationName), "utf8");
+const reminderMigration = readFileSync(join(migrationsDirectory, reminderMigrationName), "utf8").replace(/\r\n/gu, "\n");
 
 const occasionMigrationName = "202608100028_add_mothers_and_fathers_day.sql";
-const occasionMigration = readFileSync(join(migrationsDirectory, occasionMigrationName), "utf8");
+const occasionMigration = readFileSync(join(migrationsDirectory, occasionMigrationName), "utf8").replace(/\r\n/gu, "\n");
 
 const budgetMigrationName = "202608100029_add_monthly_birthday_budget_reminder.sql";
-const budgetMigration = readFileSync(join(migrationsDirectory, budgetMigrationName), "utf8");
+const budgetMigration = readFileSync(join(migrationsDirectory, budgetMigrationName), "utf8").replace(/\r\n/gu, "\n");
 
 const contributorMigrationName = "202608100030_family_contributors_and_atomic_setup.sql";
-const contributorMigration = readFileSync(join(migrationsDirectory, contributorMigrationName), "utf8");
+const contributorMigration = readFileSync(join(migrationsDirectory, contributorMigrationName), "utf8").replace(/\r\n/gu, "\n");
 
 const privacyMigrationName = "202608100031_birthday_privacy_and_contributor_birthday_edits.sql";
-const privacyMigration = readFileSync(join(migrationsDirectory, privacyMigrationName), "utf8");
+const privacyMigration = readFileSync(join(migrationsDirectory, privacyMigrationName), "utf8").replace(/\r\n/gu, "\n");
 
 const applicationTables = [
   "christmas_events",
@@ -1724,7 +1724,7 @@ test("both deprecated recipient RPCs are unreachable from any browser session", 
   // bypasses the admin gate on recipient details.
   const laterMigrations = migrationFiles
     .filter((name) => name > atomicRecipientMigrationName)
-    .map((name) => readFileSync(join(migrationsDirectory, name), "utf8"))
+    .map((name) => readFileSync(join(migrationsDirectory, name), "utf8").replace(/\r\n/gu, "\n"))
     .join("\n");
   for (const name of ["save_recipient_contributions", "save_christmas_recipient\\("]) {
     assert.doesNotMatch(

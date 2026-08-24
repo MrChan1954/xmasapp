@@ -15,7 +15,11 @@ import { test } from "node:test";
 // ---------------------------------------------------------------------------
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
+// Line endings are normalised on the way in. Git stores LF and checks files out
+// as CRLF on Windows, so a multi-line pattern written with \n silently stops
+// matching a file nobody has edited -- a false failure about the product,
+// caused by a checkout setting.
+const read = (...parts) => readFileSync(join(root, ...parts), "utf8").replace(/\r\n/gu, "\n");
 
 const MIGRATION = "202608100026_add_birthdays_and_event_administration.sql";
 const sql = read("supabase", "migrations", MIGRATION);
@@ -270,6 +274,85 @@ test("a birthday event is created deliberately, once per person per year at most
 // ---------------------------------------------------------------------------
 // 4. The screens
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Event Settings holds event-scoped controls, and only those
+// ---------------------------------------------------------------------------
+
+test("Event Settings contains exactly the controls that belong to one event", () => {
+  const settings = read("src", "app", "events", "[eventId]", "settings", "settings-screen.tsx");
+
+  // What belongs: the event's own details, its people, its money, and the two
+  // ways of taking it off the list.
+  for (const heading of ["Details", "Recipients", "Contributors", "Danger zone", "Delete"]) {
+    assert.ok(settings.includes(`>${heading}<`), `Event Settings should offer ${heading}`);
+  }
+  // Archive reads "Archived" once it has been, so it is matched by its ternary.
+  assert.match(settings, /\{event\.status === "archived" \? "Archived" : "Archive"\}/u);
+});
+
+test("nothing account-level, family-level or global has leaked into it", () => {
+  const settings = read("src", "app", "events", "[eventId]", "settings", "settings-screen.tsx");
+  const logic = settings.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, "");
+
+  // These are the scopes that will become Global and Area settings in Phase 5.
+  // Any of them appearing here is a control in the wrong place, and moving it
+  // later is far harder than never putting it here.
+  for (const foreign of [
+    "family-access", "Family access", "/more", "notification", "Notification",
+    "push_subscriptions", "app_members", "claim_app_member", "set_family_contributor",
+    "set_person_birthday", "Create Area", "profile", "password", "sign out",
+  ]) {
+    assert.ok(!logic.includes(foreign), `Event Settings must not contain ${foreign}`);
+  }
+});
+
+test("every write it does make is event-scoped and admin-checked", () => {
+  const settings = read("src", "app", "events", "[eventId]", "settings", "settings-screen.tsx");
+
+  // Each RPC takes an event id, or an id that belongs to one. None of them can
+  // reach outside the event being edited.
+  const rpcs = [...settings.matchAll(/\.rpc\("([a-z_]+)"/gu)].map((match) => match[1]).sort();
+  assert.deepEqual([...new Set(rpcs)], [
+    "add_event_recipient", "delete_event_if_empty",
+    "set_event_contributor", "set_event_status", "update_event",
+  ], "Event Settings may call these and nothing else");
+
+  // REMOVING a recipient is deliberately NOT here. It happens on the People
+  // screen, because taking somebody off an event has to keep their purchases
+  // and that screen is where the purchases are. The capability was not deleted
+  // when the control was placed -- `set_christmas_recipient_active` still
+  // exists and is still reachable.
+  assert.match(settings, /Removing a recipient is done from the People screen/u);
+  const family = read("src", "app", "family-context.tsx");
+  assert.match(family, /\.rpc\("set_christmas_recipient_active"/u, "the capability is still wired up");
+
+  // And the screen refuses to render its controls to a non-admin, over and
+  // above the database checking each call itself.
+  assert.match(settings, /if \(!isAdmin\) \{/u);
+  assert.match(settings, /Only the Global Admin can change an event/u);
+});
+
+test("the event's own title is its identity on the settings screen", () => {
+  const settings = read("src", "app", "events", "[eventId]", "settings", "settings-screen.tsx");
+  // "🎁 Event settings" told the reader nothing about which event they were
+  // editing. The name does.
+  assert.match(settings, /eyebrow=\{`\$\{meta\.icon\} \$\{event\.name\}`\}/u);
+  assert.ok(!settings.includes("eyebrow={`${meta.icon} ${meta.label}`}"), "not the type label");
+});
+
+test("the destructive actions keep their guards", () => {
+  const settings = read("src", "app", "events", "[eventId]", "settings", "settings-screen.tsx");
+
+  // Delete is offered only for an event that never held anything, and the
+  // database refuses it regardless.
+  assert.match(settings, /\{isEmpty && \(/u);
+  assert.match(settings, /\.rpc\("delete_event_if_empty"/u);
+  // Both destructive actions confirm first.
+  assert.match(settings, /confirmDelete && \(/u);
+  assert.match(settings, /confirmArchive && \(/u);
+  assert.match(settings, /Archiving takes the event off the main list\. Nothing is deleted/u);
+});
 
 test("every Checkpoint 4 screen gates on the server before it renders", () => {
   const createPage = read("src", "app", "events", "new", "page.tsx");

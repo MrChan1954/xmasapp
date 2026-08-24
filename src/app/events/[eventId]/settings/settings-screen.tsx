@@ -265,8 +265,14 @@ export function EventSettingsScreen({
 
   return (
     <AppShell width="narrow">
+      {/* THE EVENT'S OWN NAME IS ITS IDENTITY, here as everywhere else. This
+          used to read "🎁 Event settings" for anything the app had no type
+          label for, which told the reader nothing about which event they were
+          editing. The icon still comes from the type -- 🎄 for Christmas, 🎂
+          for a birthday, 🎁 otherwise -- because that is decoration, not
+          identity. */}
       <PageHeader
-        eyebrow={`${meta.icon} ${meta.label}`}
+        eyebrow={`${meta.icon} ${event.name}`}
         title="Event settings"
         description="Rename the event, move its date, choose who receives and who chips in."
       />
@@ -357,10 +363,18 @@ export function EventSettingsScreen({
         </div>
       </section>
 
-      <section className="mt-12">
-        <h2 className="font-display text-xl font-semibold text-ink-900">
+      {/* Everything that takes an event off the list, in one place at the
+          bottom, so the two ways of doing it are read together and the
+          reversible one is met first. */}
+      <section className="mt-14">
+        <h2 className="font-display text-xl font-semibold text-ink-900">Danger zone</h2>
+        <GarlandRule className="mt-4" />
+      </section>
+
+      <section className="mt-8">
+        <h3 className="font-display text-lg font-semibold text-ink-900">
           {event.status === "archived" ? "Archived" : "Archive"}
-        </h2>
+        </h3>
         <p className="mt-1.5 text-sm leading-6 text-ink-600">
           Archiving takes the event off the main list. Nothing is deleted: every purchase,
           payment and balance stays exactly where it is, and the event can be reopened.
@@ -390,8 +404,8 @@ export function EventSettingsScreen({
           a gift idea or a payment exists, this section is not rendered and the
           database refuses the call anyway. */}
       {isEmpty && (
-        <section className="mt-12">
-          <h2 className="font-display text-xl font-semibold text-ink-900">Delete</h2>
+        <section className="mt-10">
+          <h3 className="font-display text-lg font-semibold text-ink-900">Delete</h3>
           <p className="mt-1.5 text-sm leading-6 text-ink-600">
             Nothing has been recorded against this event — no purchases, no gift ideas,
             no payments — so it can be removed completely rather than archived. Once
