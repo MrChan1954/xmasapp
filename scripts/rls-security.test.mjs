@@ -71,6 +71,9 @@ const privacyMigration = readFileSync(join(migrationsDirectory, privacyMigration
 const peopleMigrationName = "202608100032_people_directory.sql";
 const peopleMigration = readFileSync(join(migrationsDirectory, peopleMigrationName), "utf8").replace(/\r\n/gu, "\n");
 
+const membershipMigrationName = "202608100033_membership_guards.sql";
+const membershipMigration = readFileSync(join(migrationsDirectory, membershipMigrationName), "utf8").replace(/\r\n/gu, "\n");
+
 const applicationTables = [
   "christmas_events",
   "people",
@@ -88,8 +91,40 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  assert.equal(migrationFiles.at(-1), peopleMigrationName);
+  assert.equal(migrationFiles.at(-1), membershipMigrationName);
+  assert.ok(migrationFiles.includes(peopleMigrationName), "the People directory migration is still present");
   assert.ok(migrationFiles.includes(privacyMigrationName), "the birthday privacy migration is still present");
+
+  // ------------------------------------------------------------------
+  // What 033 introduces, security-wise: two triggers on membership, and no
+  // new way to read, write or grant anything.
+  // ------------------------------------------------------------------
+  for (const fn of ["refuse_last_admin_removal", "require_person_link_when_active"]) {
+    const start = membershipMigration.indexOf(`function public.${fn}(`);
+    assert.ok(start > 0, `${fn} must exist`);
+    const body = membershipMigration.slice(start, membershipMigration.indexOf("$$;", start));
+    assert.match(body, /security definer/u, `${fn} runs as definer`);
+    assert.match(body, /set search_path = ''/u, `${fn} must pin search_path`);
+    assert.match(body, /raise exception/u, `${fn} must actually refuse something`);
+  }
+
+  // A trigger, not a grant: 033 hands nobody a new capability.
+  assert.doesNotMatch(membershipMigration, /grant execute on function/iu, "033 grants no new function");
+  assert.doesNotMatch(membershipMigration, /create policy/iu, "033 adds no policy");
+  assert.doesNotMatch(
+    membershipMigration,
+    /grant [a-z, ]+ on table public\.\w+ to (authenticated|anon)/i,
+    "033 adds no table grant",
+  );
+
+  // AND IT ASSIGNS NOBODY. Guessing which person an unlinked account belongs
+  // to is the mistake worth avoiding; 033 reports them and leaves them alone.
+  assert.doesNotMatch(membershipMigration, /update public\.app_members set/iu, "033 rewrites no membership");
+  assert.match(membershipMigration, /raise warning 'ATTENTION: % active account/u, "it reports them instead");
+
+  // The four concepts stay where they were. 033 adds no fifth home for any.
+  assert.doesNotMatch(membershipMigration, /add column/iu, "033 adds no column");
+  assert.match(membershipMigration, /is_family_contributor/u, "contributor eligibility is still on people");
   assert.ok(migrationFiles.includes(contributorMigrationName), "the contributor migration is still present");
   assert.ok(migrationFiles.includes(budgetMigrationName), "the budget reminder migration is still present");
 

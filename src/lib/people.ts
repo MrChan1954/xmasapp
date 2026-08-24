@@ -35,6 +35,46 @@
  *   is exactly what deriving history from event participation would do.
  */
 
+/**
+ * A person's ACCOUNT, which is a different fact about them from their identity.
+ *
+ * FOUR CONCEPTS, FOUR PLACES, and this type is only about the middle two:
+ *
+ *   PERSON       a durable family record. Grandma is one and always will be.
+ *   MEMBER       an account that can sign in. Most people do not need one.
+ *   CONTRIBUTOR  eligible to share the cost of gifts. Recorded on the PERSON,
+ *                so somebody can be a contributor with no account at all.
+ *   ADMIN        structural administration. A property of the membership.
+ *
+ * Collapsing any pair of these into one boolean is the mistake this type exists
+ * to make hard to write.
+ */
+export type PersonAccount = {
+  /** "none" -- no membership row at all, which is the normal state. */
+  status: "none" | "invited" | "active" | "disabled";
+  /** True only for a membership whose role is admin. Never inferred. */
+  isAdmin: boolean;
+};
+
+/**
+ * What a membership row means, worked out once so no screen has to.
+ *
+ * "invited" is a real and distinct state: an admin has created the membership
+ * with an email and nobody has signed in against it yet, so its user_id is
+ * still null. Showing that as "active" would tell a family somebody has access
+ * they have not actually taken up.
+ */
+export function personAccountFrom(membership: {
+  userId: string | null;
+  active: boolean;
+  role: string;
+} | null): PersonAccount {
+  if (!membership) return { status: "none", isAdmin: false };
+  const isAdmin = membership.role === "admin";
+  if (!membership.active) return { status: "disabled", isAdmin };
+  return { status: membership.userId ? "active" : "invited", isAdmin };
+}
+
 export type PersonDirectoryEntry = {
   personId: string;
   name: string;

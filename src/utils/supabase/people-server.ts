@@ -3,7 +3,7 @@ import "server-only";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { nextBirthdayOccurrence, personBirthdayFromRow } from "@/lib/birthdays.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { groupGiftHistory, type GiftHistoryRow, type PersonDirectoryEntry, type PersonEventHistory } from "@/lib/people.ts";
+import { groupGiftHistory, personAccountFrom, type GiftHistoryRow, type PersonAccount, type PersonDirectoryEntry, type PersonEventHistory } from "@/lib/people.ts";
 import { londonToday } from "./birthdays-server";
 import { createClient } from "./server";
 
@@ -118,6 +118,20 @@ export type PersonProfile = {
    * say so rather than implying nothing was ever planned for them.
    */
   isSelf: boolean;
+  /**
+   * Whether this person can sign in, and whether they administer the family.
+   *
+   * A SEPARATE FACT FROM EVERYTHING ELSE ON THIS TYPE. Being in the directory,
+   * being able to log in, being eligible to chip in and being an administrator
+   * are four different things about one person, and the profile is the screen
+   * that has to show them as four.
+   *
+   * Only an admin is told: reading it requires `admins read all memberships`,
+   * so for anybody else the query returns nothing and this reads "none" --
+   * which is why the screen shows the section to an admin alone rather than
+   * showing everybody a status that would be wrong.
+   */
+  account: PersonAccount;
   isAdmin: boolean;
   canEditBirthdays: boolean;
   today: string;
@@ -155,6 +169,24 @@ export async function loadPersonProfile(personId: string): Promise<PersonProfile
   const person = toEntry(row as Record<string, unknown>);
   const viewerPersonId = (membership.data.person_id as string | null) ?? null;
   const isAdmin = membership.data.role === "admin";
+
+  // The membership, if this reader may see one. Row level security decides:
+  // a member reads only their own row, an admin reads all of them. An error or
+  // an empty result is simply "nothing to show", never an assumption.
+  const membershipRow = await db
+    .from("app_members")
+    .select("user_id,active,role")
+    .eq("person_id", personId)
+    .maybeSingle();
+  const account = personAccountFrom(
+    membershipRow.error || !membershipRow.data
+      ? null
+      : {
+        userId: (membershipRow.data.user_id as string | null) ?? null,
+        active: Boolean(membershipRow.data.active),
+        role: String(membershipRow.data.role),
+      },
+  );
 
   const recipients = await db
     .from("christmas_recipients")
@@ -246,6 +278,7 @@ export async function loadPersonProfile(personId: string): Promise<PersonProfile
     person,
     history: groupGiftHistory(rows),
     isSelf: viewerPersonId !== null && viewerPersonId === person.personId,
+    account,
     isAdmin,
     canEditBirthdays: isAdmin || await viewerIsContributor(db, viewerPersonId),
     today,

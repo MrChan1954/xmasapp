@@ -4,11 +4,19 @@ import { describeDaysAway, describeTurningAge, formatBirthday, nextBirthdayOccur
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventPath, eventTypeMeta, formatEventDate } from "@/lib/events.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { partitionGiftHistory, totalGiftCount, totalSpentPennies, type PersonDirectoryEntry, type PersonEventHistory } from "@/lib/people.ts";
+import { partitionGiftHistory, totalGiftCount, totalSpentPennies, type PersonAccount, type PersonDirectoryEntry, type PersonEventHistory } from "@/lib/people.ts";
 import { formatPennies } from "@/lib/currency";
 import { AppShell, PageHeader } from "../../components/app-shell";
 import { GarlandRule } from "../../components/festive/garland";
-import { Badge, EmptyState } from "../../components/ui";
+import { Badge, ButtonLink, EmptyState } from "../../components/ui";
+
+/** One word each, so the four states are never conflated on screen. */
+const ACCOUNT_LABEL: Record<PersonAccount["status"], string> = {
+  none: "No account",
+  invited: "Invited, not signed in yet",
+  active: "Active",
+  disabled: "Disabled",
+};
 
 /**
  * One person: who they are, and what has actually been bought for them.
@@ -26,6 +34,7 @@ export function PersonProfileScreen({
   person,
   history,
   isSelf,
+  account,
   isAdmin,
   canEditBirthdays,
   today,
@@ -33,6 +42,7 @@ export function PersonProfileScreen({
   person: PersonDirectoryEntry;
   history: PersonEventHistory[];
   isSelf: boolean;
+  account: PersonAccount;
   isAdmin: boolean;
   canEditBirthdays: boolean;
   today: string;
@@ -62,6 +72,47 @@ export function PersonProfileScreen({
           This person is archived. They are not offered when choosing who a new event is for,
           and everything already recorded for them is untouched.
         </p>
+      )}
+
+      {/* WHO THEY ARE, WHETHER THEY CAN SIGN IN, AND WHETHER THEY CHIP IN --
+          shown as the three separate facts they are. Admin only, because
+          nobody else may read a membership row, and showing everybody a status
+          the database refuses to tell them would just be showing them a wrong
+          one. */}
+      {isAdmin && (
+        <section className="mt-6 rounded-2xl border border-line bg-surface p-5">
+          <h2 className="font-display text-lg font-semibold text-ink-900">Access</h2>
+          <dl className="mt-3 space-y-2 text-sm">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4">
+              <dt className="text-ink-600">Account access</dt>
+              <dd className="font-semibold text-ink-900">{ACCOUNT_LABEL[account.status]}</dd>
+            </div>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4">
+              <dt className="text-ink-600">Contributor</dt>
+              <dd className="font-semibold text-ink-900">
+                {person.isFamilyContributor ? "Yes" : "No"}
+              </dd>
+            </div>
+            {account.isAdmin && (
+              <div className="flex flex-wrap items-baseline justify-between gap-x-4">
+                <dt className="text-ink-600">Role</dt>
+                <dd className="font-semibold text-ink-900">Global Admin</dd>
+              </div>
+            )}
+          </dl>
+
+          <p className="mt-3 text-xs leading-5 text-ink-600">
+            {account.status === "none"
+              ? "Most people never need one. An account is only for somebody who signs in — it is not needed to buy for them, or for them to chip in."
+              : "Removing account access keeps this person, their birthday and everything bought for them. The two are separate."}
+          </p>
+
+          <div className="mt-4">
+            <ButtonLink href="/more/family-access" variant="secondary" className="min-h-11">
+              {account.status === "none" ? "Give account access" : "Manage account access"}
+            </ButtonLink>
+          </div>
+        </section>
       )}
 
       {!person.birthday && (

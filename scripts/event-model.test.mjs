@@ -47,6 +47,7 @@ const budgetMigrationCode = budgetMigration.replace(/--[^\n]*/g, "");
 const contributorMigrationName = "202608100030_family_contributors_and_atomic_setup.sql";
 const privacyMigrationName = "202608100031_birthday_privacy_and_contributor_birthday_edits.sql";
 const peopleMigrationName = "202608100032_people_directory.sql";
+const membershipMigrationName = "202608100033_membership_guards.sql";
 const contributorMigration = readFileSync(join(migrationsDirectory, contributorMigrationName), "utf8").replace(/\r\n/gu, "\n");
 const contributorMigrationCode = contributorMigration.replace(/--[^\n]*/g, "");
 const eventMigration = readFileSync(join(migrationsDirectory, eventMigrationName), "utf8").replace(/\r\n/gu, "\n");
@@ -72,7 +73,7 @@ const financialTables = [
 // The migration history is append-only
 // ---------------------------------------------------------------------------
 
-test("migration 032 is the newest migration, and nothing else has been added", () => {
+test("migration 033 is the newest migration, and nothing else has been added", () => {
   // Pinned deliberately. Adding a migration fails this test on purpose, so a
   // schema change cannot land without this file being reviewed and its checks
   // extended to whatever the new migration introduced.
@@ -82,8 +83,8 @@ test("migration 032 is the newest migration, and nothing else has been added", (
   // `scripts/event-administration.test.mjs` and
   // `scripts/birthday-reminders.test.mjs`; what THIS file still owns is that
   // 025 remains the Event layer and that 026 did not disturb it.
-  assert.equal(migrationFiles.at(-1), peopleMigrationName);
-  assert.equal(migrationFiles.length, 32);
+  assert.equal(migrationFiles.at(-1), membershipMigrationName);
+  assert.equal(migrationFiles.length, 33);
   for (const name of [
     eventMigrationName, birthdayMigrationName, reminderMigrationName,
     occasionMigrationName, budgetMigrationName, contributorMigrationName,

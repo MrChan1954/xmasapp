@@ -28,6 +28,7 @@ export default async function PersonPage({ params }: PageProps<"/people/[id]">) 
       person={profile.person}
       history={profile.history}
       isSelf={profile.isSelf}
+      account={profile.account}
       isAdmin={profile.isAdmin}
       canEditBirthdays={profile.canEditBirthdays}
       today={profile.today}
