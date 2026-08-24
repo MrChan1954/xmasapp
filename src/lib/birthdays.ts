@@ -130,6 +130,39 @@ export function daysBetween(from: string, to: string): number {
 }
 
 /**
+ * The same day-of-month, some whole number of CALENDAR months later.
+ *
+ * NOT "30 days". A rolling month is what somebody means by "the next month",
+ * and the two disagree eight times a year:
+ *
+ *   24 August    + 1 month -> 24 September   (31 days later)
+ *   28 February  + 1 month -> 28 March       (28 days later)
+ *   15 December  + 1 month -> 15 January     (a year rollover, no special case)
+ *
+ * SHORT MONTHS CLAMP, exactly as a birthday does. 31 January + 1 month is 28
+ * February, or the 29th in a leap year -- never 2 or 3 March, which is what
+ * `Date`'s own month arithmetic produces and is the classic way a month-long
+ * window silently swallows the first days of the month after next.
+ *
+ * The clamp is the same rule and the same helper as `birthdayOccurrence`'s leap
+ * policy, so the window and the occurrences it contains round dates the same
+ * way rather than nearly the same way.
+ */
+export function addCalendarMonths(isoDate: string, months: number): string | null {
+  const valid = validateDateInput(isoDate);
+  if (!valid.ok || !Number.isInteger(months)) return null;
+
+  const [year, monthIndex, day] = parts(valid.value);
+
+  // Months since year zero, so December -> January carries with no branch.
+  const absolute = year * 12 + monthIndex + months;
+  const targetYear = Math.floor(absolute / 12);
+  const targetMonth = absolute - targetYear * 12 + 1;
+
+  return `${targetYear}-${pad(targetMonth)}-${pad(Math.min(day, daysInMonth(targetMonth, targetYear)))}`;
+}
+
+/**
  * "75 days away", "Tomorrow", "Today".
  *
  * A birthday happening today says so rather than reporting zero days, because
@@ -183,6 +216,19 @@ export const REMINDER_STAGES: Array<{
  * system rather than the glance.
  */
 export const DASHBOARD_BIRTHDAY_LIMIT = 4;
+
+/**
+ * How far ahead the dashboard looks: ONE ROLLING CALENDAR MONTH.
+ *
+ * The front page is for what needs attention now, not for the family's annual
+ * calendar. A birthday five months away is real and worth recording, but it is
+ * not something anybody can act on today, and nineteen people's worth of them
+ * buried the two things that were.
+ *
+ * The whole list stays one tap away behind "All birthdays", which is the full
+ * system rather than the glance -- and nothing is filtered out of THAT.
+ */
+export const DASHBOARD_BIRTHDAY_WINDOW_MONTHS = 1;
 
 /** The person's birthday workspace: their planning, not an event id. */
 export function birthdayWorkspacePath(personId: string): string {
@@ -266,6 +312,37 @@ export function upcomingBirthdays(people: readonly PersonBirthday[], today: stri
     .sort((left, right) =>
       left.next.daysAway - right.next.daysAway
       || left.name.localeCompare(right.name, "en-GB"));
+}
+
+/**
+ * The ones close enough to act on: today, through one calendar month from today.
+ *
+ * BOTH ENDS ARE INCLUDED. A birthday today belongs on the front page more than
+ * any other, and one exactly a month out is the boundary the window is named
+ * after -- excluding it would make "the next month" mean "the next month, minus
+ * the last day", which is not what anybody reading it would assume.
+ *
+ * A PURE FILTER OVER A LIST SOMEBODY ELSE BUILT. It reads `next.date`, which
+ * `upcomingBirthdays` has already resolved from the permanent date, and returns
+ * a new array. It writes nothing, stores nothing, and cannot change a birthday:
+ * the row on `people` is the only record and this never touches it.
+ *
+ * December to January needs no special case, because `addCalendarMonths` has
+ * none either.
+ */
+export function birthdaysWithinWindow(
+  birthdays: readonly UpcomingBirthday[],
+  today: string,
+  months: number = DASHBOARD_BIRTHDAY_WINDOW_MONTHS,
+): UpcomingBirthday[] {
+  const validToday = validateDateInput(today);
+  const end = addCalendarMonths(today, months);
+  if (!validToday.ok || !end) return [];
+
+  // ISO dates compare correctly as strings, which is why every date in this
+  // module is one. No Date is constructed here and no timezone is involved.
+  return birthdays.filter((entry) =>
+    entry.next.date >= validToday.value && entry.next.date <= end);
 }
 
 /** Everyone who has no birthday saved, so the family can see the gaps. */

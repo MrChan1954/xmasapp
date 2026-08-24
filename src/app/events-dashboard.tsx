@@ -6,7 +6,7 @@ import { formatPennies } from "@/lib/currency";
 import { purchaseProgressStatus, type PurchaseProgressStatus } from "@/lib/purchases";
 import type { BirthdayPlanning } from "@/utils/supabase/birthdays-server";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { DASHBOARD_BIRTHDAY_LIMIT, birthdayWorkspacePath, describeDaysAway, formatBirthday, type UpcomingBirthday } from "@/lib/birthdays.ts";
+import { DASHBOARD_BIRTHDAY_LIMIT, birthdayWorkspacePath, birthdaysWithinWindow, describeDaysAway, formatBirthday, type UpcomingBirthday } from "@/lib/birthdays.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventPath, eventTypeMeta, formatEventDate, groupDashboardEvents, type EventSummary } from "@/lib/events.ts";
 import { AppShell, PageHeader } from "./components/app-shell";
@@ -65,7 +65,6 @@ export function EventsDashboard({
   error?: string | null;
 }) {
   const { christmas, special } = groupDashboardEvents(events, today);
-  const nextBirthdays = birthdays.slice(0, DASHBOARD_BIRTHDAY_LIMIT);
   const nothingToShow = christmas.length === 0
     && special.upcoming.length === 0
     && special.past.length === 0
@@ -106,8 +105,8 @@ export function EventsDashboard({
 
       <EventSection title="Christmas" events={christmas} />
       <UpcomingBirthdaysSection
-        birthdays={nextBirthdays}
-        total={birthdays.length}
+        birthdays={birthdays}
+        today={today}
         planningByPerson={planningByPerson}
         isAdmin={isAdmin}
       />
@@ -123,24 +122,42 @@ export function EventsDashboard({
 }
 
 /**
- * The glance: the nearest few birthdays, straight from the permanent dates.
+ * The glance: birthdays close enough to do something about.
  *
- * No event is involved. December to January is handled by the ordering the
- * model already does — the next occurrence is computed from today, so on the
- * 30th of December a birthday on the 3rd of January is two entries above one in
- * the following November.
+ * ONE ROLLING CALENDAR MONTH, not the year. The front page answers "is anything
+ * coming up?", and a birthday in five months answers it with a yes that nobody
+ * can act on. `birthdaysWithinWindow` decides the cut, from the family's own
+ * date; the whole calendar stays one tap away behind "All birthdays".
+ *
+ * Filtering here rather than upstream is deliberate. The section is given every
+ * birthday the family has, so:
+ *
+ *   - the "All N birthdays" link can name the REAL total, not the windowed one;
+ *   - a family whose birthdays are all months away can be told that, instead of
+ *     seeing the same empty state as a family that has recorded none;
+ *   - the dashboard's "nothing planned at all" test still sees the truth.
+ *
+ * No event is involved, and December to January needs no special case: the next
+ * occurrence is computed from today, so on the 30th of December a birthday on
+ * the 3rd of January is four days away and inside the window.
  */
 function UpcomingBirthdaysSection({
   birthdays,
-  total,
+  today,
   planningByPerson,
   isAdmin,
 }: {
+  /** EVERY birthday the family has recorded, ordered by how soon it falls. */
   birthdays: UpcomingBirthday[];
-  total: number;
+  today: string;
   planningByPerson: Record<string, BirthdayPlanning>;
   isAdmin: boolean;
 }) {
+  const withinWindow = birthdaysWithinWindow(birthdays, today);
+  const shown = withinWindow.slice(0, DASHBOARD_BIRTHDAY_LIMIT);
+  // The next one the family has, whether or not it is close enough to show.
+  const nextOfAll = birthdays[0];
+
   return (
     <section className="mt-10">
       <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-2">
@@ -149,21 +166,25 @@ function UpcomingBirthdaysSection({
           href="/birthdays"
           className="min-h-11 text-xs font-semibold tracking-eyebrow text-accent uppercase inline-flex items-center gap-1"
         >
-          {total > birthdays.length ? `All ${total} birthdays` : "All birthdays"}
+          {birthdays.length > shown.length ? `All ${birthdays.length} birthdays` : "All birthdays"}
           <ChevronRight size={14} aria-hidden />
         </Link>
       </div>
       <GarlandRule className="mt-4" />
 
-      {birthdays.length === 0
+      {shown.length === 0
         ? (
           <p className="mt-5 text-sm text-ink-600">
-            No birthdays saved yet. Add them on the Birthdays page and they appear here.
+            {nextOfAll
+              // Nothing to do this month is worth saying plainly, and saying
+              // WHEN stops it reading as a screen that has failed to load.
+              ? `Nothing in the next month. Next up is ${nextOfAll.name} on ${formatBirthday(nextOfAll.birthday.month, nextOfAll.birthday.day)}.`
+              : "No birthdays saved yet. Add them on the Birthdays page and they appear here."}
           </p>
         )
         : (
           <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {birthdays.map((person) => (
+            {shown.map((person) => (
               <BirthdayCard
                 key={person.personId}
                 person={person}

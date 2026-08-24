@@ -8,11 +8,16 @@ import test from "node:test";
 // Checkpoint 4.1: birthdays are a PRODUCT, not a pile of event rows.
 //
 // THE PROPERTY THIS SUITE PROTECTS
-//   A family with twenty birthdays must get twenty entries under "Upcoming
-//   birthdays" -- derived from the permanent dates, whether or not anybody has
+//   A family with twenty birthdays must get twenty entries on the BIRTHDAYS
+//   PAGE -- derived from the permanent dates, whether or not anybody has
 //   planned anything -- and NOT twenty cards among the events. The moment the
 //   root page starts listing occurrences, the two sections that matter get
 //   buried, and nobody would notice from a screenshot of a three-person family.
+//
+//   The dashboard shows a WINDOW on that list: one rolling calendar month, so
+//   the front page carries what can be acted on now. That is a presentation
+//   rule and nothing else -- the twenty are all still there, one tap away, and
+//   the window can never remove one. Both halves are pinned below.
 //
 //   The rest of the file holds the two rules that come with that: exactly two
 //   reminder stages, and an event can only be physically deleted while there is
@@ -173,9 +178,13 @@ test("December rolls into January without anything being recreated", () => {
 test("the dashboard shows a small fixed number, and says where the rest are", () => {
   assert.equal(DASHBOARD_BIRTHDAY_LIMIT, 4);
   const dashboard = read("src", "app", "events-dashboard.tsx");
-  assert.match(dashboard, /birthdays\.slice\(0, DASHBOARD_BIRTHDAY_LIMIT\)/, "the glance is capped");
+  assert.match(dashboard, /\.slice\(0, DASHBOARD_BIRTHDAY_LIMIT\)/, "the glance is capped");
   assert.match(dashboard, /href="\/birthdays"/, "and the full list is one tap away");
-  assert.match(dashboard, /All \$\{total\} birthdays/, "the link says how many there are in total");
+  assert.match(
+    dashboard,
+    /All \$\{birthdays\.length\} birthdays/,
+    "the link counts EVERY birthday, not the windowed few -- it is the way to the full list",
+  );
 
   // The section renders the person's own numbers: date, distance, and Today.
   assert.match(dashboard, /formatBirthday\(person\.birthday\.month, person\.birthday\.day\)/);
@@ -188,6 +197,57 @@ test("the dashboard shows a small fixed number, and says where the rest are", ()
   assert.match(dashboard, /<FinancialProgressBar/u);
   assert.match(dashboard, /Planning not started yet/u, "a clean state when there is no plan");
   assert.match(dashboard, /birthdayWorkspacePath\(person\.personId\)/, "a card opens the PERSON");
+});
+
+test("the dashboard shows one rolling calendar month, not the whole year", () => {
+  const dashboard = read("src", "app", "events-dashboard.tsx");
+
+  // The cut is the shared helper, applied to the family's own date. A local
+  // day-count here would be a second calendar, free to disagree with the model
+  // about what "one month" means in February.
+  assert.match(dashboard, /birthdaysWithinWindow\(birthdays, today\)/u);
+  assert.match(dashboard, /const shown = withinWindow\.slice\(0, DASHBOARD_BIRTHDAY_LIMIT\)/u);
+
+  // No hand-rolled window. Scoped to the SECTION, because the card below it
+  // legitimately compares daysAway to highlight a birthday inside a week --
+  // that is styling, not a cut, and asserting over the whole file would
+  // conflate the two.
+  const section = dashboard.slice(
+    dashboard.indexOf("function UpcomingBirthdaysSection"),
+    dashboard.indexOf("function BirthdayCard"),
+  );
+  assert.ok(section.length > 0, "the section is still its own component");
+  assert.doesNotMatch(section, /\b30\s*\*\s*86_?400|\b30\s*\)?\s*\*\s*24/u, "no thirty-day approximation");
+  assert.doesNotMatch(section, /daysAway\s*<=?\s*\d+/u, "no day-count threshold");
+  assert.doesNotMatch(section, /setMonth\(|getMonth\(\)|new Date\(/u, "no local date arithmetic");
+
+  // The section is handed EVERY birthday, so the link can name the real total
+  // and the empty state can tell "none this month" apart from "none at all".
+  assert.match(dashboard, /birthdays=\{birthdays\}/u);
+  assert.match(dashboard, /Nothing in the next month/u);
+  assert.match(dashboard, /No birthdays saved yet/u);
+});
+
+test("the dashboard window is a view, and the Birthdays page is the record", () => {
+  const dashboard = read("src", "app", "events-dashboard.tsx");
+  const screen = read("src", "app", "birthdays", "birthdays-screen.tsx");
+
+  // /birthdays lists everybody: no window, no cap. It is the full system.
+  assert.match(screen, /upcomingBirthdays\(shown, today\)/u);
+  assert.ok(!screen.includes("birthdaysWithinWindow"), "the full list is never windowed");
+  assert.ok(!screen.includes("DASHBOARD_BIRTHDAY_LIMIT"), "and never capped");
+  assert.match(screen, /peopleWithoutBirthdays/u, "including the people with no date yet");
+
+  // The dashboard's route to it survives.
+  assert.match(dashboard, /href="\/birthdays"/u);
+
+  // Filtering is a read. Nothing on the dashboard writes a birthday, and the
+  // loader it reads from is a select.
+  for (const forbidden of ["delete", "update", ".upsert(", ".insert(", ".rpc("]) {
+    assert.ok(!dashboard.includes(forbidden), `the dashboard must not ${forbidden} anything`);
+  }
+  const loader = read("src", "utils", "supabase", "birthdays-server.ts");
+  assert.ok(!/\.(insert|update|delete|upsert)\(/u.test(loader), "the birthday loader only reads");
 });
 
 test("the root page reads birthdays and events independently", () => {
