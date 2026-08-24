@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarDays, Cake, Pencil } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { birthdayWorkspacePath, describeDaysAway, formatBirthday, isValidBirthday, isValidBirthYear, peopleWithoutBirthdays, upcomingBirthdays, type PersonBirthday } from "@/lib/birthdays.ts";
+import { birthdayWorkspacePath, describeDaysAway, describeTurningAge, formatBirthday, isValidBirthday, isValidBirthYear, peopleWithoutBirthdays, upcomingBirthdays, type PersonBirthday } from "@/lib/birthdays.ts";
 import { describeSupabaseError, describeThrown } from "@/lib/supabase-error";
 import { createClient } from "@/utils/supabase/client";
 import { AppShell, PageHeader } from "../components/app-shell";
@@ -33,13 +33,22 @@ export type BirthdayEventLink = { id: string; name: string };
 export function BirthdaysScreen({
   people,
   birthdayEventsByPersonYear,
-  isAdmin,
+  canEditBirthdays,
   today,
   loadError = null,
 }: {
   people: PersonBirthday[];
   birthdayEventsByPersonYear: Record<string, BirthdayEventLink>;
-  isAdmin: boolean;
+  /**
+   * May this reader maintain birthday DATES?
+   *
+   * A wider door than `isAdmin`, and a narrower one than "signed in": a family
+   * contributor may keep the calendar current without gaining any other
+   * administrative power. Migration 031's `set_person_birthday` enforces the
+   * same rule in the database, so this only decides whether a button is
+   * offered -- never whether the write succeeds.
+   */
+  canEditBirthdays: boolean;
   today: string;
   /** The server could not read the birthdays. Said plainly, not thrown. */
   loadError?: string | null;
@@ -98,9 +107,9 @@ export function BirthdaysScreen({
           className="mt-8"
           illustration="star"
           title="No birthdays have been added yet"
-          body={isAdmin
+          body={canEditBirthdays
             ? "Add a birthday below and it will appear here, with reminders a week and a day before."
-            : "An admin has not added any birthdays yet."}
+            : "Nobody has added any birthdays yet."}
         />
       )}
 
@@ -137,6 +146,12 @@ export function BirthdaysScreen({
                           {describeDaysAway(person.next.daysAway)}
                         </span>
                       </p>
+                      {/* Only where the year of birth is known. */}
+                      {describeTurningAge(person.birthday, person.next.year) && (
+                        <p className="mt-1 text-xs font-semibold text-accent">
+                          {describeTurningAge(person.birthday, person.next.year)}
+                        </p>
+                      )}
                     </div>
                     {person.next.isToday && <Badge tone="success">Today</Badge>}
                   </div>
@@ -148,7 +163,7 @@ export function BirthdaysScreen({
                     <ButtonLink href={birthdayWorkspacePath(person.personId)} variant="tonal" className="min-h-11">
                       {event ? "Open planning" : "Open"}
                     </ButtonLink>
-                    {isAdmin && (
+                    {canEditBirthdays && (
                       <Button variant="ghost" className="min-h-11" onClick={() => { setError(null); setEditing(person); }}>
                         <Pencil size={16} aria-hidden />
                         Edit
@@ -170,7 +185,7 @@ export function BirthdaysScreen({
             {missing.map((person) => (
               <li key={person.personId} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5">
                 <span className="min-w-0 break-words font-semibold text-ink-900">{person.name}</span>
-                {isAdmin
+                {canEditBirthdays
                   ? (
                     <Button variant="ghost" className="min-h-11" onClick={() => { setError(null); setEditing(person); }}>
                       <Cake size={16} aria-hidden />

@@ -203,6 +203,32 @@ test("one action sends one notification however many rows it wrote", () => {
   assert.doesNotMatch(migration, /grant [a-z, ]+ on table public\.notification_events/);
 });
 
+test("the birthday celebrant is removed from their own audience, decided by the database", () => {
+  // Before this, the purchase planner notified everybody who was not the ACTOR
+  // -- and the birthday person is not the actor. A purchase for their birthday
+  // pushed "New purchase for Taylor" to Taylor. The reminder planner had always
+  // excluded them; nothing else had.
+  //
+  // The exclusion is upstream of every planner, so there is no planner left
+  // with a chance to forget it.
+  assert.match(server, /hiddenFromPersonId = subjectRow\?\.event_type === "birthday"/u,
+    "the exclusion must be birthday-only");
+  assert.match(server, /membership\.person_id !== hiddenFromPersonId/u,
+    "and applied where the audience is built");
+
+  // Read through the ADMIN client on purpose. This decides who is left OUT, so
+  // a read that came back empty under the caller's own row level security would
+  // fail open -- which for this rule means telling somebody what they are
+  // getting for their birthday.
+  const call = server.slice(server.indexOf("const [contributors, recipients, memberships, preferences, subject]"));
+  assert.ok(call.length > 0, "the context load must fetch the event's celebrant");
+  const subjectRead = call.slice(0, call.indexOf("]);"));
+  assert.match(subjectRead, /admin\s*\n?\s*\.?from\("events"\)|admin\.from\("events"\)/u,
+    "the celebrant lookup must use the admin client");
+  const eventsLine = subjectRead.slice(subjectRead.indexOf('from("events")') - 40, subjectRead.indexOf('from("events")') + 60);
+  assert.ok(!eventsLine.includes("reader."), "never the caller's own client");
+});
+
 test("owed figures come from the existing engine, never recalculated here", () => {
   assert.match(server, /import \{\s*calculateNetOwedBalances/s);
   assert.match(server, /return calculateNetOwedBalances\(obligations, ledger\);/);

@@ -45,6 +45,7 @@ const budgetMigration = readFileSync(join(migrationsDirectory, budgetMigrationNa
 const budgetMigrationCode = budgetMigration.replace(/--[^\n]*/g, "");
 
 const contributorMigrationName = "202608100030_family_contributors_and_atomic_setup.sql";
+const privacyMigrationName = "202608100031_birthday_privacy_and_contributor_birthday_edits.sql";
 const contributorMigration = readFileSync(join(migrationsDirectory, contributorMigrationName), "utf8");
 const contributorMigrationCode = contributorMigration.replace(/--[^\n]*/g, "");
 const eventMigration = readFileSync(join(migrationsDirectory, eventMigrationName), "utf8");
@@ -70,7 +71,7 @@ const financialTables = [
 // The migration history is append-only
 // ---------------------------------------------------------------------------
 
-test("migration 026 is the newest migration, and nothing else has been added", () => {
+test("migration 031 is the newest migration, and nothing else has been added", () => {
   // Pinned deliberately. Adding a migration fails this test on purpose, so a
   // schema change cannot land without this file being reviewed and its checks
   // extended to whatever the new migration introduced.
@@ -80,10 +81,25 @@ test("migration 026 is the newest migration, and nothing else has been added", (
   // `scripts/event-administration.test.mjs` and
   // `scripts/birthday-reminders.test.mjs`; what THIS file still owns is that
   // 025 remains the Event layer and that 026 did not disturb it.
-  assert.equal(migrationFiles.at(-1), contributorMigrationName);
-  assert.equal(migrationFiles.length, 30);
-  for (const name of [eventMigrationName, birthdayMigrationName, reminderMigrationName, occasionMigrationName, budgetMigrationName]) {
+  assert.equal(migrationFiles.at(-1), privacyMigrationName);
+  assert.equal(migrationFiles.length, 31);
+  for (const name of [
+    eventMigrationName, birthdayMigrationName, reminderMigrationName,
+    occasionMigrationName, budgetMigrationName, contributorMigrationName,
+  ]) {
     assert.ok(migrationFiles.includes(name), `${name} is still present, unedited`);
+  }
+
+  // 031 is birthday self-privacy and contributor birthday edits. It adds
+  // policies, predicates and two triggers -- and touches no table, no column
+  // and no row. If it ever grows a DDL statement against family data, that is a
+  // different kind of migration and belongs in a different review.
+  const privacy = readFileSync(join(migrationsDirectory, privacyMigrationName), "utf8");
+  for (const forbidden of [
+    "drop table", "drop column", "alter table public.purchases",
+    "alter table public.settlements", "delete from public.", "truncate",
+  ]) {
+    assert.ok(!privacy.toLowerCase().includes(forbidden), `031 must not ${forbidden}`);
   }
 });
 

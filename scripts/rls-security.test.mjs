@@ -65,6 +65,9 @@ const budgetMigration = readFileSync(join(migrationsDirectory, budgetMigrationNa
 const contributorMigrationName = "202608100030_family_contributors_and_atomic_setup.sql";
 const contributorMigration = readFileSync(join(migrationsDirectory, contributorMigrationName), "utf8");
 
+const privacyMigrationName = "202608100031_birthday_privacy_and_contributor_birthday_edits.sql";
+const privacyMigration = readFileSync(join(migrationsDirectory, privacyMigrationName), "utf8");
+
 const applicationTables = [
   "christmas_events",
   "people",
@@ -82,8 +85,75 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  assert.equal(migrationFiles.at(-1), contributorMigrationName);
+  assert.equal(migrationFiles.at(-1), privacyMigrationName);
+  assert.ok(migrationFiles.includes(contributorMigrationName), "the contributor migration is still present");
   assert.ok(migrationFiles.includes(budgetMigrationName), "the budget reminder migration is still present");
+
+  // ------------------------------------------------------------------
+  // What 031 introduces, security-wise: it SUBTRACTS from ten read
+  // policies, and subtracting from a policy is how a policy accidentally
+  // stops requiring a membership at all.
+  // ------------------------------------------------------------------
+  const guarded = [
+    "events", "christmas_recipients", "contributors", "recipient_contributions",
+    "gift_ideas", "purchases", "purchase_allocations", "settlements",
+    "payment_receipts", "item_photos",
+  ];
+  for (const table of guarded) {
+    const start = privacyMigration.indexOf(`on public.${table}\nfor select`);
+    assert.ok(start > 0, `031 must rewrite the read policy on ${table}`);
+    const policy = privacyMigration.slice(start, privacyMigration.indexOf(";", start));
+    assert.match(policy, /is_active_app_member\(\)/u,
+      `${table} must still require an active membership -- subtracting must not replace`);
+    assert.match(policy, /not public\.is_own_birthday_/u,
+      `${table} must exclude the reader's own birthday`);
+    assert.match(policy, /to authenticated/u, `${table} must stay closed to anon`);
+  }
+
+  // The predicates decide who sees family money, so they are definer, pinned,
+  // and unreachable from a signed-out session.
+  for (const fn of [
+    "current_person_id", "is_family_contributor_member", "is_own_birthday_event",
+    "is_own_birthday_recipient", "is_own_birthday_purchase", "is_own_birthday_gift_idea",
+  ]) {
+    const start = privacyMigration.indexOf(`create or replace function public.${fn}(`);
+    assert.ok(start > 0, `${fn} must exist`);
+    const body = privacyMigration.slice(start, privacyMigration.indexOf("$$;", start));
+    assert.match(body, /security definer/u, `${fn} runs as definer`);
+    assert.match(body, /set search_path = ''/u, `${fn} must pin search_path`);
+  }
+  assert.match(privacyMigration, /revoke all on function public\.current_person_id\(\) from public, anon;/u);
+  assert.match(privacyMigration, /revoke all on function public\.is_family_contributor_member\(\) from public, anon;/u);
+  assert.match(privacyMigration, /revoke all on function %s from public, anon/u,
+    "the is_own_birthday_* predicates are revoked from anon in a loop");
+
+  // Widening a write path is the other thing 031 does. It must widen exactly
+  // one, and only to contributors -- never to every signed-in member.
+  const redefined = [...privacyMigration.matchAll(/create or replace function public\.(\w+)\(/gu)]
+    .map((match) => match[1])
+    .filter((name) => !name.startsWith("is_") && name !== "current_person_id")
+    .sort();
+  assert.deepEqual(
+    redefined,
+    ["refuse_celebrant_as_own_contributor", "refuse_starting_own_birthday", "set_person_birthday"],
+    "031 may redefine set_person_birthday and its own two triggers, and nothing else",
+  );
+  const birthdayWrite = privacyMigration.slice(
+    privacyMigration.indexOf("create or replace function public.set_person_birthday("),
+  );
+  assert.match(birthdayWrite, /is_app_admin\(\) or public\.is_family_contributor_member\(\)/u);
+  assert.doesNotMatch(
+    birthdayWrite.slice(0, birthdayWrite.indexOf("$$;")),
+    /is_active_app_member\(\)/u,
+    "a birthday date must not become writable by every signed-in member",
+  );
+
+  // And it grants nothing new to a browser on any table.
+  assert.doesNotMatch(
+    privacyMigration,
+    /grant (select|insert|update|delete)[^;]*on table public\.\w+ to (authenticated|anon)/i,
+    "031 must add no table grant",
+  );
 
   // What 030 introduces, security-wise: two more Global Admin write paths.
   // Contributor eligibility decides who may be assigned money, and birthday
@@ -1738,9 +1808,9 @@ test("the UI keeps recipient creation and removal behind Global Admin", () => {
   // asserted here, so weakening either one fails.
   assert.match(
     peoplePage,
-    /const addForm = isAdmin && celebrantPersonId === null && adding \? \(\s*\n\s*<AddForm/,
+    /const addForm = isAdmin && fixedRecipientPersonId === null && adding \? \(\s*\n\s*<AddForm/,
   );
-  assert.match(peoplePage, /const addButton = isAdmin && celebrantPersonId === null \? \(/);
+  assert.match(peoplePage, /const addButton = isAdmin && fixedRecipientPersonId === null \? \(/);
   assert.equal(
     (peoplePage.match(/<AddForm/gu) ?? []).length,
     1,

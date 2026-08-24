@@ -44,6 +44,10 @@ export default async function EventsPage() {
   // default: the prop falls back to {} and every card silently reads
   // "Planning not started yet", however much has actually been planned.
   let planningByPerson: Record<string, BirthdayPlanning> = {};
+  // Which of these birthdays is the reader's own. Row level security has
+  // already removed their own planning from everything above; this is only so
+  // the card can say "it's a surprise" rather than "not started yet".
+  let viewerPersonId: string | null = null;
   let error: string | null = null;
 
   // A birthday list that fails to load must not take the events with it, and
@@ -59,6 +63,7 @@ export default async function EventsPage() {
   if (birthdayResult.status === "fulfilled") {
     birthdays = upcomingBirthdays(birthdayResult.value.people, today);
     planningByPerson = birthdayResult.value.planningByPerson;
+    viewerPersonId = birthdayResult.value.viewerPersonId;
   } else if (!error) {
     error = "The family's birthdays could not be loaded. Check your connection and try again.";
   }
@@ -68,6 +73,7 @@ export default async function EventsPage() {
       events={events}
       birthdays={birthdays}
       planningByPerson={planningByPerson}
+      viewerPersonId={viewerPersonId}
       today={today}
       isAdmin={member.role === "admin"}
       error={error}

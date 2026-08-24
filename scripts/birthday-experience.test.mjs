@@ -8,11 +8,16 @@ import test from "node:test";
 // Checkpoint 4.1: birthdays are a PRODUCT, not a pile of event rows.
 //
 // THE PROPERTY THIS SUITE PROTECTS
-//   A family with twenty birthdays must get twenty entries under "Upcoming
-//   birthdays" -- derived from the permanent dates, whether or not anybody has
+//   A family with twenty birthdays must get twenty entries on the BIRTHDAYS
+//   PAGE -- derived from the permanent dates, whether or not anybody has
 //   planned anything -- and NOT twenty cards among the events. The moment the
 //   root page starts listing occurrences, the two sections that matter get
 //   buried, and nobody would notice from a screenshot of a three-person family.
+//
+//   The dashboard shows a WINDOW on that list: one rolling calendar month, so
+//   the front page carries what can be acted on now. That is a presentation
+//   rule and nothing else -- the twenty are all still there, one tap away, and
+//   the window can never remove one. Both halves are pinned below.
 //
 //   The rest of the file holds the two rules that come with that: exactly two
 //   reminder stages, and an event can only be physically deleted while there is
@@ -23,8 +28,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
 
 const { groupDashboardEvents, isBirthdayOccurrence } = await import("../src/lib/events.ts");
+// The card's state rule is a real function, so it is exercised as one.
+const { birthdayCardState } = await import("../src/lib/birthdays.ts");
 const {
-  DASHBOARD_BIRTHDAY_LIMIT, REMINDER_STAGES, birthdayWorkspacePath,
+  REMINDER_STAGES, birthdayWorkspacePath,
   dueReminderStages, upcomingBirthdays,
 } = await import("../src/lib/birthdays.ts");
 
@@ -170,12 +177,21 @@ test("December rolls into January without anything being recreated", () => {
   assert.equal(onTheDay.next.isToday, true);
 });
 
-test("the dashboard shows a small fixed number, and says where the rest are", () => {
-  assert.equal(DASHBOARD_BIRTHDAY_LIMIT, 4);
+test("the dashboard shows everything in the window, and says where the rest are", () => {
   const dashboard = read("src", "app", "events-dashboard.tsx");
-  assert.match(dashboard, /birthdays\.slice\(0, DASHBOARD_BIRTHDAY_LIMIT\)/, "the glance is capped");
-  assert.match(dashboard, /href="\/birthdays"/, "and the full list is one tap away");
-  assert.match(dashboard, /All \$\{total\} birthdays/, "the link says how many there are in total");
+
+  // THE CAP IS GONE, and must stay gone. A count-based cap and a time-based
+  // window solve the same problem; keeping both meant the fifth birthday in a
+  // busy month -- the one with least time left to plan for -- was the one
+  // hidden. The window is the only rule now.
+  assert.ok(!dashboard.includes("DASHBOARD_BIRTHDAY_LIMIT"), "the four-card cap must not come back");
+  assert.doesNotMatch(dashboard, /shown\.slice\(|withinWindow\.slice\(/u, "and nor may a new one");
+  assert.match(dashboard, /href="\/birthdays"/, "the full list is one tap away");
+  assert.match(
+    dashboard,
+    /All \$\{birthdays\.length\} birthdays/,
+    "the link counts EVERY birthday, not the windowed few -- it is the way to the full list",
+  );
 
   // The section renders the person's own numbers: date, distance, and Today.
   assert.match(dashboard, /formatBirthday\(person\.birthday\.month, person\.birthday\.day\)/);
@@ -188,6 +204,284 @@ test("the dashboard shows a small fixed number, and says where the rest are", ()
   assert.match(dashboard, /<FinancialProgressBar/u);
   assert.match(dashboard, /Planning not started yet/u, "a clean state when there is no plan");
   assert.match(dashboard, /birthdayWorkspacePath\(person\.personId\)/, "a card opens the PERSON");
+});
+
+test("the dashboard shows one rolling calendar month, not the whole year", () => {
+  const dashboard = read("src", "app", "events-dashboard.tsx");
+
+  // The cut is the shared helper, applied to the family's own date. A local
+  // day-count here would be a second calendar, free to disagree with the model
+  // about what "one month" means in February.
+  assert.match(dashboard, /const shown = birthdaysWithinWindow\(birthdays, today\);/u);
+
+  // No hand-rolled window. Scoped to the SECTION, because the card below it
+  // legitimately compares daysAway to highlight a birthday inside a week --
+  // that is styling, not a cut, and asserting over the whole file would
+  // conflate the two.
+  const section = dashboard.slice(
+    dashboard.indexOf("function UpcomingBirthdaysSection"),
+    dashboard.indexOf("function BirthdayCard"),
+  );
+  assert.ok(section.length > 0, "the section is still its own component");
+  assert.doesNotMatch(section, /\b30\s*\*\s*86_?400|\b30\s*\)?\s*\*\s*24/u, "no thirty-day approximation");
+  assert.doesNotMatch(section, /daysAway\s*<=?\s*\d+/u, "no day-count threshold");
+  assert.doesNotMatch(section, /setMonth\(|getMonth\(\)|new Date\(/u, "no local date arithmetic");
+
+  // The section is handed EVERY birthday, so the link can name the real total
+  // and the empty state can tell "none this month" apart from "none at all".
+  assert.match(dashboard, /birthdays=\{birthdays\}/u);
+  assert.match(dashboard, /Nothing in the next month/u);
+  assert.match(dashboard, /No birthdays saved yet/u);
+});
+
+test("the dashboard window is a view, and the Birthdays page is the record", () => {
+  const dashboard = read("src", "app", "events-dashboard.tsx");
+  const screen = read("src", "app", "birthdays", "birthdays-screen.tsx");
+
+  // /birthdays lists everybody: no window, no cap. It is the full system.
+  assert.match(screen, /upcomingBirthdays\(shown, today\)/u);
+  assert.ok(!screen.includes("birthdaysWithinWindow"), "the full list is never windowed");
+  assert.ok(!screen.includes("DASHBOARD_BIRTHDAY_LIMIT"), "and never capped");
+  assert.match(screen, /peopleWithoutBirthdays/u, "including the people with no date yet");
+
+  // The dashboard's route to it survives.
+  assert.match(dashboard, /href="\/birthdays"/u);
+
+  // Filtering is a read. Nothing on the dashboard writes a birthday, and the
+  // loader it reads from is a select.
+  for (const forbidden of ["delete", "update", ".upsert(", ".insert(", ".rpc("]) {
+    assert.ok(!dashboard.includes(forbidden), `the dashboard must not ${forbidden} anything`);
+  }
+  const loader = read("src", "utils", "supabase", "birthdays-server.ts");
+  assert.ok(!/\.(insert|update|delete|upsert)\(/u.test(loader), "the birthday loader only reads");
+});
+
+// ---------------------------------------------------------------------------
+// Your own birthday
+//
+// The rule: the celebrant never sees the planning for their own birthday, and
+// admin does not beat it. Migration 031 enforces it in row level security --
+// these pin the APPLICATION half, which is that the app explains the state
+// instead of showing an empty or misleading one.
+// ---------------------------------------------------------------------------
+
+/**
+ * The reader's own birthday card, field by field.
+ *
+ * The live regression this replaces: the card said "Planning not started yet"
+ * and offered "START PLANNING →" for the reader's own birthday -- an invitation
+ * to buy your own present, and a statement about your own presents that might
+ * well have been false.
+ *
+ * These read the card's SOURCE and slice it into its three arms, so each
+ * assertion is about the branch that actually renders, not about the file
+ * happening to contain a word somewhere.
+ */
+function birthdayCardArms() {
+  const dashboard = read("src", "app", "events-dashboard.tsx");
+  const card = dashboard
+    .slice(dashboard.indexOf("function BirthdayCard"))
+    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, "");
+
+  // Sliced in ORDER, each arm found after the one before it. Searching the
+  // whole component for ": planning" matched the `hasPlanning: planning`
+  // argument up in the state derivation and silently produced an empty arm --
+  // which every "must not contain" assertion would then have passed.
+  const branch = card.indexOf("{isPrivate");
+  const planned = card.indexOf(": planning", branch);
+  const notStarted = card.indexOf("Planning not started yet", planned);
+  const cta = card.indexOf("{!isPrivate &&", notStarted);
+  assert.ok(branch > 0 && planned > branch && notStarted > planned && cta > notStarted,
+    "the card must still have a private arm, a planned arm, a not-started arm and a gated call to action");
+
+  return {
+    card,
+    header: card.slice(card.indexOf('<div className="flex items-start gap-3">'), branch),
+    privateArm: card.slice(branch, planned),
+    plannedArm: card.slice(planned, notStarted),
+    action: card.slice(cta),
+  };
+}
+
+test("the self card says the required sentence, and never the not-started one", () => {
+  const { privateArm } = birthdayCardArms();
+  assert.match(privateArm, /SELF_PRIVATE_HEADLINE/u, "the headline is the shared constant");
+  assert.match(privateArm, /SELF_PRIVATE_DETAIL/u);
+  assert.ok(!privateArm.includes("Planning not started yet"), "and never the not-started sentence");
+});
+
+test("the self card offers nothing to press", () => {
+  const { action, privateArm } = birthdayCardArms();
+
+  // The whole action row is inside `!isPrivate`, so there is no "Start
+  // planning" AND no "Open" on the reader's own birthday.
+  assert.match(action, /\{!isPrivate && \(/u, "the call to action is gated on the state");
+  assert.ok(!privateArm.includes("Start planning"), "no invitation to plan your own present");
+  assert.ok(!privateArm.includes("Open →"), "and nothing that promises what cannot be shown");
+});
+
+test("the self card hides every financial figure", () => {
+  const { privateArm } = birthdayCardArms();
+  for (const forbidden of [
+    "formatPennies", "budgetPennies", "spentPennies", "FinancialProgressBar",
+    "giftCount", "ideaCount", "purchaseProgressStatus", "Badge",
+  ]) {
+    assert.ok(!privateArm.includes(forbidden), `the private card must not render ${forbidden}`);
+  }
+});
+
+test("nothing financial is even COMPUTED for the reader's own card", () => {
+  // Stronger than "the JSX does not use it". A badge derived from planning the
+  // reader may not see is a leak waiting for somebody to move one line.
+  const { card } = birthdayCardArms();
+  assert.match(card, /const state = birthdayCardState\(\{ isSelf, hasPlanning: planning !== undefined \}\)/u);
+  assert.match(card, /const status: PurchaseProgressStatus \| null = state === "planned" && planning/u);
+  assert.match(card, /const hasBudget = state === "planned" &&/u);
+});
+
+test("the self card still shows the date, the days away and the age", () => {
+  // These are not gift-planning data. The date is on the family calendar and
+  // the age follows from it, so keeping them from the reader would be pointless
+  // as well as unfriendly.
+  const { header, card } = birthdayCardArms();
+  assert.match(header, /formatBirthday\(person\.birthday\.month, person\.birthday\.day\)/u);
+  assert.match(header, /describeDaysAway\(person\.next\.daysAway\)/u);
+  assert.match(header, /\{turning &&/u, "the age is rendered in the shared header");
+
+  // The header is ABOVE the private/planned branch, so all three appear
+  // whatever the state -- which is exactly why they are asserted here.
+  assert.ok(card.indexOf("{turning &&") < card.indexOf("{isPrivate"), "the age precedes the state branch");
+  assert.match(card, /const turning = describeTurningAge\(person\.birthday, person\.next\.year\);/u,
+    "and it comes from the occurrence chosen for this card, not from today");
+});
+
+test("the private card is identical whether or not planning exists", () => {
+  // The point of the state: for the reader's own birthday, planning makes no
+  // difference at all, so the card cannot leak it by the branch it takes.
+  const { privateArm } = birthdayCardArms();
+  assert.ok(!privateArm.includes("planning"), "the private arm must not consult planning at all");
+
+  // And the model agrees, which is what the component relies on.
+  assert.equal(
+    birthdayCardState({ isSelf: true, hasPlanning: true }),
+    birthdayCardState({ isSelf: true, hasPlanning: false }),
+  );
+});
+
+test("the rule is the linked person id, never a name, an email or a position", () => {
+  const dashboard = read("src", "app", "events-dashboard.tsx");
+  assert.match(dashboard, /isSelf=\{person\.personId === viewerPersonId\}/u);
+
+  const card = dashboard.slice(dashboard.indexOf("function BirthdayCard"));
+  for (const wrong of ["person.name ===", "email", "index === 0", '=== "Taylor"']) {
+    assert.ok(!card.includes(wrong), `self must not be identified by ${wrong}`);
+  }
+
+  // And the id comes from the membership row on the server.
+  const loader = read("src", "utils", "supabase", "birthdays-server.ts");
+  assert.match(loader, /select\("role,person_id"\)/u);
+  assert.match(loader, /const viewerPersonId = \(membership\.data\.person_id as string \| null\) \?\? null;/u);
+});
+
+test("the loader will not carry the reader's own planning even if RLS let it through", () => {
+  // Two independent locks. Row level security is the authority, but it has
+  // nobody to hide the birthday FROM when a membership has no person linked --
+  // and that is precisely when the dashboard also cannot tell it is self. This
+  // guard fails in the safe direction in that case.
+  const loader = read("src", "utils", "supabase", "birthdays-server.ts");
+  assert.match(loader, /if \(row\.celebrant_person_id === viewerPersonId\) continue;/u);
+
+  const guard = loader.indexOf("if (row.celebrant_person_id === viewerPersonId) continue;");
+  const assignment = loader.indexOf("planningByPerson[row.celebrant_person_id as string] = {");
+  assert.ok(guard > 0 && assignment > guard, "the guard must come before the assignment");
+});
+
+test("everybody else's card is untouched by all of this", () => {
+  const { plannedArm, action, card } = birthdayCardArms();
+
+  // Planned: the money is still there in full.
+  for (const shown of ["formatPennies", "budgetPennies", "spentPennies", "FinancialProgressBar", "giftCount", "ideaCount"]) {
+    assert.ok(plannedArm.includes(shown), `a planned birthday must still show ${shown}`);
+  }
+
+  // Unplanned: still says so, and still invites an admin to start it.
+  assert.match(card, /Planning not started yet/u);
+  assert.match(action, /planning \? "Open →" : isAdmin \? "Start planning →" : "Open →"/u);
+});
+
+test("the resolver shows a privacy screen for your own birthday, and never redirects into it", () => {
+  const page = read("src", "app", "birthdays", "[personId]", "page.tsx");
+
+  // Checked BEFORE the redirect. Sending the celebrant to their own Event Home
+  // is precisely the disclosure the rule exists to prevent.
+  const selfCheck = page.indexOf("workspace.isSelf");
+  const redirectCall = page.indexOf("redirect(destination)");
+  assert.ok(selfCheck > 0, "the resolver must ask whether this is the reader's own birthday");
+  assert.ok(redirectCall > 0, "and still redirect for everybody else's");
+  assert.ok(selfCheck < redirectCall, "the privacy check must come first");
+
+  assert.match(page, /<OwnBirthdayScreen/u);
+
+  // A 404 would read as a broken app to the one person certain to try it.
+  const selfArm = page.slice(selfCheck, redirectCall);
+  assert.ok(!selfArm.includes("notFound()"), "their own birthday is not an error");
+  assert.ok(!selfArm.includes("redirect("), "and not a redirect");
+});
+
+test("the privacy screen says why, and shows only what is not a secret", () => {
+  const screen = read("src", "app", "birthdays", "[personId]", "own-birthday-screen.tsx");
+
+  assert.match(screen, /can&apos;t see what you&apos;re getting/u);
+  assert.match(screen, /so your presents stay a surprise/u);
+  assert.match(screen, /applies to admins too/iu, "the rule outranks admin, and says so");
+
+  // The date and the age are theirs. The money is not.
+  assert.match(screen, /formatBirthday\(birthday\.month, birthday\.day\)/u);
+  assert.match(screen, /describeTurningAge\(/u);
+  for (const forbidden of ["formatPennies", "budgetPennies", "spentPennies", "FinancialProgressBar", "giftCount", "ideaCount"]) {
+    assert.ok(!screen.includes(forbidden), `the privacy screen must not render ${forbidden}`);
+  }
+  assert.ok(!screen.includes("StartPlanningScreen"), "and must not offer to start it");
+});
+
+test("the loader refuses to hand the celebrant a workspace or a contributor list", () => {
+  const loader = read("src", "utils", "supabase", "birthdays-server.ts");
+
+  assert.match(loader, /const isSelf = membership\.data\.person_id !== null && membership\.data\.person_id === person\.personId;/u);
+  assert.match(loader, /if \(isSelf \|\| events\.length === 0\) \{/u,
+    "their own birthday takes the same empty path as an unplanned one");
+  assert.match(loader, /eligibleContributors: isSelf \? \[\] : eligibleContributors/u,
+    "nobody is offered as a contributor to the reader's own birthday");
+});
+
+test("the dashboard card says it is a surprise rather than 'not started'", () => {
+  const dashboard = read("src", "app", "events-dashboard.tsx");
+
+  assert.match(dashboard, /isSelf=\{person\.personId === viewerPersonId\}/u);
+  assert.match(dashboard, /SELF_PRIVATE_HEADLINE/u, "the required sentence, from the shared constant");
+
+  // "Planning not started yet" would be a claim about their own presents that
+  // may well be false, so the surprise arm comes first.
+  const card = dashboard
+    .slice(dashboard.indexOf("function BirthdayCard"))
+    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, "");
+  assert.ok(card.indexOf("{isSelf") < card.indexOf("Planning not started yet"));
+
+  // And the status badge cannot be computed from planning they must not see.
+  assert.match(dashboard, /const status: PurchaseProgressStatus | null = state === "planned" && planning/u);
+});
+
+test("the viewer's own person is read on the server, never guessed in the browser", () => {
+  const loader = read("src", "utils", "supabase", "birthdays-server.ts");
+  assert.match(loader, /viewerPersonId: string \| null;/u);
+  assert.match(loader, /select\("role,person_id"\)/u, "the membership row is the source");
+
+  const page = read("src", "app", "page.tsx");
+  assert.match(page, /viewerPersonId = birthdayResult\.value\.viewerPersonId;/u);
+  assert.match(page, /viewerPersonId=\{viewerPersonId\}/u);
+
+  // A signed-out or membership-less render must not default to "somebody".
+  assert.match(loader, /viewerPersonId: null, canEditBirthdays: false, isAdmin: false, today,/u);
 });
 
 test("the root page reads birthdays and events independently", () => {

@@ -1,7 +1,7 @@
 import "server-only";
 
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { nextBirthdayOccurrence, type Birthday, type PersonBirthday } from "@/lib/birthdays.ts";
+import { nextBirthdayOccurrence, personBirthdayFromRow, type PersonBirthday } from "@/lib/birthdays.ts";
 import { createClient } from "./server";
 
 /**
@@ -26,6 +26,28 @@ export type FamilyBirthdays = {
    * an error, and must never be shown as "£0 of £0".
    */
   planningByPerson: Record<string, BirthdayPlanning>;
+  /**
+   * The reader's own person, when their account is linked to one.
+   *
+   * Used for one thing: a card about the reader's OWN birthday says so, rather
+   * than saying "planning not started". Row level security has already removed
+   * their own birthday's event from everything above, so the absence is real --
+   * but "nobody has started planning" and "you are not allowed to know" are
+   * different sentences, and showing the wrong one would be a small lie.
+   */
+  viewerPersonId: string | null;
+  /**
+   * May the reader add or change a permanent birthday date?
+   *
+   * A Global Admin always may; a family contributor may too, since keeping the
+   * calendar current is family admin rather than financial administration.
+   *
+   * THE DATABASE IS THE AUTHORITY -- migration 031's `set_person_birthday`
+   * checks the same two things itself, and a browser that ignored this would
+   * simply be refused. This exists so the app does not offer a button that is
+   * going to fail.
+   */
+  canEditBirthdays: boolean;
   isAdmin: boolean;
   /** Today, in the family's own timezone. Never derived from a UTC instant. */
   today: string;
@@ -62,11 +84,14 @@ export async function loadFamilyBirthdays(): Promise<FamilyBirthdays> {
 
   const { data: auth } = await db.auth.getUser();
   if (!auth.user) {
-    return { people: [], birthdayEventsByPersonYear: {}, planningByPerson: {}, isAdmin: false, today };
+    return {
+      people: [], birthdayEventsByPersonYear: {}, planningByPerson: {},
+      viewerPersonId: null, canEditBirthdays: false, isAdmin: false, today,
+    };
   }
 
   const [membership, peopleResult, eventResult] = await Promise.all([
-    db.from("app_members").select("role").eq("user_id", auth.user.id).eq("active", true).maybeSingle(),
+    db.from("app_members").select("role,person_id").eq("user_id", auth.user.id).eq("active", true).maybeSingle(),
     db.from("people").select("id,name,birthday_month,birthday_day,birthday_year,is_family_contributor").order("name"),
     // Only birthdays, only active ones: an archived event must not present
     // itself as "this year is already set up".
@@ -77,22 +102,23 @@ export async function loadFamilyBirthdays(): Promise<FamilyBirthdays> {
   ]);
 
   if (!membership.data) {
-    return { people: [], birthdayEventsByPersonYear: {}, planningByPerson: {}, isAdmin: false, today };
+    return {
+      people: [], birthdayEventsByPersonYear: {}, planningByPerson: {},
+      viewerPersonId: null, canEditBirthdays: false, isAdmin: false, today,
+    };
   }
   if (peopleResult.error) throw new Error("The family's birthdays could not be loaded.");
 
+  // The shared conversion, not a second copy of it. The year of birth is the
+  // only input to "Turning 30", and it is exactly the field a hand-written
+  // mapping drops.
   const people: FamilyPerson[] = (peopleResult.data ?? []).map((row) => ({
-    personId: row.id as string,
-    name: row.name as string,
+    ...personBirthdayFromRow(row),
     isFamilyContributor: Boolean(row.is_family_contributor),
-    birthday: row.birthday_month === null || row.birthday_day === null
-      ? null
-      : {
-        month: Number(row.birthday_month),
-        day: Number(row.birthday_day),
-        year: row.birthday_year === null ? null : Number(row.birthday_year),
-      } satisfies Birthday,
   }));
+
+  const viewerPersonId = (membership.data.person_id as string | null) ?? null;
+  const isAdmin = membership.data.role === "admin";
 
   const birthdayEventsByPersonYear: Record<string, { id: string; name: string }> = {};
   for (const row of eventResult.data ?? []) {
@@ -184,6 +210,14 @@ export async function loadFamilyBirthdays(): Promise<FamilyBirthdays> {
 
     for (const row of wantedEvents) {
       const id = row.id as string;
+      // BELT AND BRACES. Migration 031 already removed the reader's own
+      // birthday from `eventResult`, so this cannot normally be reached. It is
+      // here because the consequence of it being reached -- somebody being
+      // shown their own presents -- is bad enough to be worth two locks, and
+      // because the two locks fail independently: this one holds even if the
+      // membership has no person linked and row level security therefore has
+      // nobody to hide the birthday from.
+      if (row.celebrant_person_id === viewerPersonId) continue;
       planningByPerson[row.celebrant_person_id as string] = {
         eventId: id,
         eventName: row.name as string,
@@ -200,7 +234,10 @@ export async function loadFamilyBirthdays(): Promise<FamilyBirthdays> {
     people,
     birthdayEventsByPersonYear,
     planningByPerson,
-    isAdmin: membership.data.role === "admin",
+    viewerPersonId,
+    canEditBirthdays: isAdmin
+      || people.some((entry) => entry.personId === viewerPersonId && entry.isFamilyContributor),
+    isAdmin,
     today,
   };
 }
@@ -252,6 +289,16 @@ export type BirthdayOccurrence = {
 
 export type BirthdayWorkspace = {
   person: PersonBirthday;
+  /**
+   * Is this the reader's own birthday?
+   *
+   * When it is, there is nothing to show and nothing to start: row level
+   * security has already hidden every occurrence from them, so `current` is
+   * null and `previous` is empty however much has been planned. Without this
+   * flag the page could not tell that apart from a birthday nobody has touched,
+   * and would offer the celebrant a Start Planning form for their own present.
+   */
+  isSelf: boolean;
   /** The occurrence the family is planning for now, if one has been started. */
   current: BirthdayOccurrence | null;
   /** The year `current` is for, whether or not planning has started. */
@@ -312,7 +359,7 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
   if (!auth.user) return null;
 
   const [membership, personResult, eventResult] = await Promise.all([
-    db.from("app_members").select("role").eq("user_id", auth.user.id).eq("active", true).maybeSingle(),
+    db.from("app_members").select("role,person_id").eq("user_id", auth.user.id).eq("active", true).maybeSingle(),
     db.from("people").select("id,name,birthday_month,birthday_day,birthday_year").eq("id", personId).maybeSingle(),
     db.from("events")
       .select("id,name,event_date,status")
@@ -323,17 +370,7 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
   if (!membership.data || personResult.error || !personResult.data) return null;
 
   const row = personResult.data;
-  const person: PersonBirthday = {
-    personId: row.id as string,
-    name: row.name as string,
-    birthday: row.birthday_month === null || row.birthday_day === null
-      ? null
-      : {
-        month: Number(row.birthday_month),
-        day: Number(row.birthday_day),
-        year: row.birthday_year === null ? null : Number(row.birthday_year),
-      } satisfies Birthday,
-  };
+  const person: PersonBirthday = personBirthdayFromRow(row);
 
   const next = person.birthday ? nextBirthdayOccurrence(person.birthday, today) : null;
   const currentYear = next ? next.year : currentYearOf(today);
@@ -357,10 +394,18 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
   }>;
 
   const isAdmin = membership.data.role === "admin";
-  if (events.length === 0) {
+  // The surprise rule outranks every other permission, admin included. It is
+  // enforced in row level security -- this is the app noticing, so it can say
+  // something kind instead of an empty screen.
+  const isSelf = membership.data.person_id !== null && membership.data.person_id === person.personId;
+
+  if (isSelf || events.length === 0) {
     return {
-      person, current: null, currentYear, nextOccurrenceDate, eligibleContributors,
-      previous: [], unused: [], isAdmin, today,
+      person, current: null, currentYear, nextOccurrenceDate,
+      // Nobody is offered as a contributor to the reader's own birthday,
+      // because the reader is never setting it up.
+      eligibleContributors: isSelf ? [] : eligibleContributors,
+      previous: [], unused: [], isSelf, isAdmin, today,
     };
   }
 
@@ -473,6 +518,6 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
 
   return {
     person, current, currentYear, nextOccurrenceDate, eligibleContributors,
-    previous, unused, isAdmin, today,
+    previous, unused, isSelf, isAdmin, today,
   };
 }
