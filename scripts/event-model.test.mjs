@@ -46,6 +46,7 @@ const budgetMigrationCode = budgetMigration.replace(/--[^\n]*/g, "");
 
 const contributorMigrationName = "202608100030_family_contributors_and_atomic_setup.sql";
 const privacyMigrationName = "202608100031_birthday_privacy_and_contributor_birthday_edits.sql";
+const peopleMigrationName = "202608100032_people_directory.sql";
 const contributorMigration = readFileSync(join(migrationsDirectory, contributorMigrationName), "utf8").replace(/\r\n/gu, "\n");
 const contributorMigrationCode = contributorMigration.replace(/--[^\n]*/g, "");
 const eventMigration = readFileSync(join(migrationsDirectory, eventMigrationName), "utf8").replace(/\r\n/gu, "\n");
@@ -71,7 +72,7 @@ const financialTables = [
 // The migration history is append-only
 // ---------------------------------------------------------------------------
 
-test("migration 031 is the newest migration, and nothing else has been added", () => {
+test("migration 032 is the newest migration, and nothing else has been added", () => {
   // Pinned deliberately. Adding a migration fails this test on purpose, so a
   // schema change cannot land without this file being reviewed and its checks
   // extended to whatever the new migration introduced.
@@ -81,14 +82,23 @@ test("migration 031 is the newest migration, and nothing else has been added", (
   // `scripts/event-administration.test.mjs` and
   // `scripts/birthday-reminders.test.mjs`; what THIS file still owns is that
   // 025 remains the Event layer and that 026 did not disturb it.
-  assert.equal(migrationFiles.at(-1), privacyMigrationName);
-  assert.equal(migrationFiles.length, 31);
+  assert.equal(migrationFiles.at(-1), peopleMigrationName);
+  assert.equal(migrationFiles.length, 32);
   for (const name of [
     eventMigrationName, birthdayMigrationName, reminderMigrationName,
     occasionMigrationName, budgetMigrationName, contributorMigrationName,
+    privacyMigrationName,
   ]) {
     assert.ok(migrationFiles.includes(name), `${name} is still present, unedited`);
   }
+
+  // 032 is the People directory: one nullable column and two functions. It
+  // rewrites no row, and a nullable column means no backfill can go wrong.
+  const people = readFileSync(join(migrationsDirectory, peopleMigrationName), "utf8").replace(/\r\n/gu, "\n");
+  for (const forbidden of ["drop table", "drop column", "delete from public.", "truncate", "update public.purchases"]) {
+    assert.ok(!people.toLowerCase().includes(forbidden), `032 must not ${forbidden}`);
+  }
+  assert.match(people, /add column if not exists archived_at timestamptz;/u, "nullable, so nothing needs backfilling");
 
   // 031 is birthday self-privacy and contributor birthday edits. It adds
   // policies, predicates and two triggers -- and touches no table, no column

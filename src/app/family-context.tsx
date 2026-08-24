@@ -13,7 +13,7 @@ import { createClient } from "@/utils/supabase/client";
 import { isAuthRoute } from "./components/nav-items";
 import { eventRealtimeSources, useRealtimeRefresh } from "./components/use-realtime-refresh";
 
-export type Person = { id: string; name: string; budgetPennies: number; active: boolean; spentPennies: number | null; giftCount: number | null; ideaCount: number | null };
+export type Person = { id: string; personId: string; name: string; budgetPennies: number; active: boolean; spentPennies: number | null; giftCount: number | null; ideaCount: number | null };
 export type SaveRecipientInput = {
   id?: string;
   name: string;
@@ -21,7 +21,7 @@ export type SaveRecipientInput = {
   allocations: RecipientAllocation[];
 };
 export type ActiveEvent = { id: string; name: string; type: string; eventDate: string; status: string; year: number | null };
-type Family = { eventId: string | null; event: ActiveEvent | null; people: Person[]; loading: boolean; error: string | null; role: "admin" | "member" | null; isAdmin: boolean; saveRecipient: (input: SaveRecipientInput) => Promise<void>; archive: (id: string) => Promise<void>; restore: (id: string) => Promise<void>; setIdeaCount: (id: string, count: number) => void; setPurchaseMetrics: (id: string, spentPennies: number, count: number) => void; refresh: (quiet?: boolean) => Promise<void> };
+type Family = { eventId: string | null; event: ActiveEvent | null; people: Person[]; loading: boolean; error: string | null; role: "admin" | "member" | null; isAdmin: boolean; saveRecipient: (input: SaveRecipientInput) => Promise<void>; addExistingPerson: (input: { personId: string; name: string; budgetPennies: number; allocations: RecipientAllocation[] }) => Promise<void>; archive: (id: string) => Promise<void>; restore: (id: string) => Promise<void>; setIdeaCount: (id: string, count: number) => void; setPurchaseMetrics: (id: string, spentPennies: number, count: number) => void; refresh: (quiet?: boolean) => Promise<void> };
 const Context = createContext<Family | null>(null);
 
 /**
@@ -114,7 +114,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
         );
       }
     }
-    setPeople(recipients.data.flatMap((row) => { const name = names.get(row.person_id); return name ? [{ id: row.id, name, budgetPennies: row.budget_pennies, active: row.active, spentPennies: purchaseRows.error ? null : (spentByRecipient.get(row.id) ?? 0), giftCount: purchaseRows.error ? null : (purchaseCounts.get(row.id) ?? 0), ideaCount: ideaRows.error ? null : (ideaCounts.get(row.id) ?? 0) }] : []; }));
+    setPeople(recipients.data.flatMap((row) => { const name = names.get(row.person_id); return name ? [{ id: row.id, personId: row.person_id, name, budgetPennies: row.budget_pennies, active: row.active, spentPennies: purchaseRows.error ? null : (spentByRecipient.get(row.id) ?? 0), giftCount: purchaseRows.error ? null : (purchaseCounts.get(row.id) ?? 0), ideaCount: ideaRows.error ? null : (ideaCounts.get(row.id) ?? 0) }] : []; }));
     const metricErrors = [
       ideaRows.error ? "Gift idea counts are unavailable until the Gift Ideas migration is applied." : null,
       purchaseRows.error ? "Purchase totals are unavailable until the Purchases migration is applied." : null,
@@ -144,6 +144,57 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     }
     return validName.value;
   };
+  /**
+   * Add somebody who ALREADY EXISTS in the family directory to this event.
+   *
+   * THE BUG THIS REPLACES. `save_christmas_recipient_with_contributions` takes
+   * a NAME, and when it is given no recipient id it runs
+   * `insert into public.people (name)` unconditionally -- no lookup, no match.
+   * So typing "Eden" on Christmas and "Eden" on Halloween created TWO Eden
+   * rows, each with its own birthday and its own history, and the family had no
+   * way to see they were the same child.
+   *
+   * Two calls, in order, because the existing functions divide the work that
+   * way: `add_event_recipient` links an EXISTING person to the event at a zero
+   * budget -- the same call Event Settings has always made -- and then the
+   * budget and the contribution plan are written by the same atomic function as
+   * before, this time with a recipient id so it takes its update path and
+   * creates nobody.
+   */
+  const addExistingPerson = async ({ personId, name, budgetPennies, allocations }: {
+    personId: string;
+    name: string;
+    budgetPennies: number;
+    allocations: RecipientAllocation[];
+  }) => {
+    const validPerson = validateUuid(personId, "Choose who this is for.");
+    if (!validPerson.ok) throw new Error(validPerson.error);
+    validatePersonValues(null, name, budgetPennies);
+    const validAllocations = validateRecipientAllocationSnapshot(budgetPennies, allocations);
+    if (!validAllocations.ok) throw new Error(validAllocations.error);
+    if (!eventId) throw new Error("Open an event before adding a person.");
+
+    const db = createClient();
+    const added = await db.rpc("add_event_recipient", {
+      p_event_id: eventId,
+      p_person_id: validPerson.value,
+    });
+    if (added.error) { setError("That person could not be added to this event."); throw new Error("add failed"); }
+    const recipientId = (added.data as { id?: string } | null)?.id;
+    if (!recipientId) { setError("That person could not be added to this event."); throw new Error("add failed"); }
+
+    await mutate(db.rpc("save_christmas_recipient_with_contributions", {
+      p_christmas_recipient_id: recipientId,
+      p_christmas_event_id: eventId,
+      p_name: name,
+      p_budget_pennies: budgetPennies,
+      p_allocations: validAllocations.value.map((allocation) => ({
+        contributor_id: allocation.contributorId,
+        planned_amount_pennies: allocation.plannedAmountPennies,
+      })),
+    }), "The budget could not be set for that person.");
+  };
+
   const saveRecipient = async ({ id, name, budgetPennies, allocations }: SaveRecipientInput) => {
     const validName = validatePersonValues(id ?? null, name, budgetPennies);
     const validAllocations = validateRecipientAllocationSnapshot(budgetPennies, allocations);
@@ -170,7 +221,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
   const restore = async (id: string) => setActive(id, true);
   const setIdeaCount = useCallback((id: string, count: number) => setPeople((current) => current.map((person) => person.id === id ? { ...person, ideaCount: count } : person)), []);
   const setPurchaseMetrics = useCallback((id: string, spentPennies: number, count: number) => setPeople((current) => current.map((person) => person.id === id ? { ...person, spentPennies, giftCount: count } : person)), []);
-  return <Context.Provider value={{ eventId, event, people, loading, error, role, isAdmin: role === "admin", saveRecipient, archive, restore, setIdeaCount, setPurchaseMetrics, refresh: load }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ eventId, event, people, loading, error, role, isAdmin: role === "admin", saveRecipient, addExistingPerson, archive, restore, setIdeaCount, setPurchaseMetrics, refresh: load }}>{children}</Context.Provider>;
 }
 
 export function useFamily() { const value = useContext(Context); if (!value) throw new Error("FamilyProvider missing"); return value; }

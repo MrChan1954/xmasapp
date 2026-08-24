@@ -30,6 +30,7 @@ import {
   ModalHeader,
   MoneyInput,
   Notice,
+  Select,
   Toolbar,
   cx,
   type BadgeTone,
@@ -103,7 +104,7 @@ function PeopleView({
   eventName: string;
   fixedRecipientPersonId: string | null;
 }) {
-  const { people, saveRecipient, restore, loading, error, isAdmin } = useFamily();
+  const { people, addExistingPerson, restore, loading, error, isAdmin } = useFamily();
   const { budgetPennies } = useTotals();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
@@ -168,9 +169,10 @@ function PeopleView({
     <AddForm
       eventId={eventId}
       eventName={eventName}
+      alreadyRecipientPersonIds={people.map((person) => person.personId)}
       onCancel={() => setAdding(false)}
-      onSave={async (name, budget, allocations) => {
-        await saveRecipient({ name, budgetPennies: budget, allocations });
+      onSave={async (personId, name, budget, allocations) => {
+        await addExistingPerson({ personId, name, budgetPennies: budget, allocations });
         setAdding(false);
       }}
     />
@@ -413,14 +415,59 @@ function progressPresentation(status: PurchaseProgressStatus): { label: string; 
   return { label: "Budget reached", tone: "success" };
 }
 
-function AddForm({ eventId, eventName, onCancel, onSave }: { eventId: string; eventName: string; onCancel: () => void; onSave: (name: string, budgetPennies: number, allocations: RecipientAllocation[]) => Promise<void> }) {
-  const [name, setName] = useState("");
+/**
+ * Adding somebody to this event.
+ *
+ * A PERSON IS CHOSEN, NEVER TYPED. This form used to take a free-text name and
+ * hand it to a function that ran `insert into public.people (name)` every time,
+ * so adding "Eden" to Christmas and "Eden" to Halloween created two separate
+ * Eden rows with separate birthdays and separate histories. The directory is
+ * the source of people now; somebody genuinely new is added there first, once.
+ */
+function AddForm({ eventId, eventName, alreadyRecipientPersonIds, onCancel, onSave }: {
+  eventId: string;
+  eventName: string;
+  /** Already on this event: offering them again would just fail a unique key. */
+  alreadyRecipientPersonIds: string[];
+  onCancel: () => void;
+  onSave: (personId: string, name: string, budgetPennies: number, allocations: RecipientAllocation[]) => Promise<void>;
+}) {
+  const [personId, setPersonId] = useState("");
+  const [directory, setDirectory] = useState<Array<{ personId: string; name: string }>>([]);
+  const [directoryLoading, setDirectoryLoading] = useState(true);
+  // Already on this event, and archived people, are both left out: the first
+  // would fail a unique key, and the second is the point of archiving.
+  const available = directory.filter((entry) => !alreadyRecipientPersonIds.includes(entry.personId));
   const [budget, setBudget] = useState("");
   const [rows, setRows] = useState<RecipientAllocationDraftRow[]>([]);
   const [contributorsLoading, setContributorsLoading] = useState(true);
   const [contributorsReady, setContributorsReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * The family directory, so this form CHOOSES a person instead of naming
+   * one into existence. Archived people are left out here rather than
+   * filtered later, so they cannot be picked for something new while every
+   * event that already names them keeps them.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    const loadDirectory = async () => {
+      const db = createClient();
+      const withArchive = await db.from("people").select("id,name,archived_at").order("name");
+      // `archived_at` arrives with migration 032; before it is applied the
+      // column does not exist, and everybody was active anyway.
+      const rows = withArchive.error
+        ? (await db.from("people").select("id,name").order("name")).data ?? []
+        : (withArchive.data ?? []).filter((row) => (row as { archived_at?: string | null }).archived_at == null);
+      if (cancelled) return;
+      setDirectory(rows.map((row) => ({ personId: row.id as string, name: row.name as string })));
+      setDirectoryLoading(false);
+    };
+    void loadDirectory();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -477,7 +524,7 @@ function AddForm({ eventId, eventName, onCancel, onSave }: { eventId: string; ev
   const plan = budgetPennies !== null && parsedDraft.ok
     ? validateRecipientAllocationSnapshot(budgetPennies, parsedDraft.value)
     : null;
-  const canSave = contributorsReady && plan?.ok === true;
+  const canSave = personId !== "" && contributorsReady && plan?.ok === true;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -493,9 +540,12 @@ function AddForm({ eventId, eventName, onCancel, onSave }: { eventId: string; ev
         : `Allocation exceeds the budget by ${formatPennies(total - parsedBudget.value)}.`);
       return;
     }
+    const chosen = directory.find((entry) => entry.personId === personId);
+    if (!chosen) { setError("Choose who this is for."); return; }
     setSaving(true);
     setError(null);
-    try { await onSave(validName.value, parsedBudget.value, validPlan.value); } catch { setError("The person could not be added. Existing Christmas data was not changed."); setSaving(false); }
+    try { await onSave(chosen.personId, chosen.name, parsedBudget.value, validPlan.value); }
+    catch { setError("That person could not be added. Nothing already recorded was changed."); setSaving(false); }
   };
 
   return (
@@ -509,8 +559,17 @@ function AddForm({ eventId, eventName, onCancel, onSave }: { eventId: string; ev
           closeLabel="Close add person"
         />
         <div className="px-5 sm:px-7">
-          <Field label="Name" required>
-            <Input required maxLength={INPUT_LIMITS.name} value={name} onChange={(event) => setName(event.target.value)} />
+          <Field label="Who is it for?" required hint="Somebody new is added to People first, so they exist once for every event.">
+            {directoryLoading
+              ? <p className="text-sm text-ink-600">Loading people…</p>
+              : (
+                <Select required value={personId} onChange={(event) => setPersonId(event.target.value)}>
+                  <option value="">Choose…</option>
+                  {available.map((person) => (
+                    <option key={person.personId} value={person.personId}>{person.name}</option>
+                  ))}
+                </Select>
+              )}
           </Field>
           <Field label="Budget" className="mt-4">
             <MoneyInput maxLength={INPUT_LIMITS.money} value={budget} onValueChange={setBudget} />
@@ -533,7 +592,7 @@ function AddForm({ eventId, eventName, onCancel, onSave }: { eventId: string; ev
         </div>
         <ModalFooter>
           <Button variant="secondary" size="lg" onClick={onCancel} disabled={saving}>Cancel</Button>
-          <Button type="submit" size="lg" disabled={saving || !canSave}>{saving ? "Creating..." : "Create person"}</Button>
+          <Button type="submit" size="lg" disabled={saving || !canSave}>{saving ? "Adding..." : "Add to event"}</Button>
         </ModalFooter>
       </form>
     </Modal>

@@ -297,9 +297,15 @@ test("a custom event is stored as a type the database already accepts", () => {
   assert.equal(GENERIC_EVENT_TYPE, "other");
   assert.ok(EVENT_TYPES.includes(GENERIC_EVENT_TYPE), "and it is a value the model already knows");
 
+  // Phase 2 added no migration; Phase 3's adds an archive column and two
+  // functions, and neither touches how an event is typed. The point stands:
+  // an arbitrary occasion still needs no schema change.
   const migrations = readdirSync(join(root, "supabase", "migrations")).filter((f) => f.endsWith(".sql"));
-  assert.equal(migrations.length, 31, "Phase 2 adds no migration");
-  assert.ok(migrations.at(-1).startsWith("202608100031"), "031 is still the newest");
+  const generic = migrations.filter((file) => read("supabase", "migrations", file).includes("'other'"));
+  assert.ok(
+    generic.every((file) => Number(file.slice(file.indexOf("_") - 3, file.indexOf("_"))) <= 28),
+    "no migration after 028 had to teach the database about a new occasion",
+  );
 });
 
 test("arbitrary titles are accepted by the model, with no list to be on", () => {

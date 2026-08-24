@@ -35,6 +35,7 @@ const budgetSql = read("supabase", "migrations", BUDGET_MIGRATION);
 
 const CONTRIBUTOR_MIGRATION = "202608100030_family_contributors_and_atomic_setup.sql";
 const PRIVACY_MIGRATION = "202608100031_birthday_privacy_and_contributor_birthday_edits.sql";
+const PEOPLE_MIGRATION = "202608100032_people_directory.sql";
 const contributorSql = read("supabase", "migrations", CONTRIBUTOR_MIGRATION);
 
 /** The body of one `create ... function public.<name>(` block. */
@@ -59,15 +60,16 @@ const ADMIN_WRITES = [
 // 1. Migration hygiene -- the same invariants every applied migration holds
 // ---------------------------------------------------------------------------
 
-test("026 to 031 are the six newest migrations, in that order", () => {
+test("026 to 032 are the seven newest migrations, in that order", () => {
   const files = readdirSync(join(root, "supabase", "migrations")).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(files.at(-6), MIGRATION, "026 must be sixth-newest");
-  assert.equal(files.at(-5), REMINDER_MIGRATION, "027 must be fifth-newest");
-  assert.equal(files.at(-4), OCCASION_MIGRATION, "028 must be fourth-newest");
-  assert.equal(files.at(-3), BUDGET_MIGRATION, "029 must be third-newest");
-  assert.equal(files.at(-2), CONTRIBUTOR_MIGRATION, "030 must be second-newest");
-  assert.equal(files.at(-1), PRIVACY_MIGRATION, "031 must be the newest");
-  for (const prefix of ["202608100026", "202608100027", "202608100028", "202608100029", "202608100030", "202608100031"]) {
+  assert.equal(files.at(-7), MIGRATION, "026 must be seventh-newest");
+  assert.equal(files.at(-6), REMINDER_MIGRATION, "027 must be sixth-newest");
+  assert.equal(files.at(-5), OCCASION_MIGRATION, "028 must be fifth-newest");
+  assert.equal(files.at(-4), BUDGET_MIGRATION, "029 must be fourth-newest");
+  assert.equal(files.at(-3), CONTRIBUTOR_MIGRATION, "030 must be third-newest");
+  assert.equal(files.at(-2), PRIVACY_MIGRATION, "031 must be second-newest");
+  assert.equal(files.at(-1), PEOPLE_MIGRATION, "032 must be the newest");
+  for (const prefix of ["202608100026", "202608100027", "202608100028", "202608100029", "202608100030", "202608100031", "202608100032"]) {
     assert.equal(
       files.filter((name) => name.startsWith(prefix)).length,
       1,

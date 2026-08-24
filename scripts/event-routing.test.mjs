@@ -54,12 +54,17 @@ test("1. GET / renders the Event Dashboard and never redirects into Christmas", 
 
   // The legacy redirect list is event-specific routes only. "/" is not one of
   // them, and adding it would be caught here.
-  const legacyPaths = LEGACY.map((entry) => `/${entry.folder.join("/")}`);
+  //
+  // `/people` and `/people/[id]` left this list when they became the People
+  // directory and a person's profile. They still honour the old link -- that is
+  // asserted where those two routes are -- but they are no longer ONLY a
+  // redirect, and listing them here would keep asserting they had no screen.
+  const legacyPaths = [...LEGACY, ...DUAL].map((entry) => `/${entry.folder.join("/")}`);
   assert.ok(!legacyPaths.includes("/"), "the root is not a legacy redirect");
   assert.deepEqual(
     legacyPaths.slice().sort(),
     ["/add-purchase", "/more", "/owed", "/payment-log", "/people", "/people/[id]"],
-    "exactly these event-specific routes redirect for compatibility",
+    "exactly these event-specific routes still answer a pre-Checkpoint-2 link",
   );
 
   // `/events` is the alias, so a guessed URL still lands somewhere sensible.
@@ -173,24 +178,47 @@ test("5. an invalid, unknown or unauthorized event id fails safely", () => {
 // 10-11. Legacy routes
 // ---------------------------------------------------------------------------
 
+/** Routes that are ONLY a compatibility redirect, and must stay that way. */
 const LEGACY = [
   { folder: ["owed"], section: "owed" },
-  { folder: ["people"], section: "people" },
   { folder: ["add-purchase"], section: "add-purchase" },
   { folder: ["more"], section: "more" },
   { folder: ["payment-log"], section: "payment-log" },
-  { folder: ["people", "[id]"], section: "people" },
+];
+
+/**
+ * `/people` and `/people/[id]` do TWO jobs now.
+ *
+ * They were pure redirects because there was nowhere else for them to go. They
+ * are now the People directory and a person's profile -- and they still forward
+ * the legacy form, because the id in a pre-Checkpoint-2 notification link is a
+ * CHRISTMAS RECIPIENT id, not a person id. Breaking a saved link to make a
+ * route look cleaner is not a trade worth making, so both are asserted: the new
+ * screen, and the old link.
+ */
+const DUAL = [
+  { folder: ["people"], screen: "PeopleDirectoryScreen" },
+  { folder: ["people", "[id]"], screen: "PersonProfileScreen" },
 ];
 
 test("10-11. every legacy route redirects into Christmas 2026 rather than breaking", () => {
   for (const { folder, section } of LEGACY) {
     const page = read(...APP, ...folder, "page.tsx");
     assert.match(page, /redirectLegacyRoute\(/, `/${folder.join("/")} must redirect`);
-    assert.match(page, new RegExp(`redirectLegacyRoute\\("${section}"`), `/${folder.join("/")} -> ${section}`);
+    assert.ok(page.includes(`redirectLegacyRoute("${section}"`), `/${folder.join("/")} -> ${section}`);
     assert.match(page, /COMPATIBILITY/, `/${folder.join("/")} must be labelled as compatibility`);
     // A redirect is all it is: no screen, no data loading, no duplicate
     // implementation of the page it forwards to.
     assert.doesNotMatch(page, /createClient|useState|"use client"/);
+  }
+
+  for (const { folder, screen } of DUAL) {
+    const page = read(...APP, ...folder, "page.tsx");
+    assert.ok(page.includes(screen), `/${folder.join("/")} must serve ${screen}`);
+    assert.match(page, /redirectLegacyRoute\("people"/, `/${folder.join("/")} must still honour the old link`);
+    // A server component, still: the redirect has to happen before anything
+    // renders, and none of this may move into the browser.
+    assert.doesNotMatch(page, /"use client"|useState/);
   }
 
   // The deep links notifications already use survive with their query intact.

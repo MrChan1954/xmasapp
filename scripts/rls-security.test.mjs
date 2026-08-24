@@ -68,6 +68,9 @@ const contributorMigration = readFileSync(join(migrationsDirectory, contributorM
 const privacyMigrationName = "202608100031_birthday_privacy_and_contributor_birthday_edits.sql";
 const privacyMigration = readFileSync(join(migrationsDirectory, privacyMigrationName), "utf8").replace(/\r\n/gu, "\n");
 
+const peopleMigrationName = "202608100032_people_directory.sql";
+const peopleMigration = readFileSync(join(migrationsDirectory, peopleMigrationName), "utf8").replace(/\r\n/gu, "\n");
+
 const applicationTables = [
   "christmas_events",
   "people",
@@ -85,9 +88,44 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  assert.equal(migrationFiles.at(-1), privacyMigrationName);
+  assert.equal(migrationFiles.at(-1), peopleMigrationName);
+  assert.ok(migrationFiles.includes(privacyMigrationName), "the birthday privacy migration is still present");
   assert.ok(migrationFiles.includes(contributorMigrationName), "the contributor migration is still present");
   assert.ok(migrationFiles.includes(budgetMigrationName), "the budget reminder migration is still present");
+
+  // ------------------------------------------------------------------
+  // What 032 introduces, security-wise: two more Global Admin write paths
+  // on `people`, and no new way to READ anything.
+  // ------------------------------------------------------------------
+  for (const fn of ["set_person_archived", "create_person"]) {
+    const start = peopleMigration.indexOf(`function public.${fn}(`);
+    assert.ok(start > 0, `${fn} must exist`);
+    const body = peopleMigration.slice(start, peopleMigration.indexOf("$$;", start));
+    assert.match(body, /is_app_admin\(\)/u, `${fn} must check Global Admin in the database`);
+    assert.match(body, /set search_path = ''/u, `${fn} must pin search_path`);
+    assert.match(body, /security definer/u, `${fn} runs as definer`);
+    assert.ok(
+      peopleMigration.includes(`revoke all on function public.${fn}(`),
+      `${fn} must be revoked before it is granted`,
+    );
+  }
+
+  // ADDING SOMEBODY TO THE DIRECTORY DECIDES NOTHING ELSE ABOUT THEM. Being in
+  // the family and sharing the cost of gifts are different facts, and a
+  // creation path that set the second would hand out spending power quietly.
+  const creation = peopleMigration.slice(peopleMigration.indexOf("function public.create_person("));
+  assert.ok(!creation.includes("is_family_contributor"), "create_person must not set contributor eligibility");
+  assert.ok(!creation.includes("app_members"), "nor create a membership");
+
+  // No new policy, and above all no delete path: archiving exists precisely
+  // because deleting a person would orphan their purchases and payments.
+  assert.doesNotMatch(peopleMigration, /create policy/iu, "032 adds no policy");
+  assert.doesNotMatch(peopleMigration, /for delete/iu, "032 adds no delete path");
+  assert.doesNotMatch(
+    peopleMigration,
+    /grant [a-z, ]+ on table public\.people to (authenticated|anon)/i,
+    "people must stay unwritable from a browser session",
+  );
 
   // ------------------------------------------------------------------
   // What 031 introduces, security-wise: it SUBTRACTS from ten read
