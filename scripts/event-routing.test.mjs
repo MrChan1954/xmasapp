@@ -397,16 +397,20 @@ test("every runtime read of the Christmas compatibility view is enumerated and l
   };
   walk(["src"]);
 
-  const EXPECTED = {
-    // Old bookmarks and pre-Checkpoint-2 notification links. THE ONLY ONE LEFT.
-    //
-    // Family Access used to be on this list: it edited contributors against
-    // whichever Christmas was newest, because contributor membership had no
-    // event to belong to. Checkpoint 4 moved that editing to Event Settings,
-    // where the event is named in the URL, and Family Access became what its
-    // name says — accounts, family-wide, no event resolved at all.
-    "src/utils/supabase/events-server.ts": "legacyChristmasEventId",
-  };
+  /*
+   * NOTHING READS THE VIEW AT RUNTIME ANY MORE.
+   *
+   * Family Access came off this list at Checkpoint 4, when contributor editing
+   * moved to Event Settings and the event became part of the URL.
+   *
+   * `legacyChristmasEventId` came off it with Areas. The view predates them and
+   * exposes only `id, year, name, created_at` -- no `area_id` -- so a resolver
+   * built on it cannot say WHICH family's Christmas it means. Live browser QA
+   * caught it redirecting out of one family and into another's. It reads
+   * `events` now, filtered by `event_type` and `area_id`; the christmas-only
+   * guarantee comes from the filter rather than from the view.
+   */
+  const EXPECTED = {};
 
   assert.deepEqual(
     readers.sort(),
@@ -484,9 +488,19 @@ test("the URL is the only source of the current event", () => {
 test("the compatibility resolver can never return a birthday", () => {
   const server = read("src", "utils", "supabase", "events-server.ts");
   const compat = server.slice(server.indexOf("COMPATIBILITY ONLY"));
-  // It reads the christmas-only view from migration 025, not the events table.
-  assert.match(compat, /from\("christmas_events"\)/);
-  assert.doesNotMatch(compat, /from\("events"\)/);
+  /*
+   * THE GUARANTEE IS THE SAME; THE MECHANISM MOVED.
+   *
+   * It used to read the christmas-only view from migration 025, which made a
+   * birthday impossible by construction. That view has no `area_id`, so with
+   * Areas it could not say which family it meant -- and did, in live QA, pick
+   * the wrong one. The resolver reads `events` now and pins the kind itself.
+   */
+  assert.match(compat, /from\("events"\)/);
+  assert.match(compat, /\.eq\("event_type", "christmas"\)/,
+    "a birthday must still be impossible -- now by filter rather than by view");
+  assert.match(compat, /\.eq\("area_id", areaId\)/,
+    "and it must be THIS family's Christmas");
   // And a missing Christmas degrades to the dashboard rather than an error.
   assert.match(compat, /if \(!eventId\) redirect\("\/"\);/);
 });

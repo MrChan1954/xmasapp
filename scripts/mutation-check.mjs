@@ -335,6 +335,13 @@ create or replace function public.is_area_admin(p_area_id uuid)`,
     to: "  for (const subject of []) {",
     suites: ["scripts/qa/protected.test.mjs"],
   },
+  {
+    name: "QA-5. the legacy Christmas redirect stops asking which family is on screen",
+    file: "src/utils/supabase/events-server.ts",
+    from: '    .eq("area_id", areaId)' + String.fromCharCode(10) + "    .limit(1)",
+    to: "",
+    suites: ["scripts/areas-and-tenancy.test.mjs"],
+  },
 ];
 
 function runSuite(suite) {

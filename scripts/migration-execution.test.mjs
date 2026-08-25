@@ -23,7 +23,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
-  ROOT, SHIMS, applyMigration, attempt, buildRehearsal, migrationNames,
+  ROOT, SHIMS, applyMigration, asOwner, attempt, buildRehearsal, migrationNames,
   preRequestFunction, rows, value,
 } from "./pg/rehearsal.mjs";
 
@@ -442,5 +442,78 @@ describe("migrations 001-038 are applied, immutable, and now checked as such", (
     // And 039/040 ARE pinned now: Q1 shipped them.
     assert.ok(manifest.some((entry) => entry.name === AREA_AUTH));
     assert.ok(manifest.some((entry) => entry.name === WISHLIST));
+  });
+});
+
+/* ===========================================================================
+ * THE QUERIES THE APP ACTUALLY SENDS, RUN AGAINST A REAL SCHEMA
+ *
+ * Source-text assertions cannot see a column that does not exist. The
+ * Area-blind Christmas redirect was fixed once by filtering
+ * `christmas_events` on `area_id` -- a compatibility view that predates Areas
+ * and exposes only `id, year, name, created_at`. Every string the tests looked
+ * for was present, the tests passed, and the query was a 42703 that would have
+ * turned every legacy redirect into the dashboard for everybody.
+ *
+ * So the shape is executed here instead.
+ * =========================================================================== */
+
+describe("the Area-scoped Christmas lookup runs against the real schema", () => {
+  let db;
+  let alpha;
+  let bravo;
+
+  before(async () => {
+    db = await buildRehearsal({});
+    await asOwner(db);
+    // Two families, each with their own Christmas 2026 -- the arrangement that
+    // made the old year-only query ambiguous in the first place.
+    alpha = await value(db, "insert into public.areas (name) values ('Alpha') returning id");
+    bravo = await value(db, "insert into public.areas (name) values ('Bravo') returning id");
+    for (const [area, name] of [[alpha, 'Alpha Christmas'], [bravo, 'Bravo Christmas']]) {
+      await db.query(`
+        insert into public.events (name, event_type, event_date, year, area_id)
+        values ($1, 'christmas', '2026-12-25', 2026, $2)`, [name, area]);
+    }
+  });
+  after(async () => { await db?.close(); });
+
+  test("the compatibility view has NO area_id, which is why the app must not filter it", async () => {
+    await asOwner(db);
+    const columns = (await rows(db, `
+      select column_name from information_schema.columns
+      where table_schema = 'public' and table_name = 'christmas_events'`)).map((r) => r.column_name);
+    assert.ok(columns.length > 0, "the view must exist");
+    assert.ok(!columns.includes("area_id"),
+      "if this ever gains area_id, the comment in events-server.ts is stale");
+  });
+
+  test("AND events DOES, so the lookup resolves one family's Christmas", async () => {
+    await asOwner(db);
+    for (const [area, expected] of [[alpha, "Alpha Christmas"], [bravo, "Bravo Christmas"]]) {
+      const found = await rows(db, `
+        select id, name from public.events
+        where event_type = 'christmas' and year = 2026 and area_id = $1
+        limit 1`, [area]);
+      assert.equal(found.length, 1, "exactly one row, so maybeSingle() is safe");
+      assert.equal(found[0].name, expected, "and it is THIS family's Christmas");
+    }
+  });
+
+  test("a family with no Christmas resolves to nothing, not to somebody else's", async () => {
+    await asOwner(db);
+    const empty = await value(db, "insert into public.areas (name) values ('Charlie') returning id");
+    const found = await rows(db, `
+      select id from public.events
+      where event_type = 'christmas' and year = 2026 and area_id = $1 limit 1`, [empty]);
+    assert.deepEqual(found, [], "the caller falls back to the dashboard");
+  });
+
+  test("the year-only query really is ambiguous, which is the bug being prevented", async () => {
+    await asOwner(db);
+    const all = await rows(db,
+      "select id from public.events where event_type = 'christmas' and year = 2026");
+    assert.ok(all.length >= 2,
+      "with two families the old query matches more than once -- maybeSingle() would ERROR");
   });
 });

@@ -642,3 +642,121 @@ describe("nothing in the app assumes one login means one membership", () => {
     }
   });
 });
+
+describe("a legacy link cannot carry somebody into another family", () => {
+  /**
+   * FOUND IN LIVE BROWSER QA, not by reading the source.
+   *
+   * `/people/<id>` falls back to a legacy redirect when the id is not a person
+   * the reader can see -- and that redirect resolved "Christmas 2026" by year
+   * alone. Row level security narrowed it to the reader's own families, which
+   * is the right permission and the wrong question: standing in the second
+   * family, a stale link redirected into the FIRST family's Christmas.
+   *
+   * No data crossed -- the destination authorises itself by its own Area -- but
+   * an app must not steer somebody out of the family they are looking at, and
+   * `maybeSingle()` on a query that can match twice is the same bug this whole
+   * phase exists to remove.
+   */
+  const source = read("src/utils/supabase/events-server.ts");
+  const legacy = source.match(/export async function legacyChristmasEventId[\s\S]*?\n\}/u)?.[0];
+
+  test("the legacy Christmas is resolved inside ONE Area", () => {
+    assert.ok(legacy, "legacyChristmasEventId must exist");
+    assert.match(legacy, /rememberedAreaId\(\)/u, "it must ask which family is on screen");
+    assert.match(legacy, /\.eq\("area_id", areaId\)/u, "and filter by it");
+  });
+
+  test("and it refuses rather than guessing when no family is selected", () => {
+    assert.match(legacy, /if \(!areaId\) return null;/u,
+      "with no Area chosen the caller falls back to the dashboard, not to somebody else's event");
+  });
+
+  test("IT READS events, NOT the compatibility view, which has no area_id", () => {
+    // The first version of this fix filtered `christmas_events` by area_id.
+    // That view predates Areas and exposes only id, year, name, created_at,
+    // so the filter was a 42703: every legacy redirect would have degraded to
+    // the dashboard for everybody, and every source-text test still passed.
+    // `scripts/migration-execution.test.mjs` now runs the shape for real.
+    assert.match(legacy, /\.from\("events"\)/u, "it must read the events table");
+    assert.ok(!legacy.includes('from("christmas_events")'),
+      "the compatibility view cannot be filtered by Area");
+    assert.match(legacy, /\.eq\("event_type", "christmas"\)/u,
+      "and must say which kind of event it means, since events holds them all");
+  });
+
+  test("the query is limited, because two families may each have a Christmas 2026", () => {
+    // Without this, `maybeSingle()` ERRORS the moment a second Area has one.
+    assert.match(legacy, /\.limit\(1\)/u);
+  });
+});
+
+describe("no Area-sensitive lookup assumes one family", () => {
+  /**
+   * THE SWEEP WIDENED.
+   *
+   * The original one only inspected `app_members` queries keyed on `user_id`,
+   * because that was the shape Areas obviously broke. The Christmas defect was
+   * the same class of bug in a table nobody thought to sweep: a lookup whose
+   * result set grows by one every time a family is added, resolved with
+   * `maybeSingle()` and no Area filter.
+   *
+   * `events`, `areas` and `people` are all per-Area, so a query against them
+   * that expects at most one row must say which Area it means.
+   */
+  const AREA_SCOPED_TABLES = ["events", "areas", "people", "christmas_events"];
+
+  const bounded = (chunk) => chunk.split(/;|\.from\(/u)[0];
+
+  /** Every product source file. Declared here rather than shared, so this
+   *  sweep keeps working wherever it is moved to. */
+  const sourceFiles = () => {
+    const found = [];
+    const walk = (relative) => {
+      for (const entry of readdirSync(new URL(`../${relative}`, import.meta.url), { withFileTypes: true })) {
+        if (entry.isDirectory()) walk(`${relative}/${entry.name}`);
+        else if (/\.tsx?$/u.test(entry.name) && !/\.test\./u.test(entry.name)) {
+          found.push(`${relative}/${entry.name}`);
+        }
+      }
+    };
+    walk("src");
+    return found;
+  };
+
+  test("every single-row read of a per-Area table names the Area, or a unique id", () => {
+    const offenders = [];
+    for (const file of sourceFiles()) {
+      const source = withoutComments(read(file));
+      for (const table of AREA_SCOPED_TABLES) {
+        for (const chunk of source.split(`.from("${table}")`).slice(1)) {
+          const statement = bounded(chunk);
+          if (!statement.includes(".maybeSingle()") && !statement.includes(".single()")) continue;
+
+          // A lookup by primary key is unique whatever the Area, and so is one
+          // already narrowed to an Area.
+          const byUniqueId = /\.eq\("id",/u.test(statement);
+          const byArea = /\.eq\("area_id",/u.test(statement);
+          const limited = statement.includes(".limit(1)");
+          if (byUniqueId || (byArea && limited)) continue;
+
+          offenders.push(`${file}: ${table} resolved to one row without an Area`);
+        }
+      }
+    }
+    assert.deepEqual(offenders, [],
+      "a per-Area table read with maybeSingle() ERRORS, or answers about the wrong family, once a second Area exists");
+  });
+
+  test("and the sweep has something to sweep", () => {
+    // A sweep that matches nothing passes for the wrong reason.
+    let seen = 0;
+    for (const file of sourceFiles()) {
+      const source = withoutComments(read(file));
+      for (const table of AREA_SCOPED_TABLES) {
+        seen += source.split(`.from("${table}")`).length - 1;
+      }
+    }
+    assert.ok(seen >= 5, `expected several per-Area reads to inspect, found ${seen}`);
+  });
+});

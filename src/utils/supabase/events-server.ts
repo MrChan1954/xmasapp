@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { isEventStatus, isEventType, type EventSummary } from "@/lib/events.ts";
 import { validateUuid } from "@/lib/input-validation";
+import { rememberedAreaId } from "./areas-server";
 import { getCurrentMember } from "./current-member";
 import { createClient } from "./server";
 
@@ -200,11 +201,45 @@ export async function requireEvent(eventId: string): Promise<EventSummary> {
 export const LEGACY_CHRISTMAS_YEAR = 2026;
 
 export async function legacyChristmasEventId(): Promise<string | null> {
+  /*
+   * SCOPED TO THE FAMILY ON SCREEN, and not merely to the reader.
+   *
+   * FOUND IN LIVE BROWSER QA. This asked only for `year = 2026`. Row level
+   * security narrows that to the Areas the reader belongs to -- which is the
+   * right permission and the wrong question. Somebody in two families, standing
+   * in the second one, opening a stale `/people/<id>` link, was redirected into
+   * the FIRST family's Christmas: a URL in an Area they had not selected,
+   * reached from an Area they had. No data crossed -- the destination is still
+   * authorised by its own Area -- but the app must never steer a reader out of
+   * the family they are looking at.
+   *
+   * It was also a `maybeSingle()` on a query that can match more than once. The
+   * moment a second family has a Christmas 2026 that ERRORS rather than
+   * choosing, and the redirect silently degrades to the dashboard. Both faults
+   * have the same cause and the same fix: ask about one Area.
+   *
+   * With no Area selected, or no Christmas in it, the caller falls back to the
+   * dashboard -- "choose an event" rather than "here is somebody else's".
+   *
+   * IT READS `events`, NOT `christmas_events`. The compatibility view exposes
+   * only `id, year, name, created_at` -- it predates Areas and has no
+   * `area_id` -- so filtering it by Area is not merely wrong, it is a 42703
+   * that turns every legacy redirect into the dashboard for everybody. The
+   * first version of this fix did exactly that and the source-text tests could
+   * not see it, which is why `scripts/migration-execution.test.mjs` now runs
+   * this query shape against a real schema.
+   */
+  const areaId = await rememberedAreaId();
+  if (!areaId) return null;
+
   const db = await createClient();
   const result = await db
-    .from("christmas_events")
+    .from("events")
     .select("id")
+    .eq("event_type", "christmas")
     .eq("year", LEGACY_CHRISTMAS_YEAR)
+    .eq("area_id", areaId)
+    .limit(1)
     .maybeSingle();
   if (result.error || !result.data) return null;
   return result.data.id as string;
