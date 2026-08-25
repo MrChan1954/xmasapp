@@ -294,9 +294,9 @@ function birthdayCardArms() {
   const branch = card.indexOf("{isPrivate");
   const planned = card.indexOf(": planning", branch);
   const notStarted = card.indexOf("Planning not started yet", planned);
-  const cta = card.indexOf("{!isPrivate &&", notStarted);
+  const cta = card.indexOf('<div className="mt-auto', notStarted);
   assert.ok(branch > 0 && planned > branch && notStarted > planned && cta > notStarted,
-    "the card must still have a private arm, a planned arm, a not-started arm and a gated call to action");
+    "the card must still have a private arm, a planned arm, a not-started arm and a call to action");
 
   return {
     card,
@@ -314,14 +314,29 @@ test("the self card says the required sentence, and never the not-started one", 
   assert.ok(!privateArm.includes("Planning not started yet"), "and never the not-started sentence");
 });
 
-test("the self card offers nothing to press", () => {
+test("the self card offers the wishlist, and nothing that is not the wishlist", () => {
   const { action, privateArm } = birthdayCardArms();
 
-  // The whole action row is inside `!isPrivate`, so there is no "Start
-  // planning" AND no "Open" on the reader's own birthday.
-  assert.match(action, /\{!isPrivate && \(/u, "the call to action is gated on the state");
-  assert.ok(!privateArm.includes("Start planning"), "no invitation to plan your own present");
-  assert.ok(!privateArm.includes("Open →"), "and nothing that promises what cannot be shown");
+  /*
+   * WHAT CHANGED, AND WHAT DID NOT.
+   *
+   * The card used to offer nothing at all, because there was nothing the
+   * reader could do with their own birthday. There is now exactly one thing --
+   * their own wishlist -- so the row is no longer suppressed and its LABEL is
+   * what branches instead.
+   *
+   * The forbidden half is unchanged and asserted harder: the private label is
+   * sliced out on its own, so "Start planning" or "Open" cannot pass by being
+   * present somewhere else in the row.
+   */
+  const privateLabel = action.slice(action.indexOf("isPrivate"), action.indexOf(": planning ?"));
+  assert.ok(privateLabel.length > 0, "the label must branch on the private state");
+  assert.match(privateLabel, /SELF_PRIVATE_CTA/u, "and offer the wishlist, from the shared constant");
+
+  for (const forbidden of ["Start planning", "Open →", "Budget", "Purchased"]) {
+    assert.ok(!privateLabel.includes(forbidden), `the self card must not offer ${forbidden}`);
+    assert.ok(!privateArm.includes(forbidden), `the self card must not show ${forbidden}`);
+  }
 });
 
 test("the self card hides every financial figure", () => {
@@ -381,10 +396,14 @@ test("the rule is the linked person id, never a name, an email or a position", (
     assert.ok(!card.includes(wrong), `self must not be identified by ${wrong}`);
   }
 
-  // And the id comes from the membership row on the server.
+  // And the id comes from the membership row on the server -- specifically the
+  // membership in the AREA ON SCREEN, which is what `getCurrentMember` resolves.
+  // A `maybeSingle()` here would error the moment one login held two.
   const loader = read("src", "utils", "supabase", "birthdays-server.ts");
-  assert.match(loader, /select\("role,person_id"\)/u);
-  assert.match(loader, /const viewerPersonId = \(membership\.data\.person_id as string \| null\) \?\? null;/u);
+  assert.match(loader, /getCurrentMember\(\)/u, "the membership comes from the Area-aware helper");
+  assert.match(loader, /const viewerPersonId = \(member\.person_id as string \| null\) \?\? null;/u);
+  assert.ok(!loader.includes('.from("app_members")'),
+    "the loader must not resolve a membership by hand any more");
 });
 
 test("the loader will not carry the reader's own planning even if RLS let it through", () => {
@@ -432,30 +451,58 @@ test("the resolver shows a privacy screen for your own birthday, and never redir
   assert.ok(!selfArm.includes("redirect("), "and not a redirect");
 });
 
-test("the privacy screen says why, and shows only what is not a secret", () => {
+test("the own-birthday screen is a wishlist, and shows only what is not a secret", () => {
   const screen = read("src", "app", "birthdays", "[personId]", "own-birthday-screen.tsx");
 
-  assert.match(screen, /can&apos;t see what you&apos;re getting/u);
-  assert.match(screen, /so your presents stay a surprise/u);
+  /*
+   * IT USED TO BE A CLOSED DOOR: "You can't see what you're getting", and
+   * nothing else on the page. That sentence was true about the presents and
+   * wrong about the birthday -- there was one useful thing this person could
+   * do here and the screen did not let them do it.
+   *
+   * The reassurance survives, in `WISHLIST_INTRO`; what changes is that it is
+   * now underneath a list they can write rather than being the whole page.
+   */
+  assert.match(screen, /WISHLIST_HEADLINE/u, "the heading is the shared constant");
+  assert.match(screen, /WISHLIST_INTRO/u, "and so is the sentence about the surprise");
   assert.match(screen, /applies to admins too/iu, "the rule outranks admin, and says so");
+  assert.match(screen, /<WishlistEditor/u, "and it renders the list");
 
   // The date and the age are theirs. The money is not.
   assert.match(screen, /formatBirthday\(birthday\.month, birthday\.day\)/u);
   assert.match(screen, /describeTurningAge\(/u);
   for (const forbidden of ["formatPennies", "budgetPennies", "spentPennies", "FinancialProgressBar", "giftCount", "ideaCount"]) {
-    assert.ok(!screen.includes(forbidden), `the privacy screen must not render ${forbidden}`);
+    assert.ok(!screen.includes(forbidden), `the own-birthday screen must not render ${forbidden}`);
   }
   assert.ok(!screen.includes("StartPlanningScreen"), "and must not offer to start it");
+
+  // THE EDITOR ITSELF REACHES NOTHING BUT THE WISHLIST TABLE. It is the one
+  // component the celebrant can drive, so what it is allowed to query matters
+  // as much as what it renders.
+  const editor = read("src", "app", "birthdays", "[personId]", "wishlist-editor.tsx");
+  for (const table of ["purchases", "gift_ideas", "christmas_recipients", "contributors",
+    "purchase_allocations", "recipient_contributions", "settlements", "payment_receipts", "events"]) {
+    assert.ok(!editor.includes(`from("${table}")`), `the wishlist editor must not read ${table}`);
+  }
+  assert.match(editor, /from\("birthday_wishlist_ideas"\)/u);
+  assert.ok(!editor.includes(".rpc("),
+    "and must not call a SECURITY DEFINER routine, which is what bypasses a policy");
 });
 
 test("the loader refuses to hand the celebrant a workspace or a contributor list", () => {
   const loader = read("src", "utils", "supabase", "birthdays-server.ts");
 
-  assert.match(loader, /const isSelf = membership\.data\.person_id !== null && membership\.data\.person_id === person\.personId;/u);
+  assert.match(loader, /const isSelf = \(member\.person_id as string \| null\) !== null/u);
+  assert.match(loader, /member\.person_id === person\.personId/u);
   assert.match(loader, /if \(isSelf \|\| events\.length === 0\) \{/u,
     "their own birthday takes the same empty path as an unplanned one");
   assert.match(loader, /eligibleContributors: isSelf \? \[\] : eligibleContributors/u,
     "nobody is offered as a contributor to the reader's own birthday");
+
+  // BOTH HALVES OF THE COMPARISON COME FROM ONE AREA. The person is fetched
+  // with the Area on the query and the membership is the one for that Area, so
+  // a login that is somebody else in another family cannot match here.
+  assert.match(loader, /\.eq\("area_id", areaId\)/u);
 });
 
 test("the dashboard card says it is a surprise rather than 'not started'", () => {
@@ -478,7 +525,8 @@ test("the dashboard card says it is a surprise rather than 'not started'", () =>
 test("the viewer's own person is read on the server, never guessed in the browser", () => {
   const loader = read("src", "utils", "supabase", "birthdays-server.ts");
   assert.match(loader, /viewerPersonId: string \| null;/u);
-  assert.match(loader, /select\("role,person_id"\)/u, "the membership row is the source");
+  assert.match(loader, /const \{ member \} = await getCurrentMember\(\);/u,
+    "the membership row for the Area on screen is the source");
 
   const page = read("src", "app", "page.tsx");
   assert.match(page, /viewerPersonId = birthdayResult\.value\.viewerPersonId;/u);

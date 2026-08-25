@@ -64,6 +64,27 @@ export function MoreScreen({
       {/* Renders nothing — heading included — when the app is already installed
           or the browser offers no install path, so it never becomes permanent
           noise. It owns its own section for exactly that reason. */}
+      {/* THREE SCOPES, NAMED. Before Areas there was one family and one list
+          of settings. With more than one, the question that matters most about
+          a setting is how far it reaches, so the three answers are offered
+          first and each screen repeats its own reach in a sentence. */}
+      <Group label="Settings">
+        <div className="mb-3">
+          <SettingsLink
+            href="/settings"
+            title="Your settings"
+            description="Your account, notifications and appearance. These follow you into every family."
+            icon={<IconUser size={20} />}
+          />
+        </div>
+        <SettingsLink
+          href="/settings/family"
+          title="Family settings"
+          description="This family only: its name, who can get in, and what it has recorded."
+          icon={<IconPeople size={20} />}
+        />
+      </Group>
+
       <InstallCard />
 
       <Group label="Appearance">
@@ -101,7 +122,7 @@ export function MoreScreen({
         </div>
       </Group>
 
-      <Group label="Your account">
+      <Group label="Yours, in every family">
         <SettingsLink
           href="/account"
           title="Account & security"
@@ -122,7 +143,7 @@ export function MoreScreen({
 
       {/* Birthdays belong to people, not to this event, so the link leaves the
           event behind rather than nesting under it. */}
-      <Group label="Family">
+      <Group label="This family">
         {/* The family DIRECTORY, not this event's recipients. On a phone the
             event's own tabs fill the bar, so this is how somebody reaches
             People without leaving the event first. */}
@@ -142,7 +163,7 @@ export function MoreScreen({
         />
       </Group>
 
-      <Group label="Records">
+      <Group label="This family’s records">
         {celebrantPersonId && (
           <div className="mb-3">
             <SettingsLink

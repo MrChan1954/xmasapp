@@ -42,7 +42,9 @@ export async function GET(request: Request) {
     return loginError(requestOrigin, "Your login succeeded, but this email is not linked to an approved family member.");
   }
   const userId = exchange.data.user?.id;
-  const membership = userId ? await supabase.from("app_members").select("id").eq("user_id", userId).eq("active", true).maybeSingle() : { data: null, error: null };
+  // Any active membership admits them; which family comes later. `.limit(1)`
+  // keeps a second one from erroring the check and refusing the sign-in.
+  const membership = userId ? await supabase.from("app_members").select("id").eq("user_id", userId).eq("active", true).limit(1).maybeSingle() : { data: null, error: null };
   if (!membership.data) {
     console.error("[auth callback] no active membership after claim", { membershipErrorCode: membership.error?.code ?? null });
     await supabase.auth.signOut();

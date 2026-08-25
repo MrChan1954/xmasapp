@@ -1,0 +1,75 @@
+import { NextResponse } from "next/server";
+import { AREA_COOKIE, validateAreaName } from "@/lib/areas";
+import { createClient } from "@/utils/supabase/server";
+
+/**
+ * Choosing a family, and creating one.
+ *
+ * NEITHER OF THESE IS THE PERMISSION CHECK. Switching writes a cookie, and a
+ * cookie naming a family you are not in is ignored by the database on the next
+ * request -- `claim_active_area` checks the membership table before it believes
+ * the header the cookie becomes. Creating calls `create_area`, which makes the
+ * Area, the person and the administrator in one transaction and cannot reach any
+ * existing family.
+ *
+ * The route exists because a Server Component cannot write a cookie. The work is
+ * trivial and the authority is entirely in Postgres.
+ */
+
+const YEAR = 60 * 60 * 24 * 365;
+
+/** Not httpOnly: the switcher reads it to show which family is selected. It is
+ * a preference, and forging it grants nothing -- see the note above. */
+function remember(response: NextResponse, areaId: string) {
+  response.cookies.set(AREA_COOKIE, areaId, {
+    httpOnly: false,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: YEAR,
+  });
+  return response;
+}
+
+export async function PUT(request: Request) {
+  const db = await createClient();
+  const { data: { user } } = await db.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+
+  let body: { areaId?: unknown };
+  try { body = await request.json(); } catch { return NextResponse.json({ error: "Bad request" }, { status: 400 }); }
+  const areaId = typeof body.areaId === "string" ? body.areaId : null;
+  if (!areaId) return NextResponse.json({ error: "Bad request" }, { status: 400 });
+
+  // Confirmed against the caller's OWN readable list, so the cookie is never
+  // left pointing at a family they cannot see. The database would ignore it
+  // either way; this keeps the answer honest about what happened.
+  const { data } = await db.from("areas").select("id").eq("id", areaId).maybeSingle();
+  if (!data) return NextResponse.json({ error: "That family is not yours" }, { status: 403 });
+
+  return remember(NextResponse.json({ ok: true }), areaId);
+}
+
+export async function POST(request: Request) {
+  const db = await createClient();
+  const { data: { user } } = await db.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+
+  let body: { name?: unknown; personName?: unknown };
+  try { body = await request.json(); } catch { return NextResponse.json({ error: "Bad request" }, { status: 400 }); }
+
+  const name = validateAreaName(typeof body.name === "string" ? body.name : "");
+  if (!name.ok) return NextResponse.json({ error: name.reason }, { status: 400 });
+  const personName = validateAreaName(typeof body.personName === "string" ? body.personName : "");
+  if (!personName.ok) {
+    return NextResponse.json({ error: "Tell us your name so the family knows who you are." }, { status: 400 });
+  }
+
+  const { data, error } = await db.rpc("create_area", {
+    p_name: name.value,
+    p_person_name: personName.value,
+  });
+  if (error || !data) return NextResponse.json({ error: "We could not create that family." }, { status: 400 });
+
+  return remember(NextResponse.json({ ok: true, areaId: String(data) }), String(data));
+}

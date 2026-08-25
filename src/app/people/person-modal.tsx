@@ -6,7 +6,7 @@ import { formatPennies } from "../../lib/currency";
 import { INPUT_LIMITS, parseMoneyToPennies, validateRequiredText } from "../../lib/input-validation";
 import { validateRecipientAllocationSnapshot, type RecipientAllocation } from "../../lib/recipient-allocations";
 import { purchaseProgressStatus, type PurchaseProgressStatus } from "../../lib/purchases";
-import { useFamily, type Person } from "../family-context";
+import { useFamily, type ActiveEvent, type Person } from "../family-context";
 import { FinancialProgressBar } from "../components/financial-progress";
 import {
   Badge,
@@ -22,6 +22,7 @@ import {
   cx,
   type BadgeTone,
 } from "../components/ui";
+import { WishlistPanel } from "../components/wishlist-panel";
 import { GiftIdeas } from "./gift-ideas";
 import { Purchases } from "./purchases";
 import {
@@ -266,6 +267,7 @@ export function PersonModal({
             loading={loading}
             contributionsLoaded={contributionsLoaded}
             isAdmin={isAdmin}
+            event={event}
             onIdeaCountChange={handleIdeaCountChange}
             onPurchaseMetricsChange={handlePurchaseMetricsChange}
             editContributors={() => { setMode("contributors"); setError(null); }}
@@ -328,6 +330,7 @@ function DetailView({
   loading,
   contributionsLoaded,
   isAdmin,
+  event,
   onIdeaCountChange,
   onPurchaseMetricsChange,
   editContributors,
@@ -341,6 +344,7 @@ function DetailView({
   loading: boolean;
   contributionsLoaded: boolean;
   isAdmin: boolean;
+  event: ActiveEvent | null;
   onIdeaCountChange: (count: number) => void;
   onPurchaseMetricsChange: (spentPennies: number, count: number) => void;
   editContributors: () => void;
@@ -410,6 +414,27 @@ function DetailView({
             </div>
           )}
         </section>
+
+        {/*
+          THE BIRTHDAY PERSON'S OWN LIST, WHEN THIS RECIPIENT IS THAT PERSON.
+
+          Only on a birthday, and only for its celebrant: on any other event the
+          recipient has no birthday wishlist to show, and `celebrantPersonId` is
+          null. It renders nothing at all when the list is empty.
+
+          The year is the event's OWN year, so the list shown is the one written
+          for the birthday being planned rather than whichever is most recent.
+        */}
+        {event?.type === "birthday"
+          && event.celebrantPersonId !== null
+          && event.celebrantPersonId === person.personId
+          && (
+            <WishlistPanel
+              personId={person.personId}
+              personName={name}
+              occurrenceYear={Number(event.eventDate.slice(0, 4))}
+            />
+          )}
 
         <GiftIdeas recipientId={person.id} recipientName={name} onCountChange={onIdeaCountChange} />
 

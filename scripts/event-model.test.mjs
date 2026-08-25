@@ -73,7 +73,7 @@ const financialTables = [
 // The migration history is append-only
 // ---------------------------------------------------------------------------
 
-test("migration 033 is the newest migration, and nothing else has been added", () => {
+test("migration 040 is the newest migration, and nothing else has been added", () => {
   // Pinned deliberately. Adding a migration fails this test on purpose, so a
   // schema change cannot land without this file being reviewed and its checks
   // extended to whatever the new migration introduced.
@@ -83,8 +83,37 @@ test("migration 033 is the newest migration, and nothing else has been added", (
   // `scripts/event-administration.test.mjs` and
   // `scripts/birthday-reminders.test.mjs`; what THIS file still owns is that
   // 025 remains the Event layer and that 026 did not disturb it.
-  assert.equal(migrationFiles.at(-1), membershipMigrationName);
-  assert.equal(migrationFiles.length, 33);
+  assert.equal(migrationFiles.at(-1), "202608100040_own_birthday_wishlist.sql");
+  assert.equal(migrationFiles.at(-2), "202608100039_area_aware_contributor_permissions.sql");
+  assert.equal(migrationFiles.at(-3), "202608100038_acting_area.sql", "038 is still present, unedited");
+  assert.ok(migrationFiles.includes(membershipMigrationName), "033 is still present, unedited");
+  assert.equal(migrationFiles.length, 40);
+
+  /*
+   * 039 AND 040 REWRITE NO ROW.
+   *
+   * 039 replaces four function bodies and adds one trigger; 040 adds one empty
+   * table. Between them they are the whole of the post-Phase-5 hardening, and
+   * neither is allowed to touch a single piece of existing family data --
+   * Christmas 2026 included, which is live money.
+   */
+  for (const name of [
+    "202608100039_area_aware_contributor_permissions.sql",
+    "202608100040_own_birthday_wishlist.sql",
+  ]) {
+    const sql = readFileSync(join(migrationsDirectory, name), "utf8").replace(/\r\n/gu, "\n").toLowerCase();
+    for (const forbidden of [
+      "drop table", "drop column", "truncate", "delete from public.",
+      "update public.purchases", "update public.christmas_recipients",
+      "update public.purchase_allocations", "update public.settlements",
+      "update public.contributors", "update public.recipient_contributions",
+      "update public.payment_receipts", "update public.events",
+      "insert into public.purchases", "insert into public.events",
+      "alter table public.purchases", "alter table public.events",
+    ]) {
+      assert.ok(!sql.includes(forbidden), `${name} must not ${forbidden}`);
+    }
+  }
   for (const name of [
     eventMigrationName, birthdayMigrationName, reminderMigrationName,
     occasionMigrationName, budgetMigrationName, contributorMigrationName,

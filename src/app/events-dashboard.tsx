@@ -13,6 +13,8 @@ import { AppShell, PageHeader } from "./components/app-shell";
 import { GarlandRule } from "./components/festive/garland";
 import { FinancialProgressBar } from "./components/financial-progress";
 import { Badge, ButtonLink, EmptyState, Notice, cx, type BadgeTone } from "./components/ui";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { SELF_PRIVATE_CTA } from "@/lib/wishlist.ts";
 
 export type DashboardEvent = EventSummary & {
   spentPennies: number;
@@ -330,18 +332,24 @@ function BirthdayCard({
           </div>
         )}
 
-      {/* NO CALL TO ACTION ON YOUR OWN BIRTHDAY. Not "Start planning", which
-          would invite somebody to buy their own present and would also reveal
-          that nothing had been started; and not "Open" either, which promises
-          something the reader cannot be shown. The card still links to the
-          person, where the privacy screen explains itself properly. */}
-      {!isPrivate && (
-        <div className="mt-auto flex items-end justify-end pt-4">
-          <p className="text-xs font-semibold tracking-eyebrow text-accent uppercase">
-            {planning ? "Open →" : isAdmin ? "Start planning →" : "Open →"}
-          </p>
-        </div>
-      )}
+      {/* WHAT YOUR OWN BIRTHDAY CARD OFFERS.
+          Still not "Start planning", which would invite somebody to buy their
+          own present and would also reveal that nothing had been started; and
+          still not "Open", which promises a workspace the reader cannot be
+          shown. What it does offer now is the one thing they CAN do here --
+          their own wishlist -- and it says exactly that, so the link is not a
+          door into something they will be refused.
+
+          The wording is a constant so a test can hold it: "Start planning" or
+          "Budget" appearing on this branch would be a privacy failure rather
+          than a typo. */}
+      <div className="mt-auto flex items-end justify-end pt-4">
+        <p className="text-xs font-semibold tracking-eyebrow text-accent uppercase">
+          {isPrivate
+            ? `${SELF_PRIVATE_CTA} →`
+            : planning ? "Open →" : isAdmin ? "Start planning →" : "Open →"}
+        </p>
+      </div>
     </Link>
   );
 }

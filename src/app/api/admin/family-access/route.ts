@@ -32,6 +32,20 @@ type PersonRow = {
   id: string;
   name: string;
   /**
+   * WHICH FAMILY THIS PERSON IS IN.
+   *
+   * Read here so a membership written for them can name it. Migration 037 made
+   * `app_members.area_id` NOT NULL and fills a missing one from whoever is
+   * calling -- but this route calls with the SERVICE ROLE, which has no
+   * membership and therefore no Area to be filled from, so the insert is
+   * refused outright unless the Area arrives with it.
+   *
+   * Taken from the PERSON, never from a header or a cookie: a membership is for
+   * the family its person is in, and there is no request in which that is a
+   * different family.
+   */
+  area_id: string;
+  /**
    * May this person be offered when choosing who shares the cost of a gift?
    *
    * Family membership and contributor eligibility are different facts. Somebody
@@ -82,10 +96,17 @@ export async function GET() {
     // Route handlers are public entry points. Do not rely on Proxy or UI checks.
     const context = await requireFamilyAccessAdmin();
     const [peopleResult, membershipResult, authUsers] = await Promise.all([
-      context.admin.from("people").select("id, name, is_family_contributor").order("name"),
+      // Scoped by hand. The service role sees every family; this screen is
+      // about the one its administrator administers.
+      context.admin
+        .from("people")
+        .select("id, name, area_id, is_family_contributor")
+        .eq("area_id", context.areaId)
+        .order("name"),
       context.admin
         .from("app_members")
-        .select("id, person_id, contributor_id, user_id, email, role, active"),
+        .select("id, person_id, contributor_id, user_id, email, role, active")
+        .eq("area_id", context.areaId),
       listAllAuthUsers(context.admin),
     ]);
 
@@ -164,6 +185,7 @@ export async function POST(request: NextRequest) {
       return await createOrSetUpAccount(
         requestOrigin,
         context.admin,
+        context.areaId,
         context.authUserId,
         personId,
         action,
@@ -175,6 +197,7 @@ export async function POST(request: NextRequest) {
       return await resetAccount(
         requestOrigin,
         context.admin,
+        context.areaId,
         personId,
         action,
       );
@@ -183,6 +206,7 @@ export async function POST(request: NextRequest) {
     if (action === "disable" || action === "reactivate") {
       return await setAccountActive(
         context.admin,
+        context.areaId,
         context.authUserId,
         personId,
         action === "reactivate",
@@ -191,6 +215,7 @@ export async function POST(request: NextRequest) {
 
     return await updateAccountEmail(
       context.admin,
+      context.areaId,
       personId,
       normalizeEmail(body.email),
     );
@@ -205,12 +230,13 @@ export async function POST(request: NextRequest) {
 async function createOrSetUpAccount(
   requestOrigin: string,
   admin: FamilyAccessAdminClient,
+  areaId: string,
   currentAuthUserId: string,
   personId: string,
   action: "create" | "send-invite" | "copy-setup-link",
   body: Record<string, unknown>,
 ) {
-  const { person, membership } = await loadTarget(admin, personId);
+  const { person, membership } = await loadTarget(admin, areaId, personId);
   const existingAccount = Boolean(membership?.email || membership?.user_id);
 
   if (membership?.role === "admin" || membership?.user_id === currentAuthUserId) {
@@ -317,7 +343,7 @@ async function createOrSetUpAccount(
   }
 
   let authUser = linkedAuthUser ?? emailAuthUser;
-  await ensureNoAccountCollision(admin, personId, email, authUser?.id ?? null);
+  await ensureNoAccountCollision(admin, areaId, personId, email, authUser?.id ?? null);
 
   const redirectTo = passwordSetupRedirect(requestOrigin);
   let setupLink: string | undefined;
@@ -357,10 +383,10 @@ async function createOrSetUpAccount(
       authUser = invited.data.user;
     }
 
-    await ensureNoAccountCollision(admin, personId, email, authUser.id);
-    await linkMembership(admin, personId, email, authUser.id, membership);
+    await ensureNoAccountCollision(admin, areaId, personId, email, authUser.id);
+    await linkMembership(admin, person, email, authUser.id, membership);
   } else {
-    await linkMembership(admin, personId, email, authUser.id, membership);
+    await linkMembership(admin, person, email, authUser.id, membership);
 
     if (delivery === "link") {
       const generated = await admin.auth.admin.generateLink({
@@ -409,10 +435,11 @@ async function createOrSetUpAccount(
 async function resetAccount(
   requestOrigin: string,
   admin: FamilyAccessAdminClient,
+  areaId: string,
   personId: string,
   action: "send-reset" | "copy-reset-link",
 ) {
-  const { person, membership } = await loadTarget(admin, personId);
+  const { person, membership } = await loadTarget(admin, areaId, personId);
   if (!membership?.active) {
     throw new FamilyAccessError(
       409,
@@ -477,11 +504,12 @@ async function resetAccount(
 
 async function setAccountActive(
   admin: FamilyAccessAdminClient,
+  areaId: string,
   currentAuthUserId: string,
   personId: string,
   active: boolean,
 ) {
-  const { person, membership } = await loadTarget(admin, personId);
+  const { person, membership } = await loadTarget(admin, areaId, personId);
   if (!membership?.email && !membership?.user_id) {
     throw new FamilyAccessError(409, "This person does not have an account.");
   }
@@ -521,10 +549,11 @@ async function setAccountActive(
 
 async function updateAccountEmail(
   admin: FamilyAccessAdminClient,
+  areaId: string,
   personId: string,
   email: string,
 ) {
-  const { person, membership } = await loadTarget(admin, personId);
+  const { person, membership } = await loadTarget(admin, areaId, personId);
   if (!membership?.email && !membership?.user_id) {
     throw new FamilyAccessError(
       409,
@@ -538,7 +567,7 @@ async function updateAccountEmail(
     );
   }
 
-  await ensureNoAccountCollision(admin, personId, email, membership.user_id);
+  await ensureNoAccountCollision(admin, areaId, personId, email, membership.user_id);
   const oldEmail = membership.email ? normalizeEmail(membership.email) : null;
 
   if (membership.user_id) {
@@ -603,14 +632,24 @@ async function updateAccountEmail(
 
 async function loadTarget(
   admin: FamilyAccessAdminClient,
+  areaId: string,
   personId: string,
 ) {
   const [personResult, membershipResult] = await Promise.all([
-    admin.from("people").select("id, name").eq("id", personId).maybeSingle(),
+    // THE ONE GATEWAY. Every mutation in this file reaches its person through
+    // here, so scoping this scopes all of them: a person from another family
+    // comes back as "not found", exactly as an id that names nobody does.
+    admin
+      .from("people")
+      .select("id, name, area_id, is_family_contributor")
+      .eq("id", personId)
+      .eq("area_id", areaId)
+      .maybeSingle(),
     admin
       .from("app_members")
       .select("id, person_id, contributor_id, user_id, email, role, active")
-      .eq("person_id", personId),
+      .eq("person_id", personId)
+      .eq("area_id", areaId),
   ]);
 
   if (personResult.error || membershipResult.error) {
@@ -637,13 +676,24 @@ async function loadTarget(
 
 async function ensureNoAccountCollision(
   admin: FamilyAccessAdminClient,
+  areaId: string,
   personId: string,
   email: string,
   authUserId: string | null,
 ) {
+  /**
+   * WITHIN ONE FAMILY, which is what migration 035 made these rules.
+   *
+   * An email and an Auth account are unique PER AREA now, deliberately: that is
+   * exactly what lets one person belong to two families with one login. Checking
+   * across every family would refuse a perfectly legitimate second membership
+   * and would also disclose that an address is in use somewhere the
+   * administrator cannot see.
+   */
   const { data, error } = await admin
     .from("app_members")
-    .select("person_id, user_id, email");
+    .select("person_id, user_id, email")
+    .eq("area_id", areaId);
   if (error) {
     throw new FamilyAccessError(
       502,
@@ -671,7 +721,7 @@ async function ensureNoAccountCollision(
 
 async function linkMembership(
   admin: FamilyAccessAdminClient,
-  personId: string,
+  person: PersonRow,
   email: string,
   userId: string,
   membership: MembershipRow | null,
@@ -683,7 +733,22 @@ async function linkMembership(
   // right contributor per event from person_id, which gives the same answer
   // for the row this used to find and the correct answer for every other event.
   const values = {
-    person_id: personId,
+    person_id: person.id,
+    /**
+     * THE AREA, NAMED EXPLICITLY, BECAUSE NOTHING HERE CAN DERIVE IT.
+     *
+     * Every other write in this application arrives with a signed-in user
+     * behind it, and migration 037's `default_area_for_new_row` fills the
+     * column from their membership. This route uses the service role -- it has
+     * to, because it creates the Auth account -- so `auth.uid()` is null, there
+     * is no membership to read, and the trigger refuses the row rather than
+     * guessing. Inviting somebody fails with 23502 without this line.
+     *
+     * It is the person's own Area, so 035's cross-Area guard agrees with it by
+     * construction: a membership may not name a person from another family, and
+     * this one names the family that person is already in.
+     */
+    area_id: person.area_id,
     contributor_id: membership?.contributor_id ?? null,
     user_id: userId,
     email,

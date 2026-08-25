@@ -74,6 +74,27 @@ const peopleMigration = readFileSync(join(migrationsDirectory, peopleMigrationNa
 const membershipMigrationName = "202608100033_membership_guards.sql";
 const membershipMigration = readFileSync(join(migrationsDirectory, membershipMigrationName), "utf8").replace(/\r\n/gu, "\n");
 
+const areasMigrationName = "202608100034_areas_and_memberships.sql";
+const areasMigration = readFileSync(join(migrationsDirectory, areasMigrationName), "utf8").replace(/\r\n/gu, "\n");
+
+const integrityMigrationName = "202608100035_area_integrity.sql";
+const integrityMigration = readFileSync(join(migrationsDirectory, integrityMigrationName), "utf8").replace(/\r\n/gu, "\n");
+
+const visibilityMigrationName = "202608100036_area_scoped_visibility.sql";
+const visibilityMigration = readFileSync(join(migrationsDirectory, visibilityMigrationName), "utf8").replace(/\r\n/gu, "\n");
+
+const barrierMigrationName = "202608100037_area_write_barrier.sql";
+const barrierMigration = readFileSync(join(migrationsDirectory, barrierMigrationName), "utf8").replace(/\r\n/gu, "\n");
+
+const actingMigrationName = "202608100038_acting_area.sql";
+const actingMigration = readFileSync(join(migrationsDirectory, actingMigrationName), "utf8").replace(/\r\n/gu, "\n");
+
+const areaAuthMigrationName = "202608100039_area_aware_contributor_permissions.sql";
+const areaAuthMigration = readFileSync(join(migrationsDirectory, areaAuthMigrationName), "utf8").replace(/\r\n/gu, "\n");
+
+const wishlistMigrationName = "202608100040_own_birthday_wishlist.sql";
+const wishlistMigration = readFileSync(join(migrationsDirectory, wishlistMigrationName), "utf8").replace(/\r\n/gu, "\n");
+
 const applicationTables = [
   "christmas_events",
   "people",
@@ -91,7 +112,10 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  assert.equal(migrationFiles.at(-1), membershipMigrationName);
+  assert.equal(migrationFiles.at(-1), wishlistMigrationName);
+  assert.equal(migrationFiles.at(-2), areaAuthMigrationName);
+  assert.ok(migrationFiles.includes(actingMigrationName), "the acting-Area migration is still present");
+  assert.ok(migrationFiles.includes(membershipMigrationName), "the membership guard migration is still present");
   assert.ok(migrationFiles.includes(peopleMigrationName), "the People directory migration is still present");
   assert.ok(migrationFiles.includes(privacyMigrationName), "the birthday privacy migration is still present");
 
@@ -656,8 +680,13 @@ test("admin-only RPCs and server account management re-authorize the caller", ()
   assert.match(familyAccessAuthorization, /^import "server-only";/);
   assert.match(
     familyAccessAuthorization,
-    /membership\.active\s*\|\|\s*membership\.role !== "admin"/,
+    // The admin check now sits on the membership resolved for the family on
+    // screen. It reads the SAME two facts -- active, and role -- from a
+    // membership that is unambiguous, which is what let a login in two
+    // families administer the one it actually administers.
+    /!member\.active \|\| member\.role !== "admin"/,
   );
+  assert.match(familyAccessAuthorization, /getCurrentMember\(\)/);
 });
 
 test("the server secret is absent from client components", () => {
@@ -2212,4 +2241,206 @@ test("14. the Event layer adds a table without adding a way in", () => {
   // untouched: this migration contains no authorization logic about payments.
   assert.doesNotMatch(statements, /payment_receipts_are_append_only/);
   assert.doesNotMatch(statements, /current_app_contributor_id/);
+});
+
+// ---------------------------------------------------------------------------
+// PHASE 5: Areas. What five migrations add, security-wise, and what they must
+// not have taken away.
+//
+// The BEHAVIOUR is rehearsed against real PostgreSQL in the disposable
+// preflight database, where two families are built and every read and write
+// between them is attempted as a real signed-in user. These are the checks that
+// can be made from the source, and that would otherwise only be true by
+// accident.
+// ---------------------------------------------------------------------------
+
+const phase5Migrations = () => [
+  [areasMigrationName, areasMigration],
+  [integrityMigrationName, integrityMigration],
+  [visibilityMigrationName, visibilityMigration],
+  [barrierMigrationName, barrierMigration],
+  [actingMigrationName, actingMigration],
+];
+
+test("no Area migration hands anything to a signed-out caller", () => {
+  // A tenant boundary that `anon` can reach is not one.
+  for (const [name, source] of phase5Migrations()) {
+    assert.doesNotMatch(
+      source,
+      /grant [a-z, ]+ on (table|function)[^;]*\bto\b[^;]*\banon\b/i,
+      `${name} grants anon something`,
+    );
+    assert.doesNotMatch(source, /bypassrls/iu, `${name} must not grant a bypass`);
+  }
+});
+
+test("every new Area function runs as definer with a pinned search_path", () => {
+  // An unpinned definer function is a search-path attack on a routine running
+  // as the owner. The one exception is stated by name below.
+  const unpinned = [];
+  for (const [name, source] of phase5Migrations()) {
+    for (const match of source.matchAll(/^create or replace function (public\.\w+)\(/gmu)) {
+      const fn = match[1];
+      const body = source.slice(match.index, source.indexOf("$$;", match.index));
+      if (!/security definer/u.test(body) || !/set search_path = ''/u.test(body)) {
+        unpinned.push(`${fn} (${name})`);
+      }
+    }
+  }
+
+  // acting_area() reads a setting and touches no table, so it is deliberately
+  // neither: making it definer would give it rights it has no use for.
+  assert.deepEqual(unpinned, ["public.acting_area (202608100038_acting_area.sql)"]);
+});
+
+test("no Area migration edits an applied one or rewrites family money", () => {
+  const financial = [
+    "purchases",
+    "purchase_allocations",
+    "settlements",
+    "payment_receipts",
+    "recipient_contributions",
+  ];
+
+  for (const [name, source] of phase5Migrations()) {
+    assert.match(source, /MIGRATIONS 001-0\d\d ARE NOT EDITED/u, `${name} must say it edits none of them`);
+
+    const code = source.replace(/--[^\n]*/g, "");
+    for (const table of financial) {
+      assert.doesNotMatch(code, new RegExp(`update\s+public\.${table}\s+set`, "i"), `${name} rewrites ${table}`);
+      assert.doesNotMatch(code, new RegExp(`delete\s+from\s+public\.${table}\b`, "i"), `${name} deletes from ${table}`);
+    }
+  }
+});
+
+test("four tables carry the Area and everything else derives it", () => {
+  // A tenant column on all twenty would be twenty places for the answer to
+  // disagree with itself. Migration 025 already refuses to let a child row
+  // straddle two events, so an event's Area settles every row beneath it.
+  for (const table of ["people", "events", "app_members"]) {
+    assert.ok(areasMigration.includes(`alter table public.${table} add column if not exists area_id`), table);
+  }
+  assert.match(visibilityMigration, /alter table public\.audit_log add column if not exists area_id/u);
+
+  for (const fn of ["area_of_event", "area_of_recipient", "area_of_purchase", "area_of_gift_idea", "area_of_person", "area_of_member"]) {
+    assert.ok(visibilityMigration.includes(`create or replace function public.${fn}(`), `${fn} must exist`);
+  }
+
+  // The column becomes compulsory only once something fills it in for the
+  // routines that predate Areas.
+  assert.match(barrierMigration, /alter table public\.people alter column area_id set not null;/u);
+  assert.match(barrierMigration, /default_area_for_new_row/u);
+});
+
+test("every policy names an Area, or is scoped to the caller's own row", () => {
+  // Asserted inside the migration as a sweep over pg_policies, which is
+  // stronger than any list here: a table added later starts failing it until
+  // somebody scopes it.
+  assert.match(visibilityMigration, /from pg_policies/u);
+  assert.match(visibilityMigration, /does not mention an Area/u);
+
+  // Birthday privacy resolves the reader INSIDE the event's own Area. Comparing
+  // a celebrant in one family against the reader's person in another could show
+  // somebody their own presents.
+  for (const fn of ["is_own_birthday_event", "is_own_birthday_recipient", "is_own_birthday_purchase", "is_own_birthday_gift_idea"]) {
+    const start = visibilityMigration.indexOf(`function public.${fn}(`);
+    assert.ok(start > 0, `${fn} must be redefined`);
+    const body = visibilityMigration.slice(start, visibilityMigration.indexOf("$$;", start));
+    assert.match(body, /current_person_in_area\(e\.area_id\)/u, `${fn} must resolve the reader in the event's Area`);
+  }
+});
+
+test("nothing anywhere can act in two families at once", () => {
+  // NO GOD MODE. The switcher works because a person holds a membership in each
+  // family, not because anything is allowed to look at both.
+  for (const fn of ["current_app_member_id", "current_person_id", "is_app_admin"]) {
+    const start = visibilityMigration.indexOf(`function public.${fn}(`);
+    assert.ok(start > 0, `${fn} must be redefined in 036`);
+    const body = visibilityMigration.slice(start, visibilityMigration.indexOf("$$;", start));
+    assert.match(body, /= 1/u, `${fn} must refuse a login that belongs to more than one Area`);
+  }
+
+  // And saying which family you are in is a statement of intent, never of
+  // authority: it is checked against the membership table, and it dies with the
+  // transaction so a pooled connection cannot carry it into the next request.
+  assert.match(actingMigration, /if not public\.is_area_member\(p_area_id\) then/u);
+  assert.match(actingMigration, /perform set_config\('app\.acting_area', p_area_id::text, true\);/u);
+  assert.doesNotMatch(actingMigration, /set_config\('app\.acting_area'[^)]*, false\)/u,
+    "the acting Area must never be session-scoped");
+});
+
+test("the write barrier covers every table a family owns", () => {
+  // Row level security does not constrain a SECURITY DEFINER routine, and
+  // almost every write in this application is one. The barrier is a trigger for
+  // exactly that reason.
+  for (const table of [
+    "people", "events", "app_members", "christmas_recipients", "contributors",
+    "purchases", "purchase_allocations", "gift_ideas", "recipient_contributions",
+    "settlements", "payment_receipts", "item_photos",
+  ]) {
+    assert.ok(barrierMigration.includes(`'${table}'`), `${table} must be behind the write barrier`);
+  }
+  assert.match(barrierMigration, /before insert or update or delete on public\.%I/u);
+
+  // The exemption is "no user behind the request", which is exactly the set of
+  // callers with no membership to check -- not a role name that could be
+  // granted to somebody by accident.
+  assert.match(barrierMigration, /if \(select auth\.uid\(\)\) is null then/u);
+});
+
+test("the definer routines an ordinary member can call resolve their own Area", () => {
+  // Row level security does not constrain a SECURITY DEFINER routine, and 036
+  // could only scope policies. `list_gift_ideas` is the one definer READER a
+  // member can call, and until 039 it asked `is_active_app_member()` and
+  // nothing else -- so any member of any family could read any recipient's gift
+  // ideas, and a birthday's celebrant could read their own.
+  const start = areaAuthMigration.indexOf("create or replace function public.list_gift_ideas");
+  assert.ok(start > 0, "list_gift_ideas must be redefined in 039");
+  const body = areaAuthMigration.slice(start, areaAuthMigration.indexOf("$$;", start));
+  assert.match(body, /public\.area_of_recipient\(p_christmas_recipient_id\)/u, "it derives the Area");
+  assert.match(body, /not public\.is_area_member\(owning_area\)/u, "and checks the caller is in it");
+  assert.match(body, /public\.is_own_birthday_recipient\(p_christmas_recipient_id\)/u, "and keeps the surprise rule");
+
+  // A privileged WRITE derives its Area from the row it is about rather than
+  // from the acting-Area note, which is a request-scoped side effect.
+  const birthday = areaAuthMigration.slice(
+    areaAuthMigration.indexOf("create or replace function public.set_person_birthday"),
+    areaAuthMigration.indexOf("$$;", areaAuthMigration.indexOf("create or replace function public.set_person_birthday")),
+  );
+  assert.match(birthday, /target_area := public\.area_of_person\(p_person_id\);/u);
+  assert.match(birthday, /public\.is_area_admin\(target_area\)/u);
+  assert.match(birthday, /public\.is_area_contributor_member\(target_area\)/u);
+  assert.ok(!birthday.includes("is_app_admin"), "and never the question that reads a header");
+  assert.ok(!birthday.includes("acting_area"));
+});
+
+test("the wishlist opens one table and loosens nothing else", () => {
+  // 040 is additive. The ONLY existing object it replaces is 037's
+  // `area_of_written_row`, and only to add its own table to the dispatch.
+  const replaced = [...wishlistMigration.matchAll(/create or replace function public\.(\w+)/gu)]
+    .map((match) => match[1])
+    .sort();
+  assert.deepEqual(replaced, ["anchor_wishlist_idea", "area_of_written_row", "is_own_wishlist_person"]);
+
+  // Every policy it writes is on its own table.
+  const policyTables = [...wishlistMigration.matchAll(/on public\.(\w+) for (select|insert|update|delete)/gu)]
+    .map((match) => match[1]);
+  assert.deepEqual([...new Set(policyTables)], ["birthday_wishlist_ideas"]);
+
+  // Nothing it adds consults a role, so an administrator who is the celebrant
+  // is restricted exactly as anybody else is.
+  const policies = wishlistMigration.slice(
+    wishlistMigration.indexOf('drop policy if exists "members read wishlists in their area"'),
+    wishlistMigration.indexOf("-- 5. The write barrier"),
+  );
+  for (const forbidden of ["is_app_admin", "is_area_admin", "role = 'admin'"]) {
+    assert.ok(!policies.includes(forbidden), `a wishlist policy must not consult ${forbidden}`);
+  }
+
+  // And the table is behind the same write barrier as everything else a family
+  // owns, with its Area derived before the barrier is asked about it.
+  assert.match(wishlistMigration, /when 'birthday_wishlist_ideas' then \(p_row ->> 'area_id'\)::uuid/u);
+  assert.match(wishlistMigration, /create trigger birthday_wishlist_ideas_refuse_foreign_area/u);
+  assert.match(wishlistMigration, /create trigger birthday_wishlist_ideas_anchor/u);
+  assert.match(wishlistMigration, /revoke all on table public\.birthday_wishlist_ideas from anon;/u);
 });

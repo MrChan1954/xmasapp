@@ -4,7 +4,7 @@ import { createClient as createAdminSupabaseClient } from "@supabase/supabase-js
 import type { User } from "@supabase/supabase-js";
 import { validateEmail, validateUuid } from "@/lib/input-validation";
 
-import { createClient as createSessionClient } from "@/utils/supabase/server";
+import { getCurrentMember } from "@/utils/supabase/current-member";
 
 export class FamilyAccessError extends Error {
   constructor(
@@ -38,45 +38,75 @@ function createAdminClient() {
 
 export type FamilyAccessAdminClient = ReturnType<typeof createAdminClient>;
 
+/**
+ * MAY THIS CALLER ADMINISTER THE FAMILY THEY ARE LOOKING AT?
+ *
+ * WHY THIS IS NOT "DO THEY HAVE EXACTLY ONE MEMBERSHIP". It used to be, and
+ * that was correct for exactly as long as one login meant one family. With
+ * Areas it locks out the very person the switcher exists for: administer
+ * Alpha, belong to Bravo, and the count is two, so Family Access refused them
+ * in BOTH. Failing closed is the right direction to fail, but it is still a
+ * failure -- there is no way to run a family you administer.
+ *
+ * WHAT REPLACES IT. The membership in the Area on screen, resolved by
+ * `getCurrentMember` -- the same mechanism every other screen uses, so there is
+ * one answer to "which family is this about" and not two that can disagree.
+ *
+ * THE SELECTED AREA IS A CHOICE, NEVER A PERMISSION.
+ *   * The list of memberships is read through the CALLER'S OWN session, so row
+ *     level security has already narrowed it to their own rows. A cookie naming
+ *     a family they are not in matches nothing and they are refused.
+ *   * The role is then read from THAT membership. Administering Alpha says
+ *     nothing about Bravo, and selecting Bravo does not carry Alpha's role into
+ *     it.
+ *   * A login with several memberships and no choice made gets none, which
+ *     every caller already treats as "not permitted".
+ *
+ * Nothing a browser can send makes this return an Area the caller is not an
+ * active administrator of.
+ */
 export async function requireFamilyAccessAdmin() {
-  const sessionClient = await createSessionClient();
-  const {
-    data: { user },
-    error: userError,
-  } = await sessionClient.auth.getUser();
+  const { user, member } = await getCurrentMember();
 
-  if (userError || !user) {
+  if (!user) {
     throw new FamilyAccessError(401, "You must sign in to continue.");
   }
 
-  const { data: memberships, error: membershipError } = await sessionClient
-    .from("app_members")
-    .select("person_id, role, active")
-    .eq("user_id", user.id);
-
-  if (membershipError) {
-    throw new FamilyAccessError(
-      503,
-      "Your Family Access permission could not be checked.",
-    );
-  }
-
-  if (memberships.length !== 1) {
-    throw new FamilyAccessError(403, "Your account is not approved for this app.");
-  }
-
-  const membership = memberships[0];
-  if (!membership.active || membership.role !== "admin") {
+  /**
+   * No membership in the family on screen. Deliberately the SAME refusal as
+   * "you are a member here but not its administrator": telling the two apart
+   * would let somebody probe which families an account belongs to.
+   */
+  if (!member || !member.active || member.role !== "admin") {
     throw new FamilyAccessError(
       403,
-      "Only the Global Admin can manage family access.",
+      "Only this family's admin can manage its access.",
     );
+  }
+
+  /**
+   * THE AREA THIS PERMISSION WAS GRANTED IN, RETURNED WITH IT.
+   *
+   * Everything past this point uses the SERVICE ROLE -- it has to, because it
+   * creates Auth accounts -- and the service role bypasses row level security
+   * AND migration 037's write barrier, which exempts callers with no
+   * `auth.uid()`. So there is nothing left underneath to keep this route inside
+   * one family: the Area has to be carried from the check that authorised it
+   * and applied to every query by hand.
+   *
+   * Without it, an administrator of one family could list, invite, disable and
+   * re-address the accounts of a family they have never been in.
+   */
+  const areaId = (member.area_id as string | null) ?? null;
+  if (!areaId) {
+    throw new FamilyAccessError(403, "Your account is not linked to a family.");
   }
 
   return {
     admin: createAdminClient(),
     authUserId: user.id,
-    personId: membership.person_id as string | null,
+    personId: (member.person_id as string | null) ?? null,
+    areaId,
   };
 }
 

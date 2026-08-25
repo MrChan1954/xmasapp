@@ -1,4 +1,5 @@
 import { createClient } from "@/utils/supabase/client";
+import { getCurrentMemberClient } from "@/utils/supabase/current-member-client";
 import {
   calculateNetOwedBalances,
   type NetOwedBalance,
@@ -72,7 +73,7 @@ export async function loadOwedData(eventId: string): Promise<OwedData> {
   if (authResult.error || !user) throw new Error("Your signed-in account could not be verified.");
 
   const [memberResult, contributorResult, recipientResult] = await Promise.all([
-    db.from("app_members").select("person_id,contributor_id,role,active").eq("user_id", user.id).eq("active", true).maybeSingle(),
+    Promise.resolve({ data: await getCurrentMemberClient(), error: null }),
     db.from("contributors").select("id,person_id,active").eq("christmas_event_id", eventId),
     db.from("christmas_recipients").select("id,person_id").eq("christmas_event_id", eventId),
   ]);

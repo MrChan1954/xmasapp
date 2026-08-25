@@ -5,6 +5,7 @@ import { nextBirthdayOccurrence, personBirthdayFromRow } from "@/lib/birthdays.t
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { groupGiftHistory, personAccountFrom, type GiftHistoryRow, type PersonAccount, type PersonDirectoryEntry, type PersonEventHistory } from "@/lib/people.ts";
 import { londonToday } from "./birthdays-server";
+import { getCurrentMember } from "./current-member";
 import { createClient } from "./server";
 
 /**
@@ -43,11 +44,11 @@ type Db = Awaited<ReturnType<typeof createClient>>;
  * deploying and migrating. The fallback treats everybody as active, which is
  * exactly what they were.
  */
-async function selectPeople(db: Db) {
-  const withArchive = await db.from("people").select(PERSON_COLUMNS).order("name");
+async function selectPeople(db: Db, areaId: string) {
+  const withArchive = await db.from("people").select(PERSON_COLUMNS).eq("area_id", areaId).order("name");
   if (!withArchive.error) return withArchive.data ?? [];
 
-  const legacy = await db.from("people").select(LEGACY_COLUMNS).order("name");
+  const legacy = await db.from("people").select(LEGACY_COLUMNS).eq("area_id", areaId).order("name");
   if (legacy.error) throw new Error("The family's people could not be loaded.");
   return legacy.data ?? [];
 }
@@ -63,34 +64,37 @@ function toEntry(row: Record<string, unknown>): PersonDirectoryEntry {
   };
 }
 
-async function viewerIsContributor(db: Db, viewerPersonId: string | null): Promise<boolean> {
+async function viewerIsContributor(db: Db, areaId: string, viewerPersonId: string | null): Promise<boolean> {
   if (!viewerPersonId) return false;
-  const result = await db.from("people").select("is_family_contributor").eq("id", viewerPersonId).maybeSingle();
+  // Scoped like every other read of `people` here, though the id is already the
+  // viewer's own person in this Area. One rule, no exceptions to remember.
+  const result = await db.from("people").select("is_family_contributor").eq("id", viewerPersonId).eq("area_id", areaId).maybeSingle();
   return Boolean(result.data?.is_family_contributor);
 }
 
 export async function loadPeopleDirectory(): Promise<PeopleDirectory> {
   const db = await createClient();
   const today = londonToday();
+  const nothing: PeopleDirectory = {
+    people: [], isAdmin: false, canEditBirthdays: false, viewerPersonId: null, today,
+  };
 
-  const { data: auth } = await db.auth.getUser();
-  if (!auth.user) {
-    return { people: [], isAdmin: false, canEditBirthdays: false, viewerPersonId: null, today };
-  }
+  /**
+   * THE FAMILY ON SCREEN, AND ONLY THAT ONE.
+   *
+   * `getCurrentMember` in place of a `maybeSingle()` that ERRORS the moment a
+   * login holds two memberships -- and it supplies the Area the directory is
+   * then narrowed to. Row level security returns every family the reader
+   * belongs to, which is right as a permission and wrong as a screen: unscoped,
+   * this page would list two families' people in one alphabetical run.
+   */
+  const { member } = await getCurrentMember();
+  const areaId = (member?.area_id as string | null) ?? null;
+  if (!member || !areaId) return nothing;
 
-  const membership = await db
-    .from("app_members")
-    .select("role,person_id")
-    .eq("user_id", auth.user.id)
-    .eq("active", true)
-    .maybeSingle();
-  if (!membership.data) {
-    return { people: [], isAdmin: false, canEditBirthdays: false, viewerPersonId: null, today };
-  }
-
-  const people = (await selectPeople(db)).map((row) => toEntry(row as Record<string, unknown>));
-  const viewerPersonId = (membership.data.person_id as string | null) ?? null;
-  const isAdmin = membership.data.role === "admin";
+  const people = (await selectPeople(db, areaId)).map((row) => toEntry(row as Record<string, unknown>));
+  const viewerPersonId = (member.person_id as string | null) ?? null;
+  const isAdmin = member.role === "admin";
 
   return {
     people,
@@ -153,22 +157,30 @@ export async function loadPersonProfile(personId: string): Promise<PersonProfile
   const { data: auth } = await db.auth.getUser();
   if (!auth.user) return null;
 
-  const [membership, personResult] = await Promise.all([
-    db.from("app_members").select("role,person_id").eq("user_id", auth.user.id).eq("active", true).maybeSingle(),
-    db.from("people").select(PERSON_COLUMNS).eq("id", personId).maybeSingle(),
-  ]);
-  if (!membership.data) return null;
+  const { member } = await getCurrentMember();
+  const areaId = (member?.area_id as string | null) ?? null;
+  if (!member || !areaId) return null;
+
+  /**
+   * Reached through the family on screen or not at all. A login in two families
+   * may legitimately read a person in either, and row level security allows it
+   * -- but opening one family's person from inside the other is a profile whose
+   * events, purchases and history all belong to a family this screen is not
+   * about.
+   */
+  const personResult = await db
+    .from("people").select(PERSON_COLUMNS).eq("id", personId).eq("area_id", areaId).maybeSingle();
 
   const row = personResult.error
-    ? (await db.from("people").select(LEGACY_COLUMNS).eq("id", personId).maybeSingle()).data
+    ? (await db.from("people").select(LEGACY_COLUMNS).eq("id", personId).eq("area_id", areaId).maybeSingle()).data
     : personResult.data;
   // A person who does not exist and a reader who may not look are deliberately
   // the same answer.
   if (!row) return null;
 
   const person = toEntry(row as Record<string, unknown>);
-  const viewerPersonId = (membership.data.person_id as string | null) ?? null;
-  const isAdmin = membership.data.role === "admin";
+  const viewerPersonId = (member.person_id as string | null) ?? null;
+  const isAdmin = member.role === "admin";
 
   // The membership, if this reader may see one. Row level security decides:
   // a member reads only their own row, an admin reads all of them. An error or
@@ -177,6 +189,7 @@ export async function loadPersonProfile(personId: string): Promise<PersonProfile
     .from("app_members")
     .select("user_id,active,role")
     .eq("person_id", personId)
+    .eq("area_id", areaId)
     .maybeSingle();
   const account = personAccountFrom(
     membershipRow.error || !membershipRow.data
@@ -280,7 +293,7 @@ export async function loadPersonProfile(personId: string): Promise<PersonProfile
     isSelf: viewerPersonId !== null && viewerPersonId === person.personId,
     account,
     isAdmin,
-    canEditBirthdays: isAdmin || await viewerIsContributor(db, viewerPersonId),
+    canEditBirthdays: isAdmin || await viewerIsContributor(db, areaId, viewerPersonId),
     today,
   };
 }

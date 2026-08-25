@@ -434,7 +434,11 @@ test("the Global Admin edits the pool from Family access", () => {
 
   // The API has to carry the flag, or every chip renders off.
   const route = read(...APP, "api", "admin", "family-access", "route.ts");
-  assert.match(route, /select\("id, name, is_family_contributor"\)/);
+  // It also has to carry the Area, and scope the read to it: the service role
+  // sees every family, and this screen is about the one its administrator
+  // administers.
+  assert.match(route, /select\("id, name, area_id, is_family_contributor"\)/);
+  assert.match(route, /\.eq\("area_id", context\.areaId\)/);
   assert.match(route, /isFamilyContributor: Boolean\(person\.is_family_contributor\)/);
 });
 

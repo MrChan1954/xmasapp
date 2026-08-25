@@ -4,6 +4,7 @@ import { createClient as createAdminSupabaseClient } from "@supabase/supabase-js
 import type { PaymentLogReceipt, PaymentLogRecord, PaymentLogResponse } from "@/lib/payment-log";
 import { validateUuid } from "@/lib/input-validation";
 import { paymentStatusOf, type PaymentStatus } from "@/lib/payment-confirmation";
+import { getCurrentMember } from "@/utils/supabase/current-member";
 import { createClient as createSessionClient } from "@/utils/supabase/server";
 
 export class PaymentLogServerError extends Error {
@@ -28,18 +29,21 @@ export async function loadPaymentLog(eventId: string): Promise<PaymentLogRespons
   const auth = await session.auth.getUser();
   if (auth.error || !auth.data.user) throw new PaymentLogServerError(401, "You must sign in to view the Payment Log.");
 
-  const [membershipResult, eventResult] = await Promise.all([
-    session
-      .from("app_members")
-      .select("id,person_id,contributor_id,role,active")
-      .eq("user_id", auth.data.user.id)
-      .eq("active", true)
-      .maybeSingle(),
-    session.from("events").select("id,name,year").eq("id", validEventId.value).maybeSingle(),
+  // The membership in the family on screen. `maybeSingle()` here would error
+  // for a login that belongs to two, which would read as "not a member" and
+  // close the Payment Log to somebody who is one.
+  const [{ member }, eventResult] = await Promise.all([
+    getCurrentMember(),
+    session.from("events").select("id,name,year,area_id").eq("id", validEventId.value).maybeSingle(),
   ]);
-  if (membershipResult.error || !membershipResult.data) throw new PaymentLogServerError(403, "Your active family membership could not be verified.");
+  if (!member) throw new PaymentLogServerError(403, "Your active family membership could not be verified.");
+  // And the event is reached through that family or not at all: a login in two
+  // must not open one family's Payment Log while looking at the other.
+  if (eventResult.data && eventResult.data.area_id !== member.area_id) {
+    throw new PaymentLogServerError(404, "That event could not be found.");
+  }
   if (eventResult.error || !eventResult.data) throw new PaymentLogServerError(404, "That event could not be found.");
-  const membership = membershipResult.data;
+  const membership = member;
   const event = eventResult.data;
   const eventName = event.name as string;
 

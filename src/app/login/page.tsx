@@ -42,11 +42,14 @@ export default function LoginPage() {
       const db = createClient();
       const auth = await db.auth.getUser();
       if (cancelled || !auth.data.user) return;
+      // Any active membership means they are already signed in and belong
+      // somewhere. `.limit(1)`: a login in two families has two.
       const member = await db
         .from("app_members")
         .select("id")
         .eq("user_id", auth.data.user.id)
         .eq("active", true)
+        .limit(1)
         .maybeSingle();
       if (!cancelled && member.data) router.replace("/");
     };
@@ -61,7 +64,9 @@ export default function LoginPage() {
     const db = createClient();
     const result = await db.auth.signInWithPassword({ email: normalizedEmail.value, password });
     if (result.error) { setMessage("Email or password is incorrect."); setBusy(false); return; }
-    const member = await db.from("app_members").select("id").eq("user_id", result.data.user.id).eq("active", true).maybeSingle();
+    // `.limit(1)`: an account in two families has two memberships, and without it
+    // `maybeSingle()` errors and locks them out of their own login.
+    const member = await db.from("app_members").select("id").eq("user_id", result.data.user.id).eq("active", true).limit(1).maybeSingle();
     if (!member.data) { await db.auth.signOut(); setMessage("This account does not have access to this Christmas."); setBusy(false); return; }
     router.push("/"); router.refresh();
   };

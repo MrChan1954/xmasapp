@@ -1,8 +1,10 @@
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { upcomingBirthdays, type UpcomingBirthday } from "@/lib/birthdays.ts";
 import { loadFamilyBirthdays, londonToday, type BirthdayPlanning } from "@/utils/supabase/birthdays-server";
+import { loadAreaContext } from "@/utils/supabase/areas-server";
 import { getCurrentMember } from "@/utils/supabase/current-member";
 import { listEvents } from "@/utils/supabase/events-server";
+import { CreateAreaForm } from "./areas/new/create-area-form";
 import { EventsDashboard, type DashboardEvent } from "./events-dashboard";
 
 export const dynamic = "force-dynamic";
@@ -33,6 +35,18 @@ export default async function EventsPage() {
   if (!user || !member) {
     return <EventsDashboard events={[]} birthdays={[]} today={londonToday()} isAdmin={false} />;
   }
+
+  // AN ACCOUNT WITH NO FAMILY IS NOT AN EMPTY DASHBOARD. Somebody who has just
+  // signed up has nothing to see and no way to guess what to do next, so the
+  // root RENDERS the one action that starts everything.
+  //
+  // RENDERED, NOT REDIRECTED TO, on purpose. "/" is the PWA's start_url and the
+  // one route in this app that must never resolve to somewhere else -- a
+  // redirect here is a hop on every cold start and, historically, the way the
+  // front door kept ending up inside Christmas. An account that HAS a family
+  // never reaches this line at all.
+  const { needsSetup } = await loadAreaContext();
+  if (needsSetup) return <CreateAreaForm first />;
 
   const today = londonToday();
   let events: DashboardEvent[] = [];

@@ -9,6 +9,7 @@ import {
   validateRecipientAllocationSnapshot,
   type RecipientAllocation,
 } from "@/lib/recipient-allocations";
+import { getCurrentMemberClient } from "@/utils/supabase/current-member-client";
 import { createClient } from "@/utils/supabase/client";
 import { isAuthRoute } from "./components/nav-items";
 import { eventRealtimeSources, useRealtimeRefresh } from "./components/use-realtime-refresh";
@@ -20,7 +21,15 @@ export type SaveRecipientInput = {
   budgetPennies: number;
   allocations: RecipientAllocation[];
 };
-export type ActiveEvent = { id: string; name: string; type: string; eventDate: string; status: string; year: number | null };
+/**
+ * The event the chrome is about.
+ *
+ * `celebrantPersonId` is here so a screen can tell whether a recipient IS the
+ * birthday person -- which is what decides whether their own wishlist is worth
+ * showing beside the family's ideas. A birthday event has exactly one
+ * celebrant; every other kind has none.
+ */
+export type ActiveEvent = { id: string; name: string; type: string; eventDate: string; status: string; year: number | null; celebrantPersonId: string | null };
 type Family = { eventId: string | null; event: ActiveEvent | null; people: Person[]; loading: boolean; error: string | null; role: "admin" | "member" | null; isAdmin: boolean; saveRecipient: (input: SaveRecipientInput) => Promise<void>; addExistingPerson: (input: { personId: string; name: string; budgetPennies: number; allocations: RecipientAllocation[] }) => Promise<void>; archive: (id: string) => Promise<void>; restore: (id: string) => Promise<void>; setIdeaCount: (id: string, count: number) => void; setPurchaseMetrics: (id: string, spentPennies: number, count: number) => void; refresh: (quiet?: boolean) => Promise<void> };
 const Context = createContext<Family | null>(null);
 
@@ -58,7 +67,10 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     // the security boundary. Every row stays behind RLS and every admin route
     // re-authorizes independently (see the comment in the family-access route).
     if (!auth.data.user) { setRole(null); setLoading(false); router.replace("/login"); return; }
-    const membership = await db.from("app_members").select("role").eq("user_id", auth.data.user.id).eq("active", true).maybeSingle();
+    // The role in the family on screen. A `maybeSingle()` here would error for a
+    // login in two families and strip the admin controls from somebody who is
+    // an administrator -- in both.
+    const membership = { data: await getCurrentMemberClient() };
     if (!membership.data) {
       await db.auth.signOut();
       setRole(null);
@@ -73,9 +85,9 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     // Identity only, for the chrome that has to name the active event. The
     // server has already validated this id in `requireEvent`; this read is
     // behind the same RLS policy and cannot widen what it returns.
-    const eventRow = await db.from("events").select("id,name,event_type,event_date,status,year").eq("id", eventId).maybeSingle();
+    const eventRow = await db.from("events").select("id,name,event_type,event_date,status,year,celebrant_person_id").eq("id", eventId).maybeSingle();
     setEvent(eventRow.data
-      ? { id: eventRow.data.id, name: eventRow.data.name, type: eventRow.data.event_type, eventDate: String(eventRow.data.event_date).slice(0, 10), status: eventRow.data.status, year: eventRow.data.year }
+      ? { id: eventRow.data.id, name: eventRow.data.name, type: eventRow.data.event_type, eventDate: String(eventRow.data.event_date).slice(0, 10), status: eventRow.data.status, year: eventRow.data.year, celebrantPersonId: eventRow.data.celebrant_person_id ?? null }
       : null);
     const recipients = await db.from("christmas_recipients").select("id,person_id,active,budget_pennies").eq("christmas_event_id", eventId).order("created_at");
     if (recipients.error) { setError("This event's people list could not be loaded."); setLoading(false); return; }

@@ -11,6 +11,7 @@ import { splitPenniesEqually } from "@/lib/recipient-allocations";
 import { describeSupabaseError, describeThrown } from "@/lib/supabase-error";
 import { createClient } from "@/utils/supabase/client";
 import { AppShell, PageHeader } from "../../components/app-shell";
+import { WishlistPanel } from "../../components/wishlist-panel";
 import { GarlandRule } from "../../components/festive/garland";
 import { Button, ButtonLink, EmptyState, Field, MoneyInput, Notice, cx } from "../../components/ui";
 
@@ -134,6 +135,12 @@ export function StartPlanningScreen({
           Nothing has been planned for {firstName}&apos;s {year} birthday yet. An admin starts the
           planning, and it will appear here once they have.
         </Notice>
+        <WishlistPanel
+          personId={personId}
+          personName={personName}
+          occurrenceYear={next ? next.year : year}
+          className="mt-6"
+        />
         <div className="mt-6">
           <ButtonLink href="/birthdays" variant="secondary">All birthdays</ButtonLink>
         </div>
@@ -203,6 +210,16 @@ export function StartPlanningScreen({
       />
 
       {error && <Notice tone="danger" className="mt-6">{error}</Notice>}
+
+      {/* What they said they would like, before anybody decides a budget. It is
+          the only thing on this page the birthday person wrote, and the only
+          thing on it they will ever see. */}
+      <WishlistPanel
+        personId={personId}
+        personName={personName}
+        occurrenceYear={year}
+        className="mt-8"
+      />
 
       <section className="mt-8 space-y-4">
         <h2 className="font-display text-xl font-semibold text-ink-900">Budget</h2>

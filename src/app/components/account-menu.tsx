@@ -1,20 +1,20 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { LogOut, Settings, ShieldCheck, Snowflake, User } from "lucide-react";
+import { Check, Home, LogOut, Settings, ShieldCheck, Snowflake, User } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
-// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { eventPath } from "@/lib/events.ts";
 import { useFamily } from "../family-context";
 import { useFestive } from "./festive/festive-context";
 import { Popover, PopoverItem, PopoverSection } from "./popover";
+import { useAreas } from "./use-areas";
 
 export function AccountMenu() {
   const router = useRouter();
   // FamilyProvider short-circuits on auth routes, so tolerate an empty role.
-  const { isAdmin, eventId } = useFamily();
+  const { isAdmin } = useFamily();
   const { snow, setSnow, reducedMotion } = useFestive();
+  const { active, choices, canSwitch, switchTo } = useAreas();
   const [email, setEmail] = useState("");
 
   useEffect(() => {
@@ -48,6 +48,7 @@ export function AccountMenu() {
           <PopoverSection>
             <div className="px-3 py-2">
               <p className="truncate text-sm font-semibold text-ink-900">{email || "Signed in"}</p>
+              {active && <p className="mt-0.5 truncate text-xs font-semibold text-ink-500">{active.name}</p>}
               {isAdmin && (
                 <p className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-gold">
                   <ShieldCheck aria-hidden size={13} strokeWidth={2} />
@@ -56,6 +57,26 @@ export function AccountMenu() {
               )}
             </div>
           </PopoverSection>
+
+          {canSwitch && (
+            <PopoverSection label="Family">
+              {choices.map((choice) => (
+                <button
+                  key={choice.id}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={choice.active}
+                  onClick={() => { if (!choice.active) void switchTo(choice.id); }}
+                  className="flex min-h-11 w-full items-center gap-2.5 rounded-xl px-3 text-left text-sm font-semibold text-ink-700 hover:bg-hover-veil hover:text-ink-900"
+                >
+                  <Home aria-hidden size={16} strokeWidth={1.8} />
+                  <span className="flex-1 truncate">{choice.name}</span>
+                  {choice.archivedAt && <span className="text-xs font-semibold text-ink-400">Archived</span>}
+                  {choice.active && <Check aria-hidden size={15} strokeWidth={2.2} className="text-gold" />}
+                </button>
+              ))}
+            </PopoverSection>
+          )}
 
           <PopoverSection label="Appearance">
             <button
@@ -78,7 +99,11 @@ export function AccountMenu() {
             <PopoverItem href="/account" icon={<User aria-hidden size={16} strokeWidth={1.8} />}>
               Account &amp; security
             </PopoverItem>
-            <PopoverItem href={eventPath(eventId ?? "", "more") ?? "/"} icon={<Settings aria-hidden size={16} strokeWidth={1.8} />}>
+            {/* THE GLOBAL scope. What follows this person into every family
+                they belong to. A family's own settings, and an event's, are
+                reached from inside the family they belong to -- see
+                src/lib/settings-scopes.ts. */}
+            <PopoverItem href="/settings" icon={<Settings aria-hidden size={16} strokeWidth={1.8} />}>
               Settings
             </PopoverItem>
             <PopoverItem

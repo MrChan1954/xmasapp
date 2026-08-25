@@ -338,6 +338,72 @@ export async function resolveSubjectEventId(
   return (receipt.data.christmas_event_id as string) ?? null;
 }
 
+/**
+ * WHICH AREA A QUEUED NOTIFICATION IS ABOUT.
+ *
+ * The audience is built from `app_members`, read through the ADMIN client so
+ * the dispatcher can see the whole family. Admin rights bypass row level
+ * security, so with more than one Area that read returns every membership in
+ * every family -- and a Christmas purchase in one would be pushed to the phones
+ * of another. This is the Area that read has to be narrowed to.
+ *
+ * DERIVED FROM THE SUBJECT, NEVER FROM THE REQUEST. A purchase reaches its Area
+ * through its event; a birthday reminder through the person it is about; a
+ * budget summary through the membership it belongs to. Nothing a caller passes
+ * decides it.
+ *
+ * Null means "could not be resolved", and the caller falls back to the
+ * unscoped read -- which is exactly today's behaviour, and correct while one
+ * Area exists. It is not correct once two do, so it is logged rather than
+ * silently accepted.
+ */
+export async function resolveSubjectAreaId(
+  kind: NotificationEventKind,
+  subjectId: string,
+  eventId: string | null,
+  reader: DataClient,
+): Promise<string | null> {
+  if (eventId) {
+    const event = await reader.from("events").select("area_id").eq("id", eventId).maybeSingle();
+    if (event.error || !event.data) return null;
+    return (event.data.area_id as string) ?? null;
+  }
+
+  if (kind === "birthday_reminder") {
+    const reminder = await reader
+      .from("birthday_reminders")
+      .select("person_id")
+      .eq("id", subjectId)
+      .maybeSingle();
+    if (reminder.error || !reminder.data) return null;
+    const person = await reader
+      .from("people")
+      .select("area_id")
+      .eq("id", reminder.data.person_id)
+      .maybeSingle();
+    if (person.error || !person.data) return null;
+    return (person.data.area_id as string) ?? null;
+  }
+
+  if (kind === "birthday_budget_month") {
+    const summary = await reader
+      .from("birthday_budget_summaries")
+      .select("app_member_id")
+      .eq("id", subjectId)
+      .maybeSingle();
+    if (summary.error || !summary.data) return null;
+    const member = await reader
+      .from("app_members")
+      .select("area_id")
+      .eq("id", summary.data.app_member_id)
+      .maybeSingle();
+    if (member.error || !member.data) return null;
+    return (member.data.area_id as string) ?? null;
+  }
+
+  return null;
+}
+
 /** The event's own row, for the notification's copy and its deep link. */
 export async function loadNotificationEvent(
   reader: DataClient,
@@ -370,6 +436,15 @@ export async function loadFamilyContext(
   admin: DataClient,
   eventId: string | null,
   event?: NotificationEvent,
+  /**
+   * WHICH FAMILY THIS AUDIENCE IS DRAWN FROM.
+   *
+   * Optional, and null means "every membership", which is what this function
+   * did before Areas existed and is still correct for a database with one. Pass
+   * it and the audience is drawn from that family alone -- see
+   * `resolveSubjectAreaId`, which is how the dispatcher works it out.
+   */
+  areaId: string | null = null,
 ): Promise<FamilyContext> {
   // With no event there is nothing event-scoped to load. The family itself —
   // who is active, and what they have asked to hear about — is what a birthday
@@ -378,7 +453,18 @@ export async function loadFamilyContext(
   const [contributors, recipients, memberships, preferences, subject] = await Promise.all([
     eventId ? reader.from("contributors").select("id,person_id,active").eq("christmas_event_id", eventId) : empty,
     eventId ? reader.from("christmas_recipients").select("id,person_id").eq("christmas_event_id", eventId) : empty,
-    admin.from("app_members").select("id,person_id,contributor_id,active").eq("active", true),
+    /**
+     * THE AUDIENCE, NARROWED TO ONE FAMILY.
+     *
+     * The admin client bypasses row level security by design -- the dispatcher
+     * has to know members it is not, to notify them. That is exactly why the
+     * Area has to be applied by hand here: there is no policy left to do it,
+     * and without this line a second Area's members would be in the audience
+     * for this Area's purchase.
+     */
+    areaId
+      ? admin.from("app_members").select("id,person_id,contributor_id,active").eq("active", true).eq("area_id", areaId)
+      : admin.from("app_members").select("id,person_id,contributor_id,active").eq("active", true),
     admin.from("notification_preferences").select("*"),
     // Read through the ADMIN client, deliberately. This decides who is left
     // OUT, and a read that came back empty because of the caller's own row
@@ -1345,19 +1431,23 @@ export async function drainNotificationOutbox(input: DrainInput): Promise<Dispat
   const contextFor = async (kind: NotificationEventKind, subjectId: string): Promise<FamilyContext | null> => {
     if (input.loadContext) return input.loadContext(admin);
     const eventId = await resolveSubjectEventId(kind, subjectId, admin);
+    // WHICH FAMILY. Resolved from the row's own subject, and part of the cache
+    // key: two Areas planning on the same day must not share an audience.
+    const areaId = await resolveSubjectAreaId(kind, subjectId, eventId, admin);
     // A birthday reminder usually has no event, and that is not a failure: it
     // gets a family-wide context and links to the Birthdays page.
     if (!eventId) {
       if (!EVENTLESS_KINDS.includes(kind)) return null;
-      const familyWide = contextByEvent.get(FAMILY_WIDE);
+      const key = `${FAMILY_WIDE}:${areaId ?? "none"}`;
+      const familyWide = contextByEvent.get(key);
       if (familyWide) return familyWide;
-      const loaded = await loadFamilyContext(admin, admin, null);
-      contextByEvent.set(FAMILY_WIDE, loaded);
+      const loaded = await loadFamilyContext(admin, admin, null, undefined, areaId);
+      contextByEvent.set(key, loaded);
       return loaded;
     }
     const cached = contextByEvent.get(eventId);
     if (cached) return cached;
-    const loaded = await loadFamilyContext(admin, admin, eventId);
+    const loaded = await loadFamilyContext(admin, admin, eventId, undefined, areaId);
     contextByEvent.set(eventId, loaded);
     return loaded;
   };

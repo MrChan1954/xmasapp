@@ -19,6 +19,7 @@ import {
   type DispatchReport,
   type NotificationEventKind,
 } from "@/lib/notification-dispatch";
+import { getCurrentMember } from "@/utils/supabase/current-member";
 import { createClient as createSessionClient } from "@/utils/supabase/server";
 
 export { NotificationError };
@@ -103,17 +104,15 @@ export async function requireNotificationMember() {
     throw new NotificationError(401, "You must sign in to manage notifications.");
   }
 
-  const membership = await session
-    .from("app_members")
-    .select("id,person_id,contributor_id,role,active")
-    .eq("user_id", auth.data.user.id)
-    .eq("active", true)
-    .maybeSingle();
-  if (membership.error || !membership.data) {
+  // The membership in the family on screen. A `maybeSingle()` here would error
+  // for a login that belongs to two, and their notification settings would
+  // simply stop working -- in both families.
+  const { member } = await getCurrentMember();
+  if (!member) {
     throw new NotificationError(403, "Your active family membership could not be verified.");
   }
 
-  return { session, member: membership.data };
+  return { session, member };
 }
 
 // ---------------------------------------------------------------------------

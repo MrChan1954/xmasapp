@@ -2,6 +2,9 @@ import "server-only";
 
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { nextBirthdayOccurrence, personBirthdayFromRow, type PersonBirthday } from "@/lib/birthdays.ts";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { canWriteWishlist, sortWishlist, toWishlistEntry, wishlistYear, type WishlistEntry } from "@/lib/wishlist.ts";
+import { getCurrentMember } from "./current-member";
 import { createClient } from "./server";
 
 /**
@@ -39,13 +42,20 @@ export type FamilyBirthdays = {
   /**
    * May the reader add or change a permanent birthday date?
    *
-   * A Global Admin always may; a family contributor may too, since keeping the
-   * calendar current is family admin rather than financial administration.
+   * THIS FAMILY'S administrator always may; THIS FAMILY'S contributors may too,
+   * since keeping the calendar current is family admin rather than financial
+   * administration.
    *
-   * THE DATABASE IS THE AUTHORITY -- migration 031's `set_person_birthday`
-   * checks the same two things itself, and a browser that ignored this would
-   * simply be refused. This exists so the app does not offer a button that is
-   * going to fail.
+   * BOTH HALVES COME FROM THE SAME AREA, which is what makes it correct for a
+   * login that belongs to two. The role is read from the membership in the
+   * family on screen, and `is_family_contributor` from that membership's own
+   * person -- so being a contributor in one family confers nothing in another.
+   *
+   * THE DATABASE IS THE AUTHORITY -- migration 039's `set_person_birthday`
+   * resolves the Area from the PERSON being edited and asks
+   * `is_area_admin`/`is_area_contributor_member` about that Area, so a browser
+   * that ignored this would simply be refused. This exists so the app does not
+   * offer a button that is going to fail.
    */
   canEditBirthdays: boolean;
   isAdmin: boolean;
@@ -81,32 +91,43 @@ export type BirthdayPlanning = {
 export async function loadFamilyBirthdays(): Promise<FamilyBirthdays> {
   const db = await createClient();
   const today = londonToday();
+  const nothing: FamilyBirthdays = {
+    people: [], birthdayEventsByPersonYear: {}, planningByPerson: {},
+    viewerPersonId: null, canEditBirthdays: false, isAdmin: false, today,
+  };
 
-  const { data: auth } = await db.auth.getUser();
-  if (!auth.user) {
-    return {
-      people: [], birthdayEventsByPersonYear: {}, planningByPerson: {},
-      viewerPersonId: null, canEditBirthdays: false, isAdmin: false, today,
-    };
-  }
+  /**
+   * WHICH FAMILY THIS SCREEN IS ABOUT.
+   *
+   * `getCurrentMember` resolves the membership for the Area on screen, which is
+   * two fixes in one. It replaces a `maybeSingle()` that ERRORS the moment a
+   * login holds two memberships -- the exact shape Areas introduce -- and it
+   * gives the queries below an Area to be scoped to.
+   *
+   * The scoping matters even though row level security is already in place.
+   * RLS returns every row of every Area the reader belongs to, which is correct
+   * as a permission and wrong as a screen: a login in two families would see
+   * both families' birthdays interleaved in one list.
+   */
+  const { member } = await getCurrentMember();
+  if (!member) return nothing;
+  const areaId = member.area_id as string | null;
+  if (!areaId) return nothing;
 
-  const [membership, peopleResult, eventResult] = await Promise.all([
-    db.from("app_members").select("role,person_id").eq("user_id", auth.user.id).eq("active", true).maybeSingle(),
-    db.from("people").select("id,name,birthday_month,birthday_day,birthday_year,is_family_contributor").order("name"),
+  const [peopleResult, eventResult] = await Promise.all([
+    db.from("people")
+      .select("id,name,birthday_month,birthday_day,birthday_year,is_family_contributor")
+      .eq("area_id", areaId)
+      .order("name"),
     // Only birthdays, only active ones: an archived event must not present
     // itself as "this year is already set up".
     db.from("events")
       .select("id,name,event_date,celebrant_person_id")
+      .eq("area_id", areaId)
       .eq("event_type", "birthday")
       .eq("status", "active"),
   ]);
 
-  if (!membership.data) {
-    return {
-      people: [], birthdayEventsByPersonYear: {}, planningByPerson: {},
-      viewerPersonId: null, canEditBirthdays: false, isAdmin: false, today,
-    };
-  }
   if (peopleResult.error) throw new Error("The family's birthdays could not be loaded.");
 
   // The shared conversion, not a second copy of it. The year of birth is the
@@ -117,8 +138,8 @@ export async function loadFamilyBirthdays(): Promise<FamilyBirthdays> {
     isFamilyContributor: Boolean(row.is_family_contributor),
   }));
 
-  const viewerPersonId = (membership.data.person_id as string | null) ?? null;
-  const isAdmin = membership.data.role === "admin";
+  const viewerPersonId = (member.person_id as string | null) ?? null;
+  const isAdmin = member.role === "admin";
 
   const birthdayEventsByPersonYear: Record<string, { id: string; name: string }> = {};
   for (const row of eventResult.data ?? []) {
@@ -336,6 +357,22 @@ export type BirthdayWorkspace = {
   unused: BirthdayOccurrence[];
   isAdmin: boolean;
   today: string;
+  /**
+   * WHAT THIS PERSON HAS SAID THEY WOULD LIKE.
+   *
+   * The one thing on a birthday its celebrant may see, because they wrote it.
+   * It comes from `birthday_wishlist_ideas`, which has no foreign key into the
+   * planning at all -- no recipient, no event, no purchase -- so reading it
+   * cannot reveal what anybody has done about it. See migration 040.
+   *
+   * Loaded for the celebrant AND for the family, deliberately: a wish is only
+   * useful if the people buying can read it.
+   */
+  wishlist: WishlistEntry[];
+  /** The birthday the list above is for, or null when no date is recorded. */
+  wishlistYear: number | null;
+  /** True only for the birthday person themselves, in this Area. */
+  canWriteWishlist: boolean;
 };
 
 /**
@@ -355,19 +392,36 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
   const today = londonToday();
   const currentYearOf = (date: string) => Number(date.slice(0, 4));
 
-  const { data: auth } = await db.auth.getUser();
-  if (!auth.user) return null;
+  /**
+   * The membership for the family on screen -- see `loadFamilyBirthdays` for
+   * why this is no longer a `maybeSingle()` on `app_members`.
+   */
+  const { member } = await getCurrentMember();
+  if (!member) return null;
+  const areaId = (member.area_id as string | null) ?? null;
+  if (!areaId) return null;
 
-  const [membership, personResult, eventResult] = await Promise.all([
-    db.from("app_members").select("role,person_id").eq("user_id", auth.user.id).eq("active", true).maybeSingle(),
-    db.from("people").select("id,name,birthday_month,birthday_day,birthday_year").eq("id", personId).maybeSingle(),
+  const [personResult, eventResult] = await Promise.all([
+    /**
+     * `eq("area_id", areaId)` is not redundant with row level security. RLS
+     * hands back every Area the reader belongs to, so a login in two families
+     * could open a person from the family it is NOT currently looking at and
+     * see a workspace that belongs to the other one. A person is reached
+     * through the family on screen or not at all.
+     */
+    db.from("people")
+      .select("id,name,birthday_month,birthday_day,birthday_year,area_id")
+      .eq("id", personId)
+      .eq("area_id", areaId)
+      .maybeSingle(),
     db.from("events")
       .select("id,name,event_date,status")
+      .eq("area_id", areaId)
       .eq("event_type", "birthday")
       .eq("celebrant_person_id", personId),
   ]);
 
-  if (!membership.data || personResult.error || !personResult.data) return null;
+  if (personResult.error || !personResult.data) return null;
 
   const row = personResult.data;
   const person: PersonBirthday = personBirthdayFromRow(row);
@@ -376,11 +430,13 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
   const currentYear = next ? next.year : currentYearOf(today);
   const nextOccurrenceDate = next ? next.date : null;
 
-  // The family's contributor pool, never the whole family. `is_family_contributor`
-  // is set by the Global Admin; a new family member is not one until they say so.
+  // THIS FAMILY'S contributor pool, never the whole family and never another
+  // family's. `is_family_contributor` is set by this Area's administrator; a
+  // new family member is not one until they say so.
   const eligibleResult = await db
     .from("people")
     .select("id,name")
+    .eq("area_id", areaId)
     .eq("is_family_contributor", true)
     .neq("id", personId)
     .order("name");
@@ -389,15 +445,63 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
     name: row.name as string,
   }));
 
+  // -------------------------------------------------------------------------
+  // THE WISHLIST.
+  //
+  // Read for everybody who can see this page, celebrant and family alike. It is
+  // the one part of a birthday that is not a secret from its subject: they
+  // typed it.
+  //
+  // It is loaded BEFORE the self/no-planning early return below, because for
+  // the celebrant it is the only thing on the page -- and because the query
+  // must not depend on whether an event exists. A wishlist that appeared only
+  // once planning had started would tell the celebrant planning had started.
+  // -------------------------------------------------------------------------
+  const listYear = wishlistYear(person.birthday, today);
+  const wishlistResult = listYear === null
+    ? { data: [] as Array<Record<string, unknown>>, error: null }
+    : await db
+      .from("birthday_wishlist_ideas")
+      // Named columns, not `*`. The table has nothing else on it today; naming
+      // them means it still has nothing else on it if a column is ever added.
+      .select("id,person_id,occurrence_year,title,estimated_price_pennies,url,notes,created_at")
+      .eq("person_id", personId)
+      .eq("occurrence_year", listYear)
+      .order("created_at", { ascending: false });
+
+  const wishlist = sortWishlist(
+    ((wishlistResult.data ?? []) as Array<Parameters<typeof toWishlistEntry>[0]>).map(toWishlistEntry),
+  );
+
   const events = (eventResult.data ?? []) as Array<{
     id: string; name: string; event_date: string; status: string;
   }>;
 
-  const isAdmin = membership.data.role === "admin";
-  // The surprise rule outranks every other permission, admin included. It is
-  // enforced in row level security -- this is the app noticing, so it can say
-  // something kind instead of an empty screen.
-  const isSelf = membership.data.person_id !== null && membership.data.person_id === person.personId;
+  const isAdmin = member.role === "admin";
+  /**
+   * The surprise rule outranks every other permission, admin included. It is
+   * enforced in row level security -- this is the app noticing, so it can say
+   * something kind instead of an empty screen.
+   *
+   * BOTH SIDES ARE FROM THIS AREA. `member` is the membership in the family on
+   * screen and the person was fetched with that same Area on the query, so the
+   * comparison cannot accidentally match a person of the same name, or the
+   * reader's OTHER self, in a family this page is not about.
+   */
+  const isSelf = (member.person_id as string | null) !== null
+    && member.person_id === person.personId;
+
+  /**
+   * May the reader add to this list? Only the birthday person, resolved inside
+   * this Area. The database decides for real (migration 040); this decides
+   * whether to render a form that would be refused.
+   */
+  const mayWriteWishlist = canWriteWishlist({
+    viewerPersonId: (member.person_id as string | null) ?? null,
+    viewerAreaId: areaId,
+    personId: person.personId,
+    personAreaId: (row.area_id as string | null) ?? null,
+  });
 
   if (isSelf || events.length === 0) {
     return {
@@ -406,6 +510,7 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
       // because the reader is never setting it up.
       eligibleContributors: isSelf ? [] : eligibleContributors,
       previous: [], unused: [], isSelf, isAdmin, today,
+      wishlist, wishlistYear: listYear, canWriteWishlist: mayWriteWishlist,
     };
   }
 
@@ -440,7 +545,10 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
     ((contributorResult.data ?? []) as Array<{ person_id: string }>).map((c) => c.person_id),
   )];
   const nameResult = contributorPersonIds.length
-    ? await db.from("people").select("id,name").in("id", contributorPersonIds)
+    // Scoped as well, though these ids came from this Area's own events and
+    // could not name anybody else. Every read of `people` in this file names
+    // the Area, so there is no read a reviewer has to reason about.
+    ? await db.from("people").select("id,name").eq("area_id", areaId).in("id", contributorPersonIds)
     : { data: [] as Array<{ id: string; name: string }>, error: null };
   const nameByPerson = new Map(
     ((nameResult.data ?? []) as Array<{ id: string; name: string }>).map((p) => [p.id, p.name]),
@@ -519,5 +627,6 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
   return {
     person, current, currentYear, nextOccurrenceDate, eligibleContributors,
     previous, unused, isSelf, isAdmin, today,
+    wishlist, wishlistYear: listYear, canWriteWishlist: mayWriteWishlist,
   };
 }

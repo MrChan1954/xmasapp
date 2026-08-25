@@ -123,10 +123,15 @@ export default function AccountSetupPage() {
         return;
       }
 
+      // Setting up an account is Area-blind on purpose: it asks only whether
+      // this login has been linked to a person anywhere yet. `.limit(1)` keeps
+      // a second membership from erroring the check.
       const membership = await supabase
         .from("app_members")
         .select("person_id, active")
         .eq("user_id", userResult.data.user.id)
+        .eq("active", true)
+        .limit(1)
         .maybeSingle();
 
       if (membership.error || !membership.data?.active || !membership.data.person_id) {

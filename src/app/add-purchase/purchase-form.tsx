@@ -18,6 +18,7 @@ import {
   splitPurchaseByWeights,
   type PurchaseStatus,
 } from "@/lib/purchases";
+import { getCurrentMemberClient } from "@/utils/supabase/current-member-client";
 import { createClient } from "@/utils/supabase/client";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventPath } from "@/lib/events.ts";
@@ -158,7 +159,9 @@ export function PurchaseForm({ eventId }: { eventId: string }) {
       const recipientIds = recipientRows.data.map((row) => row.id);
       const [peopleResult, membershipResult, purchaseTotalsResult] = await Promise.all([
         db.from("people").select("id,name").in("id", personIds),
-        db.from("app_members").select("contributor_id,person_id").eq("user_id", auth.data.user.id).eq("active", true).maybeSingle(),
+        // Which contributor the buyer is IN THIS FAMILY. A login in two has one
+        // in each, and `maybeSingle()` would error rather than choose.
+        getCurrentMemberClient().then((member) => ({ data: member, error: null })),
         recipientIds.length
           ? db.from("purchases").select("christmas_recipient_id,actual_price_pennies").in("christmas_recipient_id", recipientIds).is("deleted_at", null)
           : Promise.resolve({ data: [], error: null }),

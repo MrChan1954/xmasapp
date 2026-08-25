@@ -61,16 +61,41 @@ const ADMIN_WRITES = [
 // 1. Migration hygiene -- the same invariants every applied migration holds
 // ---------------------------------------------------------------------------
 
-test("026 to 033 are the eight newest migrations, in that order", () => {
+const AREA_MIGRATIONS = [
+  "202608100034_areas_and_memberships.sql",
+  "202608100035_area_integrity.sql",
+  "202608100036_area_scoped_visibility.sql",
+  "202608100037_area_write_barrier.sql",
+  "202608100038_acting_area.sql",
+];
+
+/**
+ * The hardening that follows Phase 5's five, once 034-038 were live.
+ *
+ * 039 makes the authorization Phase 5 left Area-blind ask about one Area; 040
+ * adds the birthday person's own wishlist. Neither edits an applied migration,
+ * which is what the ordering below is really asserting.
+ */
+const HARDENING_MIGRATIONS = [
+  "202608100039_area_aware_contributor_permissions.sql",
+  "202608100040_own_birthday_wishlist.sql",
+];
+
+test("026 to 033 are still in order, with Phase 5's Areas on top", () => {
   const files = readdirSync(join(root, "supabase", "migrations")).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(files.at(-8), MIGRATION, "026 must be eighth-newest");
-  assert.equal(files.at(-7), REMINDER_MIGRATION, "027 must be seventh-newest");
-  assert.equal(files.at(-6), OCCASION_MIGRATION, "028 must be sixth-newest");
-  assert.equal(files.at(-5), BUDGET_MIGRATION, "029 must be fifth-newest");
-  assert.equal(files.at(-4), CONTRIBUTOR_MIGRATION, "030 must be fourth-newest");
-  assert.equal(files.at(-3), PRIVACY_MIGRATION, "031 must be third-newest");
-  assert.equal(files.at(-2), PEOPLE_MIGRATION, "032 must be second-newest");
-  assert.equal(files.at(-1), MEMBERSHIP_MIGRATION, "033 must be the newest");
+  // 026-033 keep their order relative to each other; everything newer sits
+  // above them, so every offset moves together and nothing about 026-033
+  // changes.
+  assert.equal(files.at(-15), MIGRATION, "026 must come first of these");
+  assert.equal(files.at(-14), REMINDER_MIGRATION, "then 027");
+  assert.equal(files.at(-13), OCCASION_MIGRATION, "then 028");
+  assert.equal(files.at(-12), BUDGET_MIGRATION, "then 029");
+  assert.equal(files.at(-11), CONTRIBUTOR_MIGRATION, "then 030");
+  assert.equal(files.at(-10), PRIVACY_MIGRATION, "then 031");
+  assert.equal(files.at(-9), PEOPLE_MIGRATION, "then 032");
+  assert.equal(files.at(-8), MEMBERSHIP_MIGRATION, "then 033");
+  assert.deepEqual(files.slice(-7, -2), AREA_MIGRATIONS, "then Phase 5's five, in order");
+  assert.deepEqual(files.slice(-2), HARDENING_MIGRATIONS, "and the hardening on top of them");
   for (const prefix of ["202608100026", "202608100027", "202608100028", "202608100029", "202608100030", "202608100031", "202608100032", "202608100033"]) {
     assert.equal(
       files.filter((name) => name.startsWith(prefix)).length,

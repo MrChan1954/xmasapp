@@ -39,24 +39,35 @@ export default async function BirthdayPage({ params }: PageProps<"/birthdays/[pe
   if (!workspace) notFound();
 
   /**
-   * YOUR OWN BIRTHDAY IS THE ONE YOU CANNOT OPEN.
+   * YOUR OWN BIRTHDAY IS THE ONE YOU CANNOT OPEN -- THE PLANNING OF IT, THAT IS.
    *
    * Checked before anything else, and deliberately not as a redirect: sending
    * the celebrant to their own Event Home is precisely the disclosure the rule
    * exists to prevent, and a 404 would read as a broken app to the one person
-   * certain to try it. They get a screen that says so, with their own date and
-   * age on it -- which were never the secret.
+   * certain to try it.
    *
-   * The lock itself is migration 031's row level security. `isSelf` is how this
-   * page knows to explain rather than to show an empty workspace.
+   * THIS IS THE SAFE ROUTE, AND THE ONLY ONE THEY GET. It renders from the
+   * projection the loader already narrowed for them -- their name, their date,
+   * their age and the wishlist they wrote -- and never from an event. The
+   * Birthday Event routes under `/events/<id>` are not reopened for the
+   * celebrant by any of this: row level security refuses them the event row,
+   * and a redirect to one is exactly what the branch below is prevented from
+   * reaching.
+   *
+   * The lock itself is migrations 031, 036 and 040. `isSelf` is how this page
+   * knows to show the wishlist rather than an empty workspace.
    */
   if (workspace.isSelf) {
     return (
       <OwnBirthdayScreen
+        personId={workspace.person.personId}
         personName={workspace.person.name}
         birthday={workspace.person.birthday}
         year={workspace.currentYear}
         today={workspace.today}
+        wishlist={workspace.wishlist}
+        wishlistYear={workspace.wishlistYear}
+        canWrite={workspace.canWriteWishlist}
       />
     );
   }

@@ -166,7 +166,10 @@ test("5. an invalid, unknown or unauthorized event id fails safely", () => {
   // Validate the shape, then ask the database, then 404 — and the three
   // failures are deliberately indistinguishable to the caller.
   assert.match(server, /const validId = validateUuid\(eventId\);\s*\n\s*if \(!validId\.ok\) return null;/);
-  assert.match(server, /if \(membership\.error \|\| !membership\.data\) notFound\(\);/);
+  assert.match(server, /const \{ member \} = await getCurrentMember\(\);/);
+  assert.match(server, /if \(!member\) notFound\(\);/);
+  // And the event itself is reached through the family on screen or not at all.
+  assert.match(server, /\.eq\("area_id", areaId\)/);
   assert.match(server, /const event = await getEvent\(eventId\);\s*\n\s*if \(!event\) notFound\(\);/);
   assert.match(server, /if \(!auth\.user\) redirect\("\/login"\);/);
   // Reading an event is behind the same RLS as everything else; this module

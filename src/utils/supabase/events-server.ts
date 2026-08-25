@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { isEventStatus, isEventType, type EventSummary } from "@/lib/events.ts";
 import { validateUuid } from "@/lib/input-validation";
+import { getCurrentMember } from "./current-member";
 import { createClient } from "./server";
 
 /**
@@ -84,8 +85,22 @@ function toSummary(row: EventRow): EventSummary {
 export async function listEvents(): Promise<EventRecord[]> {
   const db = await createClient();
 
+  /**
+   * THE FAMILY ON SCREEN, AND ONLY THAT ONE.
+   *
+   * Row level security hands back every Area the reader belongs to, which is
+   * right as a permission and wrong as a dashboard: a login in two families
+   * would see both families' Christmases and birthdays in one list, with no way
+   * to tell which was which. The recipients below need no filter of their own --
+   * they are matched against these events by id, so anything from another
+   * family has nothing to attach to.
+   */
+  const { member } = await getCurrentMember();
+  const areaId = (member?.area_id as string | null) ?? null;
+  if (!areaId) return [];
+
   const [eventResult, recipientResult] = await Promise.all([
-    db.from("events").select(EVENT_COLUMNS),
+    db.from("events").select(EVENT_COLUMNS).eq("area_id", areaId),
     db.from("christmas_recipients").select("id,christmas_event_id,budget_pennies,active"),
   ]);
   if (eventResult.error) throw new Error("The events list could not be loaded.");
@@ -128,7 +143,19 @@ export async function getEvent(eventId: string): Promise<EventSummary | null> {
   if (!validId.ok) return null;
 
   const db = await createClient();
-  const result = await db.from("events").select(EVENT_COLUMNS).eq("id", validId.value).maybeSingle();
+
+  /**
+   * Opened through the family on screen or not at all -- the same rule the
+   * listing follows. A login in two families may legitimately read an event in
+   * either, and row level security allows it; what it must not do is open one
+   * family's event while every other panel on the page is about the other.
+   */
+  const { member } = await getCurrentMember();
+  const areaId = (member?.area_id as string | null) ?? null;
+  if (!areaId) return null;
+
+  const result = await db
+    .from("events").select(EVENT_COLUMNS).eq("id", validId.value).eq("area_id", areaId).maybeSingle();
   if (result.error || !result.data) return null;
   return toSummary(result.data as EventRow);
 }
@@ -146,13 +173,10 @@ export async function requireEvent(eventId: string): Promise<EventSummary> {
   const { data: auth } = await db.auth.getUser();
   if (!auth.user) redirect("/login");
 
-  const membership = await db
-    .from("app_members")
-    .select("id")
-    .eq("user_id", auth.user.id)
-    .eq("active", true)
-    .maybeSingle();
-  if (membership.error || !membership.data) notFound();
+  // `maybeSingle()` would ERROR for a login that belongs to two families, which
+  // turns a legitimate member into a 404 on every event route.
+  const { member } = await getCurrentMember();
+  if (!member) notFound();
 
   const event = await getEvent(eventId);
   if (!event) notFound();

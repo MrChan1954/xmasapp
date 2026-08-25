@@ -50,7 +50,17 @@
     "test:birthday-budget": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/birthday-budget-reminder.test.mjs",
     "test:checkpoint-4-3": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/checkpoint-4-3.test.mjs",
     "test:people": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/people-directory.test.mjs",
-    "test:accounts": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/accounts-and-roles.test.mjs"
+    "test:accounts": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/accounts-and-roles.test.mjs",
+    "test:areas": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/areas.test.ts",
+    "test:settings-scopes": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/settings-scopes.test.ts",
+    "test:tenancy": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/areas-and-tenancy.test.mjs",
+    "test:wishlist": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/wishlist.test.ts",
+    "test:birthday-wishlist": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/birthday-wishlist.test.mjs",
+    "verify:pre-request-hook": "node scripts/verify-pre-request-hook.mjs",
+    "test:migrations": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/migration-execution.test.mjs",
+    "test:tenancy-runtime": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tenancy-runtime.test.mjs",
+    "test:mutations": "node scripts/mutation-check.mjs",
+    "test:production-checks": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/production-checks.test.mjs"
   },
   "dependencies": {
     "@opennextjs/cloudflare": "^1.20.2",
@@ -63,6 +73,7 @@
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.7",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

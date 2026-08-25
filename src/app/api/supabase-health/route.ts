@@ -9,7 +9,7 @@ export async function GET() {
   if (auth.error || !auth.data.user) {
     return NextResponse.json({ error: "You must sign in to run this check." }, { status: 401, headers: noStoreHeaders });
   }
-  const membership = await db.from("app_members").select("id").eq("user_id", auth.data.user.id).eq("active", true).maybeSingle();
+  const membership = await db.from("app_members").select("id").eq("user_id", auth.data.user.id).eq("active", true).limit(1).maybeSingle();
   if (membership.error || !membership.data) {
     return NextResponse.json({ error: "Your active family membership could not be verified." }, { status: 403, headers: noStoreHeaders });
   }

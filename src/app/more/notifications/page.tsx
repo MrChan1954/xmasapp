@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { getCurrentMemberClient } from "@/utils/supabase/current-member-client";
 import { createClient } from "@/utils/supabase/client";
 import { AppShell, PageHeader } from "../../components/app-shell";
 import { Button, Notice, Skeleton, cx } from "../../components/ui";
@@ -51,12 +52,9 @@ export default function NotificationsPage() {
       const auth = await db.auth.getUser();
       if (!auth.data.user) return;
 
-      const member = await db
-        .from("app_members")
-        .select("id")
-        .eq("user_id", auth.data.user.id)
-        .eq("active", true)
-        .maybeSingle();
+      // The membership in the family on screen: preferences are stored per
+      // membership, so a login in two families has a set in each.
+      const member = { data: await getCurrentMemberClient() };
       if (!active || !member.data) return;
 
       const stored = await db
@@ -90,9 +88,7 @@ export default function NotificationsPage() {
 
     const db = createClient();
     const auth = await db.auth.getUser();
-    const member = auth.data.user
-      ? await db.from("app_members").select("id").eq("user_id", auth.data.user.id).eq("active", true).maybeSingle()
-      : null;
+    const member = auth.data.user ? { data: await getCurrentMemberClient() } : null;
 
     if (!member?.data) {
       setPreferences(previous);
