@@ -244,7 +244,7 @@ test("archived people leave the picker and stay in the history", () => {
 
 const { activeGlobalSection } = await import("../src/lib/navigation.ts");
 
-test("the family destinations are Events and People, in that order", () => {
+test("the family destinations are Events, People and Settings, in that order", () => {
   const navItems = read(...APP, "components", "nav-items.ts");
   const entries = navItems.split("\n")
     .map((line) => line.trim())
@@ -253,8 +253,12 @@ test("the family destinations are Events and People, in that order", () => {
     // from the event the reader is in.
     .filter((line) => line.startsWith("{ section: ") && line.includes("href: "));
 
-  assert.equal(entries.length, 2, "two family destinations");
+  // Three since the settings correction: Settings became a primary
+  // destination when it stopped being something you reached by walking into
+  // an event first. See `scripts/settings-navigation.test.mjs`.
+  assert.equal(entries.length, 3, "three family destinations");
   assert.ok(entries[0].includes('href: "/"') && entries[0].includes('label: "Events"'), entries[0]);
+  assert.ok(entries[2].includes('href: "/settings"') && entries[2].includes('label: "Settings"'), entries[2]);
   // The label is "People". Not Recipients, not Family recipients, not Christmas
   // people -- the directory is about the family, not about an occasion.
   assert.ok(entries[1].includes('href: "/people"') && entries[1].includes('label: "People"'), entries[1]);
@@ -290,15 +294,25 @@ test("mobile falls back to the family bar instead of rendering nothing", () => {
   assert.match(tabs, /grid-cols-2/u, "two family tabs, no raised add action to nowhere");
 });
 
-test("People is also reachable from inside an event, without leaving it first", () => {
-  // On a phone the event's own five tabs fill the bar, so the event's More
-  // screen is where the family destinations live -- the same place Birthdays
-  // already sits.
-  const more = read(...APP, "more", "more-screen.tsx");
-  assert.match(more, /href="\/people"/u);
-  assert.match(more, /title="People"/u);
-  assert.match(more, /Everyone the family plans for/u);
-  assert.match(more, /href="\/birthdays"/u, "and Birthdays is still there");
+test("People is reachable from the main navigation, not from inside an event", () => {
+  /*
+   * IT USED TO BE THE OTHER WAY ROUND. People was listed on the event More
+   * screen, so reaching the family directory meant walking into an event
+   * first. The directory belongs to the family, so it is a primary
+   * destination: the sidebar on a desktop, the tab bar on a phone.
+   */
+  const nav = read(...APP, "components", "nav-items.ts");
+  const globalNav = nav.match(/export const GLOBAL_NAV[\s\S]*?\n\];/u)?.[0];
+  assert.ok(globalNav);
+  assert.match(globalNav, /href: "\/people"/u, "People is a primary destination");
+
+  // And the family's own settings list still offers it alongside Birthdays.
+  const scopes = read("src", "lib", "settings-scopes.ts");
+  for (const key of ["people", "birthdays"]) {
+    const entry = scopes.match(new RegExp(`\\{[^}]*key: "${key}"[^}]*\\}`, "u"))?.[0];
+    assert.ok(entry, `${key} must still be a settings destination`);
+    assert.match(entry, /scope: "area"/u, `${key} belongs to the family`);
+  }
 });
 
 test("People stays lit through a person's profile, and Events does not", () => {

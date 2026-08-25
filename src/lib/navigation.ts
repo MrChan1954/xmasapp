@@ -11,7 +11,28 @@
  * are plain paths, so nothing here has to change when it does.
  */
 
-export type GlobalNavSection = "events" | "people";
+export type GlobalNavSection = "events" | "people" | "settings";
+
+/**
+ * The settings destinations, listed once.
+ *
+ * Settings is a HUB, not a single page: `/settings` offers the global scope and
+ * points at the family's own, and both of those lead on to screens that keep
+ * their historic routes (`/account`, `/more/notifications`, `/more/activity`,
+ * `/more/family-access`). All of them are still "in Settings" as far as the
+ * reader is concerned, so all of them keep the nav entry lit rather than
+ * dropping the highlight the moment somebody follows a link.
+ *
+ * `/more` on its own is deliberately absent: it is a legacy redirect INTO an
+ * event, not a settings screen.
+ */
+const SETTINGS_ROUTES = [
+  "/settings",
+  "/account",
+  "/more/notifications",
+  "/more/activity",
+  "/more/family-access",
+];
 
 /**
  * A person's profile keeps People lit. Being three levels into somebody's gift
@@ -24,6 +45,9 @@ export type GlobalNavSection = "events" | "people";
  */
 export function activeGlobalSection(pathname: string): GlobalNavSection | null {
   if (pathname === "/people" || pathname.startsWith("/people/")) return "people";
+  if (SETTINGS_ROUTES.some((route) => pathname === route || pathname.startsWith(route + "/"))) {
+    return "settings";
+  }
   if (pathname === "/") return "events";
   return null;
 }

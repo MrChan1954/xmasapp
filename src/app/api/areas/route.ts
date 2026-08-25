@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { AREA_COOKIE, validateAreaName } from "@/lib/areas";
+import { isSameOrigin } from "@/utils/request-origin";
 import { createClient } from "@/utils/supabase/server";
 
 /**
@@ -32,6 +33,13 @@ function remember(response: NextResponse, areaId: string) {
 }
 
 export async function PUT(request: Request) {
+  // Switching grants nothing, but it does change what the person sees next, and
+  // creating makes a real family. Neither should be startable from a page that
+  // is not ours.
+  if (!isSameOrigin(request)) {
+    return NextResponse.json({ error: "This request origin is not allowed." }, { status: 403 });
+  }
+
   const db = await createClient();
   const { data: { user } } = await db.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
@@ -51,6 +59,10 @@ export async function PUT(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!isSameOrigin(request)) {
+    return NextResponse.json({ error: "This request origin is not allowed." }, { status: 403 });
+  }
+
   const db = await createClient();
   const { data: { user } } = await db.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });

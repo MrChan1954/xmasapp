@@ -45,6 +45,10 @@ logs/
 /backup/
 /backups/
 
+# QA tenant config. Names the REAL family Area id so QA tooling can refuse
+# to touch it. Never commit it.
+.qa-areas.local.json
+
 # env files (can opt-in for committing if needed)
 .env*
 

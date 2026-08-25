@@ -162,14 +162,20 @@ test("the Upcoming birthdays section and its All birthdays link both stay", () =
 });
 
 test("birthday navigation stays where it genuinely belongs", () => {
-  // Removing the duplicate must not strip Birthdays out of the app. The More
-  // screen is a menu, not a second copy of the dashboard.
-  const more = read(...APP, "more", "more-screen.tsx");
-  assert.match(more, /href="\/birthdays"/u);
-  assert.match(more, /IconCake/u);
-
-  // And a birthday's own More screen still reaches that person's history.
-  assert.ok(more.includes("/history"), "Previous birthdays stays on a birthday's More screen");
+  /*
+   * Removing the duplicate must not strip Birthdays out of the app.
+   *
+   * WHERE IT MOVED. Birthdays used to be listed on the event More screen,
+   * which is where every family-level destination was listed. Birthdays belong
+   * to the FAMILY, not to the event somebody happens to be standing in, so the
+   * entry now lives in the family's own settings and the event screen no
+   * longer offers it. See `src/lib/settings-scopes.ts`.
+   */
+  const scopes = read("src", "lib", "settings-scopes.ts");
+  const birthdays = scopes.match(/\{[^}]*key: "birthdays"[^}]*\}/u)?.[0];
+  assert.ok(birthdays, "Birthdays must still be a settings destination");
+  assert.match(birthdays, /scope: "area"/u, "and it belongs to the family, not to a person or an event");
+  assert.match(birthdays, /href: "\/birthdays"/u, "keeping the only route to the list");
 
   // The dedicated page is untouched.
   assert.equal(existsSync(join(root, ...APP, "birthdays", "page.tsx")), true);

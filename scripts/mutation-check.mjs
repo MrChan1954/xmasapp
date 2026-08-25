@@ -152,6 +152,189 @@ drop policy if exists "active members add gift ideas" on public.gift_ideas;`,
     to: "with checks as (\n\nselect 1 as sort, 'x'::text as section, 'y'::text as check_name,\n       'INFO'::text as verdict,\n       (select count(*)::text from supabase_migrations.schema_migrations) as detail\nunion all",
     suites: ["scripts/production-checks.test.mjs"],
   },
+
+  // -------------------------------------------------------------------------
+  // Q2: the Area lifecycle. Ten breaks, one per rule that Q2 either added or
+  // found broken.
+  // -------------------------------------------------------------------------
+  {
+    name: "Q2-1. the Family Access gateway stops scoping its person lookup",
+    file: "src/app/api/admin/family-access/route.ts",
+    from: `      .eq("id", personId)
+      .eq("area_id", areaId)`,
+    to: `      .eq("id", personId)`,
+    suites: ["scripts/areas-and-tenancy.test.mjs"],
+  },
+  {
+    name: "Q2-2. Family Access authorises on ANY admin membership, not the selected family",
+    file: "src/utils/supabase/family-access-admin.ts",
+    from: "  const { user, member } = await getCurrentMember();",
+    to: "  const { user, member } = await anyAdminMembership();",
+    suites: ["scripts/areas-and-tenancy.test.mjs", "scripts/rls-security.test.mjs"],
+  },
+  {
+    name: "Q2-3. the sole administrator is allowed to walk out",
+    file: "supabase/migrations/202608100042_area_membership_lifecycle.sql",
+    from: `  if mine.role = 'admin' then
+    raise exception 'Hand this family over to somebody else before you leave it'
+      using errcode = '42501';
+  end if;`,
+    to: "",
+    suites: ["scripts/area-lifecycle.test.mjs"],
+  },
+  {
+    name: "Q2-4. the handover demotes before it promotes, so the halves can part",
+    file: "supabase/migrations/202608100041_area_admin_handover.sql",
+    from: `  update public.app_members set role = 'admin', updated_at = now() where id = incoming.id;
+  update public.app_members set role = 'member', updated_at = now() where id = outgoing.id;`,
+    to: `  update public.app_members set role = 'member', updated_at = now() where id = outgoing.id;
+  update public.app_members set role = 'admin', updated_at = now() where id = incoming.id;`,
+    suites: ["scripts/area-lifecycle.test.mjs"],
+  },
+  {
+    name: "Q2-5. the handover stops checking the successor is active",
+    file: "supabase/migrations/202608100041_area_admin_handover.sql",
+    from: `    and m.area_id = p_area_id
+    and m.active = true
+    and m.person_id is not null;`,
+    to: `    and m.area_id = p_area_id
+    and m.person_id is not null;`,
+    suites: ["scripts/area-lifecycle.test.mjs"],
+  },
+  {
+    name: "Q2-6. the handover stops checking the successor is in this family",
+    file: "supabase/migrations/202608100041_area_admin_handover.sql",
+    from: `  where m.id = p_new_admin_member_id
+    and m.area_id = p_area_id
+    and m.active = true`,
+    to: `  where m.id = p_new_admin_member_id
+    and m.active = true`,
+    suites: ["scripts/area-lifecycle.test.mjs"],
+  },
+  {
+    name: "Q2-7. account setup goes back to assuming one membership",
+    file: "src/app/account-setup/page.tsx",
+    from: `        .eq("active", true)
+        .limit(1)
+        .maybeSingle();`,
+    to: "        .maybeSingle();",
+    suites: ["scripts/areas-and-tenancy.test.mjs"],
+  },
+  {
+    name: "Q2-8. creating a family copies the people out of another one",
+    file: "supabase/migrations/202608100037_area_write_barrier.sql",
+    from: `  insert into public.app_members (user_id, email, person_id, role, active, area_id)
+  values (caller, caller_email, new_person, 'admin', true, new_area);`,
+    to: `  insert into public.app_members (user_id, email, person_id, role, active, area_id)
+  values (caller, caller_email, new_person, 'admin', true, new_area);
+
+  insert into public.people (name, area_id)
+  select p.name, new_area from public.people p where p.area_id <> new_area limit 5;`,
+    suites: ["scripts/area-lifecycle.test.mjs"],
+  },
+  {
+    name: "Q2-9. a deactivated membership still counts as being in the family",
+    file: "supabase/migrations/202608100034_areas_and_memberships.sql",
+    from: `    where m.user_id = (select auth.uid())
+      and m.active = true
+      and m.area_id = p_area_id
+  );
+$$;
+
+create or replace function public.is_area_admin(p_area_id uuid)`,
+    to: `    where m.user_id = (select auth.uid())
+      and m.area_id = p_area_id
+  );
+$$;
+
+create or replace function public.is_area_admin(p_area_id uuid)`,
+    suites: ["scripts/area-lifecycle.test.mjs"],
+  },
+  {
+    name: "Q2-10. an administrator may start their own birthday after all",
+    file: "supabase/migrations/202608100043_birthday_planning_eligibility.sql",
+    from: `  if new.event_type = 'birthday'
+    and new.celebrant_person_id is not null
+    and new.celebrant_person_id = public.current_person_in_area(new.area_id)
+  then`,
+    to: `  if new.event_type = 'birthday'
+    and new.celebrant_person_id is not null
+    and new.celebrant_person_id = public.current_person_in_area(new.area_id)
+    and not public.is_area_admin(new.area_id)
+  then`,
+    suites: ["scripts/tenancy-runtime.test.mjs"],
+  },
+  {
+    name: "Q2-11. the Q2 production check file gains a statement that writes",
+    file: "docs/Q2-POST-APPLY-CHECKS.sql",
+    from: "with checks as (",
+    to: "delete from public.audit_log where false;" + String.fromCharCode(10) + "with checks as (",
+    suites: ["scripts/production-checks.test.mjs"],
+  },
+  // -------------------------------------------------------------------------
+  // Settings scope: the three scopes, and what happens when one leaks.
+  // -------------------------------------------------------------------------
+  {
+    name: "Q2-12. Falling snow creeps back onto the event More screen",
+    file: "src/app/events/[eventId]/more/event-more-screen.tsx",
+    from: "      <SettingsGroup label={eventName}>",
+    to: "      <SettingsGroup label=\"Appearance\"><p>Falling snow</p></SettingsGroup>" + String.fromCharCode(10) + "      <SettingsGroup label={eventName}>",
+    suites: ["scripts/settings-navigation.test.mjs"],
+  },
+  {
+    name: "Q2-13. an event offers Family access, as though the event scoped the family",
+    file: "src/lib/settings-scopes.ts",
+    from: "      key: \"event-payment-log\",",
+    to: "      key: \"family-access\", title: \"Family access\", scope: \"event\", href: \"/more/family-access\", description: \"Invite family.\"," + String.fromCharCode(10) + "    }, {" + String.fromCharCode(10) + "      key: \"event-payment-log\",",
+    suites: ["src/lib/settings-scopes.test.ts"],
+  },
+  {
+    name: "Q2-14. Settings is dropped from the main navigation again",
+    file: "src/app/components/nav-items.ts",
+    from: '  { section: "settings", href: "/settings", label: "Settings", icon: Settings },',
+    to: "",
+    suites: ["scripts/settings-navigation.test.mjs"],
+  },
+  {
+    name: "Q2-15. the mobile tab bar goes back to a hard-coded two columns",
+    file: "src/app/components/bottom-tabs.tsx",
+    from: "        GLOBAL_NAV.length === 2 ? \"grid-cols-2\" : GLOBAL_NAV.length === 4 ? \"grid-cols-4\" : \"grid-cols-3\",",
+    to: "        \"grid-cols-2\",",
+    suites: ["scripts/settings-navigation.test.mjs"],
+  },
+  // -------------------------------------------------------------------------
+  // The QA safety layer. Q2 now tests inside the SAME database as the real
+  // family, so these four are the difference between a safe test run and a
+  // write into somebody's real Christmas.
+  // -------------------------------------------------------------------------
+  {
+    name: "QA-1. the real Area is allowed onto the QA list",
+    file: "scripts/qa/protected.mjs",
+    from: "    if (protectedAreaIds.has(id)) {",
+    to: "    if (false) {",
+    suites: ["scripts/qa/protected.test.mjs"],
+  },
+  {
+    name: "QA-2. the browser helper may navigate to the real Christmas",
+    file: "scripts/qa/protected.mjs",
+    from: "  for (const id of config.protectedEventIds) {",
+    to: "  for (const id of []) {",
+    suites: ["scripts/qa/protected.test.mjs"],
+  },
+  {
+    name: "QA-3. the fixture loader accepts a real Person id",
+    file: "scripts/qa/protected.mjs",
+    from: "  if (config.protectedAreaIds.has(area)) {",
+    to: "  if (false) {",
+    suites: ["scripts/qa/protected.test.mjs"],
+  },
+  {
+    name: "QA-4. the destructive membership helper stops checking its subjects",
+    file: "scripts/qa/protected.mjs",
+    from: "  for (const subject of subjects) {",
+    to: "  for (const subject of []) {",
+    suites: ["scripts/qa/protected.test.mjs"],
+  },
 ];
 
 function runSuite(suite) {

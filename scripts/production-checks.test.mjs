@@ -147,8 +147,14 @@ describe("the production check file actually runs, against the real schema", () 
   let result;
 
   before(async () => {
-    // Every migration, replayed -- so this is the post-040 schema, not a sketch.
-    db = await buildRehearsal({});
+    /*
+     * THROUGH 040, because that is the state this file describes: it is the
+     * check list for the database production is running right now. Q2's
+     * migrations 041-043 change two of the things it asserts -- the immediate
+     * one-admin index goes -- so running it against a chain that includes them
+     * would be checking the wrong database.
+     */
+    db = await buildRehearsal({ through: "202608100040_own_birthday_wishlist.sql" });
     await asOwner(db);
     result = await db.query(readFileSync(CHECKS, "utf8"));
   });
@@ -231,6 +237,149 @@ describe("the production check file actually runs, against the real schema", () 
     const before_ = await fingerprint();
     await db.query(readFileSync(CHECKS, "utf8"));
     await db.query(readFileSync(CHECKS, "utf8"));
+    assert.deepEqual(await fingerprint(), before_);
+  });
+});
+
+/* ===========================================================================
+ * THE Q2 CHECK FILE -- the same two promises, for migrations 041 to 043
+ *
+ * A SECOND FILE RATHER THAN A LONGER ONE, deliberately. The Phase 5 file
+ * describes the database production is running RIGHT NOW; it is what proves
+ * 034-040 landed, and it will still be the right question to ask afterwards.
+ * Q2 changes one of its answers -- 041 drops the immediate one-admin index it
+ * asks for -- so the two states cannot be described by one file without it
+ * lying about one of them.
+ * =========================================================================== */
+
+const Q2_CHECKS = join(ROOT, "docs", "Q2-POST-APPLY-CHECKS.sql");
+const q2Sql = readFileSync(Q2_CHECKS, "utf8").replace(/\r\n/gu, "\n");
+const q2Executable = stripCommentsAndLiterals(q2Sql);
+
+describe("the Q2 check file cannot change anything either", () => {
+  test("it contains no statement that writes, and none that changes an object", () => {
+    const FORBIDDEN = [
+      "insert", "update", "delete", "upsert", "merge",
+      "alter", "create", "drop", "truncate",
+      "grant", "revoke", "comment on", "call", "do",
+      "vacuum", "analyze", "reindex", "cluster", "refresh",
+      "copy", "lock", "set ", "reset", "begin", "commit", "rollback",
+      "security definer", "perform", "notify",
+    ];
+
+    const found = FORBIDDEN.filter((word) =>
+      new RegExp(String.raw`(?<![\w.])${word.trim()}(?![\w])`, "iu").test(q2Executable));
+
+    assert.deepEqual(found, [],
+      `these words appear as executable SQL, not just in comments: ${found.join(", ")}`);
+  });
+
+  test("every statement in it is a SELECT", () => {
+    const statements = q2Executable.split(";").map((s) => s.trim()).filter(Boolean);
+    assert.equal(statements.length, 1, "one statement, so the SQL Editor shows its result");
+    assert.match(statements[0], /^with\b/iu);
+  });
+
+  test("and it reads no money", () => {
+    for (const column of [
+      "budget_pennies", "actual_price_pennies", "estimated_price_pennies",
+      "planned_amount_pennies", "responsibility_pennies", "amount_pennies",
+    ]) {
+      assert.ok(!q2Executable.includes(column), `the check file must not read ${column}`);
+    }
+  });
+
+  test("it says how to read its own output", () => {
+    for (const phrase of ["PASS", "FAIL", "INFO", "REVIEW", "HOW TO RUN IT", "HOW TO READ THE RESULT"]) {
+      assert.ok(q2Sql.includes(phrase), `the header must explain ${phrase}`);
+    }
+  });
+
+  test("and it warns that it supersedes one row of the Phase 5 file", () => {
+    // Somebody will run both. The one FAIL they will see has to be explained
+    // in the file itself, not in a conversation they were not part of.
+    assert.match(q2Sql, /SUPERSEDED/u);
+    assert.ok(q2Sql.includes("app_members_single_admin_per_area_idx"));
+  });
+});
+
+describe("the Q2 check file actually runs, against a 041-043 database", () => {
+  let db;
+  let result;
+
+  before(async () => {
+    // The whole chain this time, because this file describes the state AFTER
+    // Q2 lands.
+    db = await buildRehearsal({});
+    await asOwner(db);
+    result = await db.query(readFileSync(Q2_CHECKS, "utf8"));
+  });
+  after(async () => { await db?.close(); });
+
+  test("it returns one table with the four columns a reader needs", () => {
+    assert.ok(result.rows.length > 30, "it should cover all three migrations");
+    assert.deepEqual(
+      Object.keys(result.rows[0]).sort(),
+      ["check_name", "detail", "section", "verdict"],
+    );
+  });
+
+  test("the first row is the summary", () => {
+    assert.equal(result.rows[0].section, "SUMMARY");
+    assert.match(result.rows[0].detail, /passed, .* failed, .* to review/u);
+  });
+
+  test("and against a correctly migrated database, nothing fails", () => {
+    const bad = result.rows.filter((row) => row.verdict === "FAIL" || row.verdict === "REVIEW");
+    assert.deepEqual(bad.map((row) => `${row.section} :: ${row.check_name}`), []);
+  });
+
+  test("every verdict is one of the four the header explains", () => {
+    for (const kind of new Set(result.rows.map((row) => row.verdict))) {
+      assert.ok(["PASS", "FAIL", "INFO", "REVIEW"].includes(kind), `unexpected verdict: ${kind}`);
+    }
+  });
+
+  test("it checks all three migrations by name", () => {
+    const sections = new Set(result.rows.map((row) => row.section));
+    for (const migration of ["041", "042", "043"]) {
+      assert.ok([...sections].some((s) => s.startsWith(migration)),
+        `no section covers migration ${migration}`);
+    }
+  });
+
+  test("each of Q2's own protections is checked, not assumed", () => {
+    const named = result.rows.map((row) => row.check_name).join(" | ");
+    for (const claim of [
+      "trigger app_members_exactly_one_admin is attached",
+      "DEFERRABLE INITIALLY DEFERRED",
+      "app_members_single_admin_per_area_idx is GONE",
+      "transfer_area_admin runs with definer rights",
+      "the audit log accepts a handover being recorded",
+      "EVERY family with members has exactly one active administrator",
+      "function public.leave_area(uuid) exists",
+      "NO login holds two memberships in one family",
+      "is_area_contributor_member",
+      "privacy beats being admin",
+      "NONE of them is callable by a signed-out visitor",
+    ]) {
+      assert.ok(named.includes(claim), `the file must check: ${claim}`);
+    }
+  });
+
+  test("running it twice changes nothing at all", async () => {
+    const fingerprint = async () => (await db.query(`
+      select (select count(*) from public.people) p,
+             (select count(*) from public.events) e,
+             (select count(*) from public.app_members) m,
+             (select count(*) from public.areas) a,
+             (select count(*) from public.audit_log) l,
+             (select count(*) from pg_policies where schemaname = 'public') pol,
+             (select count(*) from pg_proc where pronamespace = 'public'::regnamespace) fn`)).rows[0];
+
+    const before_ = await fingerprint();
+    await db.query(readFileSync(Q2_CHECKS, "utf8"));
+    await db.query(readFileSync(Q2_CHECKS, "utf8"));
     assert.deepEqual(await fingerprint(), before_);
   });
 });

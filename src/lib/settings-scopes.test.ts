@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { describe } from "node:test";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { SCOPES, SETTINGS, scopeMeta, scopeReminder, settingsFor } from "./settings-scopes.ts";
+import { NEVER_IN_EVENT_SCOPE, SCOPES, SETTINGS, eventSettingsFor, scopeMeta, scopeReminder, settingsFor } from "./settings-scopes.ts";
 
 describe("every setting has a scope, and the right one", () => {
   test("what follows the person is global, not per family", () => {
@@ -75,6 +75,54 @@ describe("saying how far a setting reaches", () => {
       const meta = scopeMeta(scope);
       assert.ok(meta.title.length > 0);
       assert.ok(meta.reach.length > 0);
+    }
+  });
+});
+
+describe("an event's settings are the event's, and only the event's", () => {
+  const EVENT = "11111111-2222-4333-8444-555555555555";
+
+  test("every entry an event offers is event-scoped", () => {
+    for (const entry of eventSettingsFor(EVENT, "Mother's Day", { isAdmin: true })) {
+      assert.equal(entry.scope, "event", entry.key);
+    }
+  });
+
+  test("and every one of them points INTO this event, never out of it", () => {
+    // The whole reason an event's list is built per event: a hard-coded
+    // "/payment-log" would show Christmas's log while standing in a birthday.
+    for (const entry of eventSettingsFor(EVENT, "Mother's Day", { isAdmin: true })) {
+      assert.ok(entry.href.startsWith(`/events/${EVENT}/`),
+        `${entry.key} must stay inside the event: ${entry.href}`);
+    }
+  });
+
+  test("NOTHING THAT BELONGS TO THE PERSON OR THE FAMILY APPEARS IN IT", () => {
+    // The bug this whole scope model exists to prevent: standing inside
+    // Mother's Day and being offered Falling snow or Family access.
+    const offered = eventSettingsFor(EVENT, "Mother's Day", { isAdmin: true })
+      .flatMap((entry) => [entry.title, entry.description]).join(" | ");
+    for (const forbidden of NEVER_IN_EVENT_SCOPE) {
+      assert.ok(!offered.includes(forbidden), `${forbidden} is not an event setting`);
+    }
+  });
+
+  test("renaming and re-dating an event is admin-only; reading its payments is not", () => {
+    const asMember = eventSettingsFor(EVENT, "Mother's Day", { isAdmin: false }).map((e) => e.key);
+    assert.ok(!asMember.includes("event-settings"), "a member is not offered the admin screen");
+    assert.ok(asMember.includes("event-payment-log"), "but every member may read the log");
+  });
+
+  test("the event name is used, so the reader knows which occasion they are changing", () => {
+    const entries = eventSettingsFor(EVENT, "Mother's Day", { isAdmin: true });
+    assert.ok(entries.some((entry) => entry.description.includes("Mother's Day")));
+  });
+
+  test("and the forbidden list is not empty, or the sweep above proves nothing", () => {
+    assert.ok(NEVER_IN_EVENT_SCOPE.length >= 5);
+    // Each forbidden name really is a setting that exists at a wider scope.
+    for (const name of ["Falling snow", "Account & security", "Family access"]) {
+      assert.ok(NEVER_IN_EVENT_SCOPE.includes(name));
     }
   });
 });

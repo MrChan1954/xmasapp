@@ -131,6 +131,70 @@ export function settingsFor(scope: SettingsScope, options: { isAdmin: boolean })
     .filter((entry) => !entry.adminOnly || options.isAdmin);
 }
 
+/**
+ * WHAT AN EVENT'S OWN SETTINGS ARE -- and, by omission, what they are not.
+ *
+ * These cannot live in `SETTINGS` above because every route needs an event id,
+ * so they are built per event instead. The list is deliberately short. An event
+ * is one occasion inside one family: its name, its date, who it is for, who is
+ * paying, and what has been paid. Everything else somebody might want while
+ * they happen to be standing inside an event -- their password, their
+ * notifications, whether snow falls, the family directory, who can get into the
+ * family -- belongs to a wider scope and is reached from Settings in the main
+ * navigation.
+ *
+ * WHY THAT MATTERS RATHER THAN BEING TIDINESS. An event's More screen used to
+ * render the whole application's settings, so "Family access" appeared while
+ * the reader was inside Mother's Day and looked like Mother's Day's access.
+ * With one family that was merely untidy. With Areas it actively misleads:
+ * every one of those screens belongs to the SELECTED FAMILY, not to the event
+ * on screen, and an event cannot be the thing that scopes them.
+ */
+export function eventSettingsFor(
+  eventId: string,
+  eventName: string,
+  options: { isAdmin: boolean },
+): SettingsEntry[] {
+  const entries: SettingsEntry[] = [
+    {
+      key: "event-settings",
+      scope: "event",
+      title: "Event settings",
+      description: `Rename ${eventName}, move its date, or choose who takes part.`,
+      href: `/events/${eventId}/settings`,
+      adminOnly: true,
+    },
+    {
+      key: "event-payment-log",
+      scope: "event",
+      title: "Payment log",
+      description: "Payments recorded for this event.",
+      href: `/events/${eventId}/payment-log`,
+    },
+  ];
+  return entries.filter((entry) => !entry.adminOnly || options.isAdmin);
+}
+
+/**
+ * THE THINGS AN EVENT SCREEN MUST NEVER OFFER, named once so a test can check.
+ *
+ * Each is a setting whose reach is the person or the whole family. Seeing one
+ * of these inside an event is the bug this list exists to catch, and it is
+ * written here rather than in the test so the rule and the screens share a
+ * single source of truth.
+ */
+export const NEVER_IN_EVENT_SCOPE: readonly string[] = [
+  "Falling snow",
+  "Account & security",
+  "Notifications",
+  "Family access",
+  "Family settings",
+  "Your settings",
+  "Activity",
+  "Birthdays",
+  "Appearance",
+];
+
 export function scopeMeta(scope: SettingsScope): ScopeMeta {
   const found = SCOPES.find((meta) => meta.scope === scope);
   if (!found) throw new Error("unknown settings scope: " + scope);

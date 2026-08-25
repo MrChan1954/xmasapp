@@ -17,10 +17,7 @@
  */
 import assert from "node:assert/strict";
 import test, { describe, before, after } from "node:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-
-import { ROOT, asOwner, attempt, buildRehearsal, probe, probeValue, rows, seen, value } from "./pg/rehearsal.mjs";
+import { asOwner, attempt, buildRehearsal, probe, probeValue, rows, seen, value } from "./pg/rehearsal.mjs";
 import { buildTwoFamilies } from "./pg/fixtures.mjs";
 
 let db;
@@ -701,70 +698,93 @@ describe("uniqueness is per family, not per application", () => {
 // that changes.
 // ===========================================================================
 
-describe("one administrator per Area is a ceiling AND a floor, and the two meet", () => {
-  test("AN AREA'S ADMINISTRATOR CAN NEVER BE CHANGED", async () => {
+describe("one administrator per Area, and -- since Q2 -- a way to change it", () => {
+  /*
+   * WHAT THIS BLOCK USED TO SAY.
+   *
+   * Until migration 041 it recorded two dead ends, found by running the
+   * migrations rather than reading them: an Area's administrator could never
+   * be changed, in any order, by any route; and because of that, the
+   * administrator's own birthday could not be planned by anybody at all.
+   *
+   * Both are fixed. The tests that pinned the limitations now pin the fix,
+   * which is what pinning a limitation is for.
+   */
+
+  test("the immediate one-admin rule is gone, and a deferred one replaces it", async () => {
     await asOwner(db);
+    // The index made a swap illegal at every instant. The constraint trigger
+    // asks the same question at COMMIT, where a swap is a whole thing.
+    assert.equal(
+      await value(db, "select to_regclass('public.app_members_single_admin_per_area_idx')::text"),
+      null);
+    const deferred = await rows(db, `
+      select tgdeferrable, tginitdeferred from pg_trigger
+      where tgname = 'app_members_exactly_one_admin' and not tgisinternal`);
+    assert.equal(deferred.length, 1);
+    assert.equal(deferred[0].tgdeferrable, true);
+    assert.equal(deferred[0].tginitdeferred, true);
+  });
 
-    // Demote: refused, because 035's guard keeps the last administrator.
-    const demote = await attempt(db,
-      "update public.app_members set role = 'member' where id = $1", [f.members.adaAlpha]);
-    assert.equal(demote.ok, false);
-    assert.match(demote.error, /at least one active administrator/u);
-
-    // Promote a second: refused, because 035's index allows only one.
+  test("the halves of a handover are still each illegal on their own", async () => {
+    await asOwner(db);
+    // Nothing has been loosened. Promoting a second administrator on its own
+    // still fails, and so does demoting the only one -- they are legal only
+    // together, inside one transaction.
     const promote = await attempt(db,
       "update public.app_members set role = 'admin' where id = $1", [f.members.taylorAlpha]);
-    assert.equal(promote.ok, false);
-    assert.match(promote.error, /app_members_single_admin_per_area_idx/u);
+    assert.equal(promote.ok, false, "a second administrator must not survive a commit");
 
-    // Both at once: still refused. The index is not deferrable, so there is no
-    // instant at which the swap is legal.
-    const swap = await attempt(db, `
-      update public.app_members
-      set role = case when id = $1 then 'member' else 'admin' end
-      where id in ($1, $2)`, [f.members.adaAlpha, f.members.taylorAlpha]);
-    assert.equal(swap.ok, false);
-
-    // Nor by standing down.
-    for (const sql of [
-      "update public.app_members set active = false where id = $1",
-      "delete from public.app_members where id = $1",
-    ]) {
-      const result = await attempt(db, sql, [f.members.adaAlpha]);
-      assert.equal(result.ok, false, sql);
-      assert.match(result.error, /at least one active administrator/u);
-    }
+    const demote = await attempt(db,
+      "update public.app_members set role = 'member' where id = $1", [f.members.adaAlpha]);
+    assert.equal(demote.ok, false, "and the last one must not be able to stand down");
+    assert.match(demote.error, /at least one active administrator/u);
   });
 
-  test("and the administrator's own birthday cannot be planned by anybody", async () => {
-    // `start_birthday_planning` requires this Area's administrator, and
-    // migration 031 refuses anybody setting up their own birthday. With one
-    // administrator per Area, the administrator's birthday has no possible
-    // caller.
-    const selfPlan = await probe(db, who(f.users.dual, f.areas.alpha),
-      "select id from public.start_birthday_planning($1, $2, $3, 0, '[]'::jsonb)",
-      [f.people.ada, "Ada's birthday 2028", "2028-09-09"]);
-    assert.equal(selfPlan.ok, false);
-    assert.match(selfPlan.error, /your own birthday/u);
+  test("but the routine does both at once, and the family is never without one", async () => {
+    const done = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select public.transfer_area_admin($1, $2)", [f.areas.alpha, f.members.taylorAlpha]);
+    assert.equal(done.ok, true, done.error);
 
-    const otherPlans = await probe(db, who(f.users.jade, f.areas.alpha),
-      "select id from public.start_birthday_planning($1, $2, $3, 0, '[]'::jsonb)",
-      [f.people.ada, "Ada's birthday 2028", "2028-09-09"]);
-    assert.equal(otherPlans.ok, false);
-    assert.match(otherPlans.error, /Global Admin access required/u);
+    await asOwner(db);
+    const roles = await rows(db, `
+      select p.name, m.role from public.app_members m
+      join public.people p on p.id = m.person_id
+      where m.area_id = $1 order by p.name`, [f.areas.alpha]);
+    const admins = roles.filter((row) => row.role === 'admin');
+    assert.equal(admins.length, 1, "exactly one, still");
+    assert.equal(admins[0].name, "Taylor");
+
+    // Hand it back so the rest of the suite finds the family it expects.
+    const back = await probe(db, who(f.users.taylor, f.areas.alpha),
+      "select public.transfer_area_admin($1, $2)", [f.areas.alpha, f.members.adaAlpha]);
+    assert.equal(back.ok, true, back.error);
   });
 
-  test("neither limitation is introduced by 039 or 040", () => {
-    // Both come from migration 035's index and guard, which are applied and
-    // immutable. Naming them here is what stops a later reader assuming the new
-    // migrations caused it.
-    const integrity = readFileSync(
-      join(ROOT, "supabase", "migrations", "202608100035_area_integrity.sql"), "utf8");
-    assert.match(integrity, /app_members_single_admin_per_area_idx/u);
-    assert.match(integrity, /This Area must keep at least one active administrator/u);
+  test("and the administrator's own birthday can now be planned -- by somebody else", async () => {
+    // `start_birthday_planning` accepts this Area's contributors as well as
+    // its administrator, so Ada's birthday has a caller at last. She still is
+    // not one: migration 031's guard refuses the celebrant, and 043 made that
+    // guard resolve the reader inside the event's own Area.
+    const bySelf = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select id from public.start_birthday_planning($1, $2, $3, 0, '[]'::jsonb)",
+      [f.people.ada, "Ada 2030", "2030-09-09"]);
+    assert.equal(bySelf.ok, false);
+    assert.match(bySelf.error, /your own birthday/u);
+
+    const byContributor = await probe(db, who(f.users.jade, f.areas.alpha),
+      "select id from public.start_birthday_planning($1, $2, $3, 0, '[]'::jsonb)",
+      [f.people.ada, "Ada 2030", "2030-09-09"]);
+    assert.equal(byContributor.ok, true, byContributor.error);
+
+    // And she still cannot see a thing about it.
+    await asOwner(db);
+    const event = await value(db,
+      "select id from public.events where celebrant_person_id = $1 and event_date = '2030-09-09'",
+      [f.people.ada]);
+    assert.equal(await seen(db, who(f.users.dual, f.areas.alpha), "events", "id = $1", [event]), 0);
   });
 });
-
 // ===========================================================================
 // 12. Why the Family Access route has to scope itself by hand
 //

@@ -97,8 +97,13 @@ export function BottomTabs() {
 /**
  * The family tab bar, shown when the reader is not inside an event.
  *
- * Two tabs, no raised action: there is no purchase to add without an event to
- * add it to, and offering one would be a dead end.
+ * Events, People and Settings; no raised action, because there is no purchase
+ * to add without an event to add it to and offering one would be a dead end.
+ *
+ * The column count is chosen from `GLOBAL_NAV` rather than hard-coded, but it
+ * is still WRITTEN OUT in full: Tailwind scans source text, so a composed
+ * `grid-cols-${n}` would never be generated and the bar would silently fall
+ * back to one column.
  */
 function GlobalTabs({ activeGlobal }: { activeGlobal: GlobalNavSection | null }) {
   return (
@@ -106,7 +111,10 @@ function GlobalTabs({ activeGlobal }: { activeGlobal: GlobalNavSection | null })
       aria-label="Main navigation"
       className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-ground/90 pb-[max(8px,env(safe-area-inset-bottom))] backdrop-blur-md lg:hidden"
     >
-      <div className="mx-auto grid max-w-md grid-cols-2 items-end px-2 pt-2">
+      <div className={cx(
+        "mx-auto grid max-w-md items-end px-2 pt-2",
+        GLOBAL_NAV.length === 2 ? "grid-cols-2" : GLOBAL_NAV.length === 4 ? "grid-cols-4" : "grid-cols-3",
+      )}>
         {GLOBAL_NAV.map((item) => {
           const active = item.section === activeGlobal;
           const Glyph = item.icon;

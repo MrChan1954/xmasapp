@@ -1,19 +1,15 @@
 import { requireEvent } from "@/utils/supabase/events-server";
-import { MoreScreen } from "../../../more/more-screen";
+import { EventMoreScreen } from "./event-more-screen";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * The EVENT scope. It used to render the global `MoreScreen`, which is why an
+ * event's More menu carried the whole application's settings; that screen is
+ * gone and `/settings` is the hub. See `src/lib/settings-scopes.ts`.
+ */
 export default async function EventMorePage({ params }: PageProps<"/events/[eventId]/more">) {
   const { eventId } = await params;
   const event = await requireEvent(eventId);
-  return (
-    <MoreScreen
-      eventId={event.id}
-      eventName={event.name}
-      // Only a birthday has previous years belonging to one person, so only a
-      // birthday offers the link. History lives on the PERSON, not on this
-      // year's occurrence.
-      celebrantPersonId={event.type === "birthday" ? event.celebrantPersonId : null}
-    />
-  );
+  return <EventMoreScreen eventId={event.id} eventName={event.name} />;
 }

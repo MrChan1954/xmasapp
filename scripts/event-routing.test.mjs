@@ -123,7 +123,7 @@ const SECTION_ROUTES = [
   { section: "people", folder: ["people"], screen: "PeopleScreen" },
   { section: "add-purchase", folder: ["add-purchase"], screen: "PurchaseForm" },
   { section: "owed", folder: ["owed"], screen: "OwedScreen" },
-  { section: "more", folder: ["more"], screen: "MoreScreen" },
+  { section: "more", folder: ["more"], screen: "EventMoreScreen" },
   { section: "payment-log", folder: ["payment-log"], screen: "PaymentLogScreen" },
 ];
 
@@ -320,7 +320,9 @@ test("14. no event-scoped screen or loader resolves its event by year", () => {
     ["owed", "owed-data.ts"],
     ["owed", "owed-summary.tsx"],
     ["payment-log", "payment-log-screen.tsx"],
-    ["more", "more-screen.tsx"],
+    // Lives inside the event route now: it is that event's screen, not a
+    // global one that happens to be shown there.
+    ["events", "[eventId]", "more", "event-more-screen.tsx"],
     ["events-dashboard.tsx"],
     ["family-context.tsx"],
   ];

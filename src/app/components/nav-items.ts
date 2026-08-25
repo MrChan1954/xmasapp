@@ -1,4 +1,4 @@
-import { CalendarDays, Contact, Gift, House, MoreHorizontal, Scale, Sparkles, UserPlus, Users, type LucideIcon } from "lucide-react";
+import { CalendarDays, Contact, Gift, House, MoreHorizontal, Scale, Settings, Sparkles, UserPlus, Users, type LucideIcon } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventIdFromPath, eventNavMode, eventPath, eventSectionFromPath, type EventNavMode, type EventSection } from "@/lib/events.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
@@ -83,16 +83,20 @@ export function navItemsFor(eventId: string | null, activeRecipientCount: number
 /**
  * Which tab a path lights up.
  *
- * `more` also owns the screens reached from it -- Payment Log, Account, Family
- * Access, Activity -- so the tab bar does not go blank when the reader follows
- * one of those links.
+ * `more` owns the two screens reached from it that still belong to the event --
+ * this event's Payment Log and this event's Settings -- so the tab bar does not
+ * go blank when the reader follows either.
+ *
+ * IT NO LONGER CLAIMS THE FAMILY-LEVEL ROUTES. `/account`, `/more/notifications`
+ * and the rest used to light the event's More tab, because the event More screen
+ * was where they were listed. They are Settings now, they are not inside any
+ * event, and `activeGlobalSection` lights them instead -- so answering "more"
+ * here would light a tab bar that is not even rendered on those screens.
  */
 export function activeNavSection(pathname: string): EventSection | null {
   const section = eventSectionFromPath(pathname);
   if (section === "payment-log" || section === "settings") return "more";
-  if (section) return section;
-  if (pathname.startsWith("/more") || pathname.startsWith("/account") || pathname.startsWith("/payment-log")) return "more";
-  return null;
+  return section ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +134,18 @@ export const GLOBAL_NAV: readonly GlobalNavItem[] = [
   // `Contact` rather than `Users`: `Users` is the event People tab, and two
   // different questions should not wear the same glyph in the same app.
   { section: "people", href: "/people", label: "People", icon: Contact },
+  /*
+   * SETTINGS IS A PRIMARY DESTINATION, not something reached from inside an
+   * event.
+   *
+   * It used to be neither: the whole settings list was rendered by the event
+   * More screen, so the only way to change your own password was to walk into
+   * an event first -- and once Areas existed, the family-level screens in that
+   * list looked like they belonged to the event surrounding them. Settings sits
+   * beside Events and People because that is its actual scope: it follows the
+   * reader, not the occasion.
+   */
+  { section: "settings", href: "/settings", label: "Settings", icon: Settings },
 ];
 
 // Route matching lives in `src/lib/navigation.ts` and is re-exported here, so

@@ -14,10 +14,13 @@
  */
 import assert from "node:assert/strict";
 import test, { describe } from "node:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 /** Git stores LF and checks out CRLF, so normalise before matching anything. */
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+/** The same source with its commentary removed, so prose ABOUT a rule is never mistaken for a breach of it. */
+const withoutComments = (source) =>
+  source.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/^\s*\/\/.*$/gmu, "");
 
 describe("every request says which family it is about", () => {
   test("the server client sends the Area as a header", () => {
@@ -48,7 +51,8 @@ describe("nothing resolves a membership by guessing", () => {
     // Areas introduce: it either throws or answers about the wrong family.
     // The CALL, not the word: the comment above the function explains why it
     // used to be there and has to keep saying so.
-    assert.ok(!source.includes(".maybeSingle("), "current-member must not assume one membership");
+    assert.ok(!withoutComments(source).includes(".maybeSingle("),
+      "current-member.ts must not assume one membership");
   });
 
   test("two memberships and no choice made resolves to none, not to one of them", () => {
@@ -152,7 +156,8 @@ describe("the three settings scopes are wired, not just described", () => {
     // A global role would make somebody an administrator of a family they had
     // merely joined.
     const page = read("src/app/settings/family/page.tsx");
-    assert.match(page, /member\?\.area_id === active\?\.id/);
+    assert.match(page, /const isAdmin = member\?\.role === "admin" && member\?\.area_id === areaId;/,
+      "the role must come from the membership in the family on screen");
   });
 });
 
@@ -528,5 +533,112 @@ describe("every Family Access operation is scoped to one family, one query at a 
     const values = route.slice(at, route.indexOf("};", at));
     assert.match(values, /role: "member"/u, "the only role it ever writes is member");
     assert.ok(!values.includes('"admin"'), "no Family Access action may grant admin");
+  });
+});
+
+describe("nothing in the app assumes one login means one membership", () => {
+  /**
+   * THE SHAPE AREAS MADE DANGEROUS.
+   *
+   * `.maybeSingle()` does not return the first row when a query matches two --
+   * it ERRORS. Every caller in this application reads that error as "not a
+   * member" and fails closed, so a login that belongs to two families silently
+   * loses whatever the query was for: their login, their notification settings,
+   * their admin controls, the Payment Log, the purchase form.
+   *
+   * Two shapes are safe, and this sweeps for anything that is neither:
+   *
+   *   RESOLVED   `getCurrentMember` / `getCurrentMemberClient` -- picks the
+   *              membership for the family on screen.
+   *   COUNTED    `.limit(1)` before `.maybeSingle()` -- for the genuinely
+   *              Area-blind question "does this login belong ANYWHERE", which
+   *              is what login, the auth callback and account setup ask.
+   */
+  const sourceFiles = () => {
+    const found = [];
+    const walk = (relative) => {
+      for (const entry of readdirSync(new URL(`../${relative}`, import.meta.url), { withFileTypes: true })) {
+        if (entry.isDirectory()) walk(`${relative}/${entry.name}`);
+        else if (/\.tsx?$/u.test(entry.name) && !/\.test\./u.test(entry.name)) {
+          found.push(`${relative}/${entry.name}`);
+        }
+      }
+    };
+    walk("src");
+    return found;
+  };
+
+  test("every membership query keyed on a LOGIN is resolved or explicitly limited", () => {
+    /*
+     * Only a query filtered by `user_id` can match more than one row: one login
+     * may hold a membership in each family. A lookup by `id` or by
+     * `person_id` is unique by construction -- the primary key, and migration
+     * 033's one-membership-per-person index -- so `maybeSingle()` is exactly
+     * right for those and flagging them would be noise.
+     *
+     * Each query is bounded at the next `;` OR the next `.from(`, whichever
+     * comes first, so a safe query cannot be blamed for a sibling's
+     * `maybeSingle()` further down the same Promise.all.
+     */
+    const offenders = [];
+    for (const file of sourceFiles()) {
+      const source = read(file);
+      for (const chunk of source.split('.from("app_members")').slice(1)) {
+        const statement = chunk.split(/;|\.from\(/u)[0];
+        if (!statement.includes('.eq("user_id"')) continue;
+        if (!statement.includes(".maybeSingle()")) continue;
+        if (statement.includes(".limit(1)")) continue;
+        offenders.push(`${file} uses maybeSingle() on a login-keyed membership query without limit(1)`);
+      }
+    }
+    assert.deepEqual(offenders, [],
+      "maybeSingle() on a login-keyed membership query ERRORS for somebody in two families");
+  });
+
+  test("and the sweep is looking at something -- there are login-keyed queries to check", () => {
+    // A sweep that matches nothing passes for the wrong reason.
+    const checked = sourceFiles().flatMap((file) =>
+      read(file).split('.from("app_members")').slice(1)
+        .map((chunk) => chunk.split(/;|\.from\(/u)[0])
+        .filter((statement) => statement.includes('.eq("user_id"')));
+    assert.ok(checked.length >= 3, `expected several login-keyed queries, found ${checked.length}`);
+    // And every one of them limits, because none of them may assume.
+    assert.ok(checked.every((statement) =>
+      !statement.includes(".maybeSingle()") || statement.includes(".limit(1)")));
+  });
+
+  test("and the identity lookups go through the one resolver", () => {
+    // These need to know WHICH person and WHICH role, so an existence check is
+    // not enough -- they have to resolve the family on screen.
+    for (const [file, resolver] of [
+      ["src/utils/supabase/birthdays-server.ts", "getCurrentMember"],
+      ["src/utils/supabase/people-server.ts", "getCurrentMember"],
+      ["src/utils/supabase/events-server.ts", "getCurrentMember"],
+      ["src/utils/supabase/payment-log-server.ts", "getCurrentMember"],
+      ["src/utils/supabase/notifications-server.ts", "getCurrentMember"],
+      ["src/utils/supabase/family-access-admin.ts", "getCurrentMember"],
+      ["src/app/owed/owed-data.ts", "getCurrentMemberClient"],
+      ["src/app/family-context.tsx", "getCurrentMemberClient"],
+      ["src/app/add-purchase/purchase-form.tsx", "getCurrentMemberClient"],
+      ["src/app/more/notifications/page.tsx", "getCurrentMemberClient"],
+    ]) {
+      assert.match(read(file), new RegExp(`${resolver}\\(`, "u"),
+        `${file} must resolve the membership for the family on screen`);
+    }
+  });
+
+  test("the two resolvers refuse to guess, rather than picking one", () => {
+    for (const file of [
+      "src/utils/supabase/current-member.ts",
+      "src/utils/supabase/current-member-client.ts",
+    ]) {
+      const source = read(file);
+      assert.match(source, /rows\.length === 1/u, "one membership is answered directly");
+      assert.match(source, /chosen \?\? null/u, "and several with no choice made resolve to none");
+      // Both files EXPLAIN maybeSingle() at length in prose, so the ban has to
+      // be read against the code alone, or the explanation trips it.
+      assert.ok(!withoutComments(source).includes(".maybeSingle("),
+        `${file} must not assume one membership`);
+    }
   });
 });

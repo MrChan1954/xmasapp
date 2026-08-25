@@ -23,3 +23,30 @@ export function getRequestOrigin(request: Request) {
     isDevelopment: process.env.NODE_ENV === "development",
   });
 }
+
+/**
+ * WHETHER THIS STATE-CHANGING REQUEST CAME FROM ONE OF OUR OWN PAGES.
+ *
+ * A second lock, never the first one: every route that asks this is also
+ * authorised by the database, which refuses the caller on its own terms
+ * whatever the origin header says. What this stops is the shape the database
+ * cannot see -- another site quietly POSTing with somebody's session cookies
+ * attached, so a request they never made arrives looking exactly like one they
+ * did.
+ *
+ * A MISSING ORIGIN IS A REFUSAL. Browsers send `Origin` on every POST and PUT,
+ * so an absent one is not an ordinary page; treating it as trustworthy would
+ * make the check optional for anybody who simply left it out.
+ *
+ * One helper rather than one per route, because three copies of a security
+ * check are three chances for one of them to be subtly different.
+ */
+export function isSameOrigin(request: Request): boolean {
+  const origin = request.headers.get("origin");
+  if (!origin) return false;
+  try {
+    return new URL(origin).origin === getRequestOrigin(request);
+  } catch {
+    return false;
+  }
+}

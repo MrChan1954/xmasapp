@@ -67,16 +67,18 @@ function policyBody(sql, name) {
 // ===========================================================================
 
 describe("migrations 001-038 are applied and immutable", () => {
-  test("the new work is 039 and 040, and it is the newest work", () => {
-    assert.equal(migrationFiles.at(-2), AREA_AUTH);
-    assert.equal(migrationFiles.at(-1), WISHLIST);
-    assert.equal(migrationFiles.length, 40);
+  test("039 and 040 are where they were, with Q2's work above them", () => {
+    // Q2 added 041-043. What matters here is that 039 and 040 have not moved
+    // and nothing has been slipped in between them.
+    assert.equal(migrationFiles.indexOf(WISHLIST), migrationFiles.indexOf(AREA_AUTH) + 1);
+    assert.equal(migrationFiles.indexOf(AREA_AUTH), 38, "039 is the thirty-ninth migration");
+    assert.equal(migrationFiles.length, 43);
   });
 
   test("no earlier migration mentions the new ones", () => {
     // An applied migration that has learned about 039 is an applied migration
     // somebody has edited.
-    for (const name of migrationFiles.slice(0, 38)) {
+    for (const name of migrationFiles.filter((n) => Number(n.slice(8, 12)) <= 38)) {
       const sql = read("supabase", "migrations", name).toLowerCase();
       for (const forbidden of ["birthday_wishlist_ideas", "is_area_contributor_member", "is_own_wishlist_person"]) {
         assert.ok(!sql.includes(forbidden), `${name} mentions ${forbidden}, so it has been edited`);

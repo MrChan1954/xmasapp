@@ -30,6 +30,12 @@ import {
 const AREA_AUTH = "202608100039_area_aware_contributor_permissions.sql";
 const WISHLIST = "202608100040_own_birthday_wishlist.sql";
 
+// Q2's Area lifecycle. Not applied to production yet, which is why they are not
+// in the checksum manifest and why this suite is where they are proved to run.
+const HANDOVER = "202608100041_area_admin_handover.sql";
+const LIFECYCLE = "202608100042_area_membership_lifecycle.sql";
+const PLANNING = "202608100043_birthday_planning_eligibility.sql";
+
 /** Everything the database owns, as names. The unit of "what a migration did". */
 async function inventory(db) {
   return {
@@ -72,10 +78,11 @@ describe("the whole history replays on PostgreSQL 18", () => {
   before(async () => { db = await buildRehearsal({}); });
   after(async () => { await db?.close(); });
 
-  test("all forty migrations execute, in order, against a real server", async () => {
-    assert.equal(db.appliedMigrations.length, 40);
-    assert.equal(db.appliedMigrations.at(-2).name, AREA_AUTH);
-    assert.equal(db.appliedMigrations.at(-1).name, WISHLIST);
+  test("every migration executes, in order, against a real server", async () => {
+    assert.equal(db.appliedMigrations.length, 43);
+    assert.equal(db.appliedMigrations.at(-3).name, HANDOVER);
+    assert.equal(db.appliedMigrations.at(-2).name, LIFECYCLE);
+    assert.equal(db.appliedMigrations.at(-1).name, PLANNING);
     assert.ok(db.appliedMigrations.every((m) => m.ok));
   });
 
@@ -382,11 +389,10 @@ describe("public.rls_auto_enable, the object production has and no migration cre
 // ===========================================================================
 
 describe("the migration inventory", () => {
-  test("039 and 040 are the newest, and nothing older has moved", () => {
+  test("041-043 are the newest, and nothing older has moved", () => {
     const names = migrationNames();
-    assert.equal(names.length, 40);
-    assert.equal(names.at(-2), AREA_AUTH);
-    assert.equal(names.at(-1), WISHLIST);
+    assert.equal(names.length, 43);
+    assert.deepEqual(names.slice(-5), [AREA_AUTH, WISHLIST, HANDOVER, LIFECYCLE, PLANNING]);
   });
 });
 
@@ -414,9 +420,9 @@ describe("migrations 001-038 are applied, immutable, and now checked as such", (
     });
 
   test("every applied migration is accounted for, and only those", () => {
-    const applied = migrationNames().filter((name) => Number(name.slice(8, 12)) <= 38);
+    const applied = migrationNames().filter((name) => Number(name.slice(8, 12)) <= 40);
     assert.deepEqual(manifest.map((entry) => entry.name), applied);
-    assert.equal(manifest.length, 38);
+    assert.equal(manifest.length, 40);
   });
 
   test("and not one of them has changed", () => {
@@ -429,8 +435,12 @@ describe("migrations 001-038 are applied, immutable, and now checked as such", (
     }
   });
 
-  test("039 and 040 are deliberately NOT pinned, because they are not applied yet", () => {
-    assert.ok(!manifest.some((entry) => entry.name === AREA_AUTH));
-    assert.ok(!manifest.some((entry) => entry.name === WISHLIST));
+  test("041-043 are deliberately NOT pinned, because they are not applied yet", () => {
+    for (const name of [HANDOVER, LIFECYCLE, PLANNING]) {
+      assert.ok(!manifest.some((entry) => entry.name === name), `${name} must stay editable`);
+    }
+    // And 039/040 ARE pinned now: Q1 shipped them.
+    assert.ok(manifest.some((entry) => entry.name === AREA_AUTH));
+    assert.ok(manifest.some((entry) => entry.name === WISHLIST));
   });
 });

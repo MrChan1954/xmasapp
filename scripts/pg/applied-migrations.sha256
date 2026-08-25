@@ -1,4 +1,4 @@
-# MIGRATIONS 001-038 ARE APPLIED TO PRODUCTION AND IMMUTABLE.
+# MIGRATIONS 001-040 ARE APPLIED TO PRODUCTION AND IMMUTABLE.
 #
 # One SHA-256 per file, over its content with line endings normalised to LF so
 # a Windows checkout cannot make an untouched file look edited.
@@ -8,8 +8,12 @@
 # in review. If a hash here ever has to change, that is a decision somebody
 # makes deliberately and explains -- not a diff that slips through.
 #
-# Recorded 2026-08-25, after the full chain was replayed on PostgreSQL 18 and
-# every end-state assertion in all forty migrations passed.
+# 039 and 040 joined this list when Q1 was deployed. 041-043 are Q2's work and
+# are NOT pinned: they have not been applied yet, so they are still editable.
+#
+# Recorded 2026-08-25 (001-038) and extended after the Q1 release (039-040),
+# in both cases after the full chain was replayed on PostgreSQL 18 and every
+# end-state assertion passed.
 36d52d0405d78aa55b7ffd9bf3ad8d1c82a5ac8dbd39af13817c86579ad21901  202608100001_create_christmas_family.sql
 8d452e01ad00f5206c6b4323dc9df40375d9efa81fd86ed2d8e1a73637a4d4f2  202608100002_create_contributors.sql
 eb5b71757943569256c50782d3cd3a7cd1ddc230c99b49ffdf4c7bfa815fc750  202608100003_fix_jaden_jade_contribution.sql
@@ -48,3 +52,5 @@ da01e563d6a2da548ac48abb645a7e0ff480220509f319c0cefd0faa0f401e27  202608100033_m
 15d0d6bcc3bd2707e7de6546f1ec902d2cfeb691a9e4f9dad15a799ff110ab14  202608100036_area_scoped_visibility.sql
 77e82a7d9a1241fa9e1b4712e8418a19f2cd49597f101e533f5bf3d34be41e1a  202608100037_area_write_barrier.sql
 60a1c60b0b9ca23d574982c78eb0f6a3a375073c72fd9429c11007a607b31088  202608100038_acting_area.sql
+2c03f8a86447083ea1b48c5bb2ec3eacac700bf1e5c44c3770a03ecb25bf3536  202608100039_area_aware_contributor_permissions.sql
+3b80390b07ff87f90d87a16b3fd200bff10b8472be69741d8663bbb15a4a4db2  202608100040_own_birthday_wishlist.sql

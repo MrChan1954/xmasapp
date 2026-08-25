@@ -60,6 +60,10 @@
     "test:migrations": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/migration-execution.test.mjs",
     "test:tenancy-runtime": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tenancy-runtime.test.mjs",
     "test:mutations": "node scripts/mutation-check.mjs",
+    "test:qa-guard": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/qa/protected.test.mjs scripts/qa/no-product-coupling.test.mjs",
+    "test:qa-readiness": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/qa/tenant-readiness.test.mjs",
+    "test:settings-nav": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/settings-navigation.test.mjs",
+    "test:lifecycle": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/area-lifecycle.test.mjs",
     "test:production-checks": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/production-checks.test.mjs"
   },
   "dependencies": {

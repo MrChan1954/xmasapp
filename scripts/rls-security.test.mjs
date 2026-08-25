@@ -112,8 +112,10 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  assert.equal(migrationFiles.at(-1), wishlistMigrationName);
-  assert.equal(migrationFiles.at(-2), areaAuthMigrationName);
+  // Q2 added 041-043 on top. What this file pins is that Phase 5's and Q1's
+  // security migrations are still there, and still in order.
+  assert.equal(migrationFiles.at(-4), wishlistMigrationName);
+  assert.equal(migrationFiles.at(-5), areaAuthMigrationName);
   assert.ok(migrationFiles.includes(actingMigrationName), "the acting-Area migration is still present");
   assert.ok(migrationFiles.includes(membershipMigrationName), "the membership guard migration is still present");
   assert.ok(migrationFiles.includes(peopleMigrationName), "the People directory migration is still present");
@@ -634,8 +636,14 @@ test("secondary Payment Log navigation remains under More", () => {
   assert.match(navItems, /activeNavSection[\s\S]*?section === "payment-log" \|\| section === "settings"\) return "more"/);
   assert.doesNotMatch(primaryNav, /settings/, "Event settings is an admin screen, not a tab");
 
-  const morePage = readFileSync(join(root, "src", "app", "more", "more-screen.tsx"), "utf8");
-  assert.match(morePage, /eventPath\(eventId, "payment-log"\)[\s\S]*?Payment log/i);
+  // The event's own More screen still reaches THIS event's payment log. It is
+  // built from `eventSettingsFor`, which takes the event id, so the entry
+  // cannot point at another event's log.
+  const scopes = readFileSync(join(root, "src", "lib", "settings-scopes.ts"), "utf8");
+  const eventScope = scopes.match(/export function eventSettingsFor[\s\S]*?\n\}/u)?.[0];
+  assert.ok(eventScope);
+  assert.match(eventScope, /events\/\$\{eventId\}\/payment-log/u);
+  assert.match(eventScope, /Payment log/u);
 });
 
 test("contributor cards present responsibility spending without checkout totals", () => {

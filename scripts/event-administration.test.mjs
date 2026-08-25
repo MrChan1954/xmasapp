@@ -81,21 +81,34 @@ const HARDENING_MIGRATIONS = [
   "202608100040_own_birthday_wishlist.sql",
 ];
 
+/**
+ * Q2: the Area lifecycle. 041 makes an administrator replaceable, 042 makes a
+ * membership leavable, 043 stops the administrator's own birthday being
+ * unplannable -- three consequences of the same rule, fixed in the order they
+ * depend on each other.
+ */
+const LIFECYCLE_MIGRATIONS = [
+  "202608100041_area_admin_handover.sql",
+  "202608100042_area_membership_lifecycle.sql",
+  "202608100043_birthday_planning_eligibility.sql",
+];
+
 test("026 to 033 are still in order, with Phase 5's Areas on top", () => {
   const files = readdirSync(join(root, "supabase", "migrations")).filter((name) => name.endsWith(".sql")).sort();
   // 026-033 keep their order relative to each other; everything newer sits
   // above them, so every offset moves together and nothing about 026-033
   // changes.
-  assert.equal(files.at(-15), MIGRATION, "026 must come first of these");
-  assert.equal(files.at(-14), REMINDER_MIGRATION, "then 027");
-  assert.equal(files.at(-13), OCCASION_MIGRATION, "then 028");
-  assert.equal(files.at(-12), BUDGET_MIGRATION, "then 029");
-  assert.equal(files.at(-11), CONTRIBUTOR_MIGRATION, "then 030");
-  assert.equal(files.at(-10), PRIVACY_MIGRATION, "then 031");
-  assert.equal(files.at(-9), PEOPLE_MIGRATION, "then 032");
-  assert.equal(files.at(-8), MEMBERSHIP_MIGRATION, "then 033");
-  assert.deepEqual(files.slice(-7, -2), AREA_MIGRATIONS, "then Phase 5's five, in order");
-  assert.deepEqual(files.slice(-2), HARDENING_MIGRATIONS, "and the hardening on top of them");
+  assert.equal(files.at(-18), MIGRATION, "026 must come first of these");
+  assert.equal(files.at(-17), REMINDER_MIGRATION, "then 027");
+  assert.equal(files.at(-16), OCCASION_MIGRATION, "then 028");
+  assert.equal(files.at(-15), BUDGET_MIGRATION, "then 029");
+  assert.equal(files.at(-14), CONTRIBUTOR_MIGRATION, "then 030");
+  assert.equal(files.at(-13), PRIVACY_MIGRATION, "then 031");
+  assert.equal(files.at(-12), PEOPLE_MIGRATION, "then 032");
+  assert.equal(files.at(-11), MEMBERSHIP_MIGRATION, "then 033");
+  assert.deepEqual(files.slice(-10, -5), AREA_MIGRATIONS, "then Phase 5's five, in order");
+  assert.deepEqual(files.slice(-5, -3), HARDENING_MIGRATIONS, "then the Q1 hardening");
+  assert.deepEqual(files.slice(-3), LIFECYCLE_MIGRATIONS, "and Q2's Area lifecycle on top of that");
   for (const prefix of ["202608100026", "202608100027", "202608100028", "202608100029", "202608100030", "202608100031", "202608100032", "202608100033"]) {
     assert.equal(
       files.filter((name) => name.startsWith(prefix)).length,

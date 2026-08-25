@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { validateAreaName } from "@/lib/areas";
+import { isSameOrigin } from "@/utils/request-origin";
 import { createClient } from "@/utils/supabase/server";
 
 /**
@@ -11,6 +12,10 @@ import { createClient } from "@/utils/supabase/server";
  * else -- there is no check here that the RPC does not repeat.
  */
 export async function PUT(request: Request) {
+  if (!isSameOrigin(request)) {
+    return NextResponse.json({ error: "This request origin is not allowed." }, { status: 403 });
+  }
+
   const db = await createClient();
   const { data: { user } } = await db.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });

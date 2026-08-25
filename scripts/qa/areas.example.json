@@ -1,0 +1,15 @@
+{
+  "_comment": [
+    "COPY THIS TO .qa-areas.local.json IN THE REPO ROOT. That file is git-ignored",
+    "and must stay that way: it names the real family's Area id.",
+    "",
+    "protectedAreaIds  the real family. QA refuses every write here.",
+    "protectedEventIds the real Christmas, and anything else untouchable.",
+    "qaAreaIds         the synthetic Areas QA may write to. Empty until they",
+    "                  exist -- and while it is empty every QA write is refused,",
+    "                  which is the correct state before the rollout."
+  ],
+  "protectedAreaIds": ["00000000-0000-4000-8000-000000000001"],
+  "protectedEventIds": ["00000000-0000-4000-8000-000000000002"],
+  "qaAreaIds": []
+}
