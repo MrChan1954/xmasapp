@@ -29,6 +29,15 @@ export type PeopleDirectory = {
   isAdmin: boolean;
   canEditBirthdays: boolean;
   viewerPersonId: string | null;
+  /**
+   * WHO CAN SIGN IN, KEYED BY PERSON -- and empty for anybody who may not know.
+   *
+   * Row level security decides: a member reads only their own membership row,
+   * an admin reads all of them. So for an ordinary member this map holds at
+   * most themselves, and the directory shows no account badges at all rather
+   * than showing everybody a status the database declined to tell them.
+   */
+  accounts: Record<string, PersonAccount>;
   today: string;
 };
 
@@ -76,7 +85,7 @@ export async function loadPeopleDirectory(): Promise<PeopleDirectory> {
   const db = await createClient();
   const today = londonToday();
   const nothing: PeopleDirectory = {
-    people: [], isAdmin: false, canEditBirthdays: false, viewerPersonId: null, today,
+    people: [], isAdmin: false, canEditBirthdays: false, viewerPersonId: null, accounts: {}, today,
   };
 
   /**
@@ -96,8 +105,30 @@ export async function loadPeopleDirectory(): Promise<PeopleDirectory> {
   const viewerPersonId = (member.person_id as string | null) ?? null;
   const isAdmin = member.role === "admin";
 
+  /**
+   * SCOPED TO THIS AREA LIKE EVERY OTHER READ HERE, and read through the
+   * caller's own session so row level security is the thing deciding what comes
+   * back. There is no service-role client anywhere in this file.
+   */
+  const memberships = await db
+    .from("app_members")
+    .select("person_id,user_id,active,role")
+    .eq("area_id", areaId);
+
+  const accounts: Record<string, PersonAccount> = {};
+  for (const row of (memberships.data ?? []) as Array<Record<string, unknown>>) {
+    const personId = (row.person_id as string | null) ?? null;
+    if (!personId) continue;
+    accounts[personId] = personAccountFrom({
+      userId: (row.user_id as string | null) ?? null,
+      active: Boolean(row.active),
+      role: String(row.role),
+    });
+  }
+
   return {
     people,
+    accounts,
     isAdmin,
     // The same rule migration 031 enforces inside `set_person_birthday`: an
     // admin always may, and a family contributor may too. Renaming is
@@ -138,6 +169,17 @@ export type PersonProfile = {
   account: PersonAccount;
   isAdmin: boolean;
   canEditBirthdays: boolean;
+  /**
+   * The family this person is in, by name.
+   *
+   * ON THE PAGE ON PURPOSE. A login in several families reads the same screen
+   * layout in each, and "Jade" exists in more than one of them. Naming the
+   * family is what stops somebody renaming or archiving the right name in the
+   * wrong household.
+   */
+  areaName: string;
+  /** The READER'S role in this Area -- never this person's. */
+  viewerRole: "admin" | "member";
   today: string;
 };
 
@@ -287,6 +329,11 @@ export async function loadPersonProfile(personId: string): Promise<PersonProfile
     });
   }
 
+  // By unique id, so the Area-scoped sweep is satisfied by construction, and
+  // through the reader's own session so it can only ever name a family they
+  // are really in.
+  const areaRow = await db.from("areas").select("name").eq("id", areaId).maybeSingle();
+
   return {
     person,
     history: groupGiftHistory(rows),
@@ -294,6 +341,8 @@ export async function loadPersonProfile(personId: string): Promise<PersonProfile
     account,
     isAdmin,
     canEditBirthdays: isAdmin || await viewerIsContributor(db, areaId, viewerPersonId),
+    areaName: (areaRow.data?.name as string | undefined)?.trim() || "this family",
+    viewerRole: isAdmin ? "admin" : "member",
     today,
   };
 }

@@ -405,13 +405,28 @@ test("the pool is backfilled from who actually contributes, not from a name list
   assert.doesNotMatch(sql, /where name (=|in)/i);
 });
 
-test("set_family_contributor writes one boolean and checks Global Admin itself", () => {
+test("set_family_contributor writes one boolean and checks the RIGHT family's admin itself", () => {
   const sql = read("supabase", "migrations", ownerOf("set_family_contributor"));
   const body = functionBody(sql, "set_family_contributor");
 
   assert.match(body, /security definer/i);
   assert.match(body, /set search_path = ''/i);
   assert.match(body, /42501/, "a non-admin must be refused by the database, not by the UI");
+
+  /*
+   * THE AREA COMES FROM THE PERSON, NOT FROM THE REQUEST.
+   *
+   * `is_app_admin()` answers about the Area the caller SAID they are acting in
+   * (migration 038). Asking it and then writing `where id = p_person_id` puts
+   * the question and the row in different families -- and an administrator of
+   * one who merely belongs to another walked straight through migration 037's
+   * barrier, which checks membership rather than administration. Proven on a
+   * real PostgreSQL before migration 044 was written.
+   */
+  assert.match(body, /area_of_person\(/u, "it must resolve the Area of the person being changed");
+  assert.match(body, /is_area_admin\(/u, "and require administration OF THAT Area");
+  assert.doesNotMatch(body, /is_app_admin\(\)/u,
+    "is_app_admin() answers about the acting Area, which is not necessarily the person's");
 
   // It must not touch money. Removing somebody from the pool stops them being
   // OFFERED; it does not rewrite a plan they are already part of.
@@ -725,7 +740,16 @@ test("the Owed engine, allocation snapshots and payment rules are untouched", ()
 test("the Owed engine and the payment rules are byte-for-byte unchanged", () => {
   const fingerprints = {
     "owed.ts": "429c11a3be054c51030b793018596c38404ec4c354d95b58a6d206fdbb230c9f",
-    "payment-confirmation.ts": "ccbdc1a1b24e2a3f01c2aafaaf63f9c2e520ac210f519be9b05e4a00df8657d8",
+    // Updated deliberately in Q3: the refusal shown when somebody who is not
+    // the payer, the payee or an administrator tries to record a confirmed
+    // payment said "Only Global Admin can...". "Global Admin" is the pre-Areas
+    // model -- administration is per family now, and one login can administer
+    // one family while being an ordinary member of another, so the old wording
+    // named a role that does not exist. WORDING ONLY: one string literal. The
+    // arithmetic, the bounds, the error codes and the return shapes are
+    // untouched, and `owed.ts` beside it did not move at all, which is the
+    // whole reason this fingerprint exists to make somebody say so.
+    "payment-confirmation.ts": "fe60b858c410b60f1ceac17cd80cc594e0ce297c02c2288e665d789f3b74935c",
     // Updated deliberately in Phase 2: the budget validation message said
     // "Enter a valid Christmas budget" on a screen that now sets budgets for
     // birthdays, Halloweens and anything else. WORDING ONLY -- the arithmetic,
@@ -844,6 +868,21 @@ function migrationsMatching(number) {
  * Plain string matching rather than a regex: the three shapes a definition
  * takes here are fixed, and they read better than an escaped pattern.
  */
+/**
+ * THE MIGRATION THAT HAS THE LAST WORD, not the one that spoke first.
+ *
+ * This used to insist a symbol was introduced exactly ONCE, which was true only
+ * while nothing had ever been redefined. A function can legitimately be
+ * replaced later: migration 039 rewrote `set_person_birthday` to ask about
+ * Areas, and 044 did the same for `set_family_contributor` and
+ * `set_person_archived` after both were PROVEN to let the administrator of one
+ * family edit people in another. Under the old rule every such fix failed here
+ * with "found 2" -- a message about counting, not about whether the fix was
+ * right, and one that would push somebody towards editing an applied migration
+ * to make it go away.
+ *
+ * The NEWEST definition is checked, because it is the one the database runs.
+ */
 function ownerOf(symbol) {
   const name = symbol.toLowerCase();
   const introduces = (sql) => {
@@ -856,10 +895,12 @@ function ownerOf(symbol) {
 
   const files = readdirSync(join(root, "supabase", "migrations"))
     .filter((file) => file.endsWith(".sql"))
-    .filter((file) => introduces(read("supabase", "migrations", file)));
-  assert.equal(files.length, 1, `${symbol} must be introduced by exactly one migration, found ${files.length}`);
-  return files[0];
+    .filter((file) => introduces(read("supabase", "migrations", file)))
+    .sort();
+  assert.notEqual(files.length, 0, `${symbol} is introduced by no migration`);
+  return files[files.length - 1];
 }
+
 
 /** The text of one `create ... function name(...)` body, dollar quotes and all. */
 function functionBody(sql, name) {

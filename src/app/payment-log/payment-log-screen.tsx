@@ -404,7 +404,7 @@ function PaymentDetail({ record, isAdmin, onClose, onVoided }: { record: Payment
     const validId = validateUuid(record.id, "This payment record is invalid.");
     if (!validId.ok) { setError(validId.error); setVoiding(false); setConfirming(false); return; }
     const result = await createClient().rpc("void_settlement", { p_settlement_id: validId.value });
-    if (result.error) { setError(result.error.code === "42501" ? "Only Global Admin can void a payment." : "This payment could not be voided. Nothing was changed."); setVoiding(false); setConfirming(false); return; }
+    if (result.error) { setError(result.error.code === "42501" ? "Only this family’s admin can void a payment." : "This payment could not be voided. Nothing was changed."); setVoiding(false); setConfirming(false); return; }
     try {
       await onVoided();
     } catch {
@@ -461,7 +461,7 @@ function PaymentDetail({ record, isAdmin, onClose, onVoided }: { record: Payment
           <div className="mt-5 rounded-2xl border border-warning-border bg-gold-soft p-4">
             <h3 className="font-semibold">Admin confirmed payment</h3>
             <p className="mt-1 text-sm leading-6">
-              A Global Admin recorded this as already received, so {record.payeeName} was never asked to confirm it.
+              This family&apos;s admin recorded this as already received, so {record.payeeName} was never asked to confirm it.
               It reduced the balance immediately.
             </p>
             {adminOverrideReason(record) && (

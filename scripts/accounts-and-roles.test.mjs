@@ -74,44 +74,71 @@ test("creating a person creates a person and nothing else", () => {
   assert.ok(!creation.includes("'admin'"), "and certainly no role");
 });
 
-test("the Person profile shows the three facts separately", () => {
-  const screen = read(...APP, "people", "[id]", "person-profile-screen.tsx");
+test("the Person profile shows the FOUR facts separately", () => {
+  /*
+   * PERSON, CONTRIBUTOR, ACCOUNT, ADMIN.
+   *
+   * The profile used to show three of them in one read-only list and call the
+   * fourth "Global Admin" -- the pre-Areas name for a role that is now
+   * per-family. Each is its own labelled thing now, and each says in its own
+   * words what it does NOT do, because the reader's model of these four is
+   * built on this screen or nowhere.
+   */
+  const panel = read(...APP, "people", "[id]", "person-admin-panel.tsx");
 
-  assert.match(screen, /Account access/u);
-  assert.match(screen, /Contributor</u);
-  assert.match(screen, /ACCOUNT_LABEL\[account\.status\]/u);
-  assert.match(screen, /person\.isFamilyContributor \? "Yes" : "No"/u);
+  assert.match(panel, /title="Account access"/u);
+  assert.match(panel, /title="Contributor"/u);
+  assert.match(panel, /label="Role in this family"/u);
+  assert.match(panel, /label="Family"/u, "which family this person is in, named on the page");
 
   // Four words for four states, so none of them can be read as another.
-  assert.match(screen, /none: "No account"/u);
-  assert.match(screen, /invited: "Invited, not signed in yet"/u);
-  assert.match(screen, /active: "Active"/u);
-  assert.match(screen, /disabled: "Disabled"/u);
+  assert.match(panel, /none: "No account"/u);
+  assert.match(panel, /invited: "Invited, not signed in yet"/u);
+  assert.match(panel, /disabled: "Disabled"/u);
+
+  // AND THE ROLE IS AREA-SCOPED, in words. "Global Admin" described a power
+  // that reached every family; no such power exists.
+  assert.match(panel, /Admin of this family/u);
+  assert.ok(!panel.includes("Global Admin"), "administration is per family now");
 });
 
 test("the profile says removing access keeps the person", () => {
-  const screen = read(...APP, "people", "[id]", "person-profile-screen.tsx");
-  assert.match(screen, /Removing account access keeps this person/u);
-  assert.match(screen, /Give account access/u);
-  assert.match(screen, /Manage account access/u);
+  const panel = read(...APP, "people", "[id]", "person-admin-panel.tsx");
+  assert.match(panel, /Removing account access keeps this person/u);
+  assert.match(panel, /account access/u);
+  assert.match(panel, /Manage account access/u);
 
   // NEVER "delete person". The two are different actions on different things,
   // and the wording is the only thing standing between them on screen.
-  assert.ok(!screen.includes("Delete person"), "access is not deletion");
-  assert.ok(!screen.includes("Remove person"));
+  assert.ok(!panel.includes("Delete person"), "access is not deletion");
+  assert.ok(!panel.includes("Remove person"));
 });
 
-test("the access section is admin-only, and does not become a second backend", () => {
-  const screen = read(...APP, "people", "[id]", "person-profile-screen.tsx");
-  const start = screen.indexOf("{isAdmin && (");
-  assert.ok(start > 0, "the section is gated on the reader being an admin");
+test("the profile edits the PERSON, and never the account", () => {
+  /*
+   * THE LINE THIS TEST DEFENDS. The profile may change facts about a PERSON --
+   * their name, their birthday, whether they contribute, whether they are
+   * archived. It may NOT create a login, disable one, or change its email:
+   * that is Family Access's job, and two screens that both write accounts are
+   * two places for the rules to differ.
+   *
+   * So the account section is read-only and LINKS; the person section writes.
+   */
+  const panel = read(...APP, "people", "[id]", "person-admin-panel.tsx");
 
-  // It LINKS to Family Access rather than reimplementing it. Two screens that
-  // both create accounts are two places for the rules to differ.
-  const section = screen.slice(start, screen.indexOf("</section>", start));
-  assert.match(section, /href="\/more\/family-access"/u);
-  for (const forbidden of ["fetch(", ".rpc(", "createClient"]) {
-    assert.ok(!section.includes(forbidden), `the profile must not ${forbidden} account changes itself`);
+  const summary = panel.slice(panel.indexOf("export function PersonAccountSummary"));
+  assert.match(summary, /href="\/more\/family-access"/u, "it points at the one place accounts change");
+  for (const name of ["fetch(", ".rpc(", "createClient("]) {
+    assert.ok(!summary.includes(name), `the account summary must not ${name} account changes itself`);
+  }
+
+  // The person half DOES write, through routines that check the Area itself.
+  for (const routine of ["set_person_name", "set_person_birthday", "set_family_contributor", "set_person_archived"]) {
+    assert.ok(panel.includes(routine), `${routine} is how a person fact is changed`);
+  }
+  // And never through anything that touches a membership.
+  for (const forbidden of ["app_members", "auth.admin", "inviteUserByEmail"]) {
+    assert.ok(!panel.includes(forbidden), `the profile must not touch ${forbidden}`);
   }
 });
 

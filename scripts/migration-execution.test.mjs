@@ -35,6 +35,8 @@ const WISHLIST = "202608100040_own_birthday_wishlist.sql";
 const HANDOVER = "202608100041_area_admin_handover.sql";
 const LIFECYCLE = "202608100042_area_membership_lifecycle.sql";
 const PLANNING = "202608100043_birthday_planning_eligibility.sql";
+const PERSON_ADMIN = "202608100044_area_scoped_person_administration.sql";
+const MUTATION_HARDENING = "202608100045_area_scoped_mutation_hardening.sql";
 
 /** Everything the database owns, as names. The unit of "what a migration did". */
 async function inventory(db) {
@@ -79,10 +81,12 @@ describe("the whole history replays on PostgreSQL 18", () => {
   after(async () => { await db?.close(); });
 
   test("every migration executes, in order, against a real server", async () => {
-    assert.equal(db.appliedMigrations.length, 43);
-    assert.equal(db.appliedMigrations.at(-3).name, HANDOVER);
-    assert.equal(db.appliedMigrations.at(-2).name, LIFECYCLE);
-    assert.equal(db.appliedMigrations.at(-1).name, PLANNING);
+    assert.equal(db.appliedMigrations.length, 45);
+    assert.equal(db.appliedMigrations.at(-5).name, HANDOVER);
+    assert.equal(db.appliedMigrations.at(-4).name, LIFECYCLE);
+    assert.equal(db.appliedMigrations.at(-3).name, PLANNING);
+    assert.equal(db.appliedMigrations.at(-2).name, PERSON_ADMIN);
+    assert.equal(db.appliedMigrations.at(-1).name, MUTATION_HARDENING);
     assert.ok(db.appliedMigrations.every((m) => m.ok));
   });
 
@@ -389,10 +393,11 @@ describe("public.rls_auto_enable, the object production has and no migration cre
 // ===========================================================================
 
 describe("the migration inventory", () => {
-  test("041-043 are the newest, and nothing older has moved", () => {
+  test("045 is the newest, and nothing older has moved", () => {
     const names = migrationNames();
-    assert.equal(names.length, 43);
-    assert.deepEqual(names.slice(-5), [AREA_AUTH, WISHLIST, HANDOVER, LIFECYCLE, PLANNING]);
+    assert.equal(names.length, 45);
+    assert.deepEqual(names.slice(-7),
+      [AREA_AUTH, WISHLIST, HANDOVER, LIFECYCLE, PLANNING, PERSON_ADMIN, MUTATION_HARDENING]);
   });
 });
 

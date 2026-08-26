@@ -429,7 +429,7 @@ export function PurchaseForm({ eventId }: { eventId: string }) {
         />
         <Notice tone="info" className="mt-6">
           A purchase belongs to a recipient, so somebody has to be added to this event
-          first. The Global Admin can do that on the set-up screen.
+          first. This family’s admin can do that on the set-up screen.
         </Notice>
         <div className="mt-6">
           <Button size="lg" onClick={() => router.push(eventPath(eventId, "people") ?? "/")}>

@@ -257,7 +257,7 @@ export function EventSettingsScreen({
       <AppShell width="narrow">
         <PageHeader eyebrow={event.name} title="Event settings" />
         <Notice tone="info" className="mt-6">
-          Only the Global Admin can change an event&apos;s details, recipients or contributors.
+          Only this family&apos;s admin can change an event&apos;s details, recipients or contributors.
         </Notice>
       </AppShell>
     );

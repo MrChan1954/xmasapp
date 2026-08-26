@@ -30,6 +30,7 @@ export default async function PeoplePage({ searchParams }: PageProps<"/people">)
       today={directory.today}
       isAdmin={directory.isAdmin}
       canEditBirthdays={directory.canEditBirthdays}
+      accounts={directory.accounts}
     />
   );
 }

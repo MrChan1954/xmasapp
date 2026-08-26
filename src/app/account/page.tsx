@@ -29,8 +29,14 @@ export default function AccountPage() {
     router.refresh();
   };
 
+  /*
+   * BACK TO SETTINGS, NOT TO "/more". `/more` is a legacy redirect INTO an
+   * event: following it from Account landed the reader inside Christmas, which
+   * is neither where they came from nor anything to do with their password.
+   * Account is a GLOBAL setting and sits under Settings.
+   */
   return (
-    <AppShell width="narrow" parent={{ href: "/more", label: "More" }}>
+    <AppShell width="narrow" parent={{ href: "/settings", label: "Settings" }}>
       <PageHeader
         title="Account & security"
         description={email ? `Signed in as ${email}` : "Loading your account..."}
@@ -55,7 +61,7 @@ export default function AccountPage() {
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
             <div className="min-w-0">
               <h2 className="font-display text-lg font-semibold">Sign out</h2>
-              <p className="mt-0.5 text-sm leading-6 text-ink-600">Sign out of the Christmas app on this device.</p>
+              <p className="mt-0.5 text-sm leading-6 text-ink-600">Sign out on this device. Your families, and everything in them, are untouched.</p>
             </div>
             <Button variant="dangerGhost" onClick={() => void signOut()} className="w-full border border-berry-soft-border sm:w-auto">
               Sign out

@@ -97,16 +97,41 @@ describe("handing over a family", () => {
     assert.equal(result.code, "42501");
   });
 
-  test("and claiming a different Area in the header changes nothing", async () => {
-    // The routine reads the membership table, not the acting Area.
+  test("THE FAMILY ON SCREEN IS THE FAMILY YOU CHANGE -- both directions", async () => {
+    /*
+     * THIS TEST USED TO ASSERT THE OPPOSITE, AND IT WAS WRONG.
+     *
+     * Q2 recorded that "administering Alpha is what counts, not what was
+     * claimed", and passed: acting in Bravo, `dual` could hand Alpha over.
+     * Reading `transfer_area_admin` on its own that is defensible -- it checks
+     * the membership table for the Area it was given.
+     *
+     * Q3's audit showed what it costs in aggregate. The same shape in sixteen
+     * other routines let an administrator of one family archive another
+     * family's event, void its purchases and void its settlements, because
+     * "am I an admin somewhere?" was standing in for "am I an admin HERE?".
+     * Migration 045 makes the selected family authoritative for every targeted
+     * mutation, and this routine is one of them.
+     *
+     * So the rule now reads the same in both directions: you change the family
+     * you are standing in. A dual administrator switches first -- which is one
+     * click, and is what the switcher has always implied.
+     */
     const claimingBravo = await probe(db, who(f.users.dual, f.areas.bravo),
       "select public.transfer_area_admin($1, $2)", [f.areas.alpha, f.members.jadeAlpha]);
-    assert.equal(claimingBravo.ok, true, "administering Alpha is what counts, not what was claimed");
-    await restoreAlpha();
+    assert.equal(claimingBravo.ok, false, "standing in Bravo, you do not hand Alpha over");
+    assert.equal(claimingBravo.code, "42501");
 
     const claimingAlpha = await probe(db, who(f.users.dual, f.areas.alpha),
       "select public.transfer_area_admin($1, $2)", [f.areas.bravo, f.members.joBravo]);
     assert.equal(claimingAlpha.ok, false, "and claiming Alpha does not help in Bravo");
+
+    // AND IT IS A SWITCH, NOT A WALL: the same person, standing in Alpha, may
+    // still hand Alpha over. Nothing legitimate was taken away.
+    const standingInAlpha = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select public.transfer_area_admin($1, $2)", [f.areas.alpha, f.members.jadeAlpha]);
+    assert.equal(standingInAlpha.ok, true, standingInAlpha.error);
+    await restoreAlpha();
   });
 
   test("a successor from ANOTHER family is refused", async () => {

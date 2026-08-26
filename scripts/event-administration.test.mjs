@@ -98,17 +98,21 @@ test("026 to 033 are still in order, with Phase 5's Areas on top", () => {
   // 026-033 keep their order relative to each other; everything newer sits
   // above them, so every offset moves together and nothing about 026-033
   // changes.
-  assert.equal(files.at(-18), MIGRATION, "026 must come first of these");
-  assert.equal(files.at(-17), REMINDER_MIGRATION, "then 027");
-  assert.equal(files.at(-16), OCCASION_MIGRATION, "then 028");
-  assert.equal(files.at(-15), BUDGET_MIGRATION, "then 029");
-  assert.equal(files.at(-14), CONTRIBUTOR_MIGRATION, "then 030");
-  assert.equal(files.at(-13), PRIVACY_MIGRATION, "then 031");
-  assert.equal(files.at(-12), PEOPLE_MIGRATION, "then 032");
-  assert.equal(files.at(-11), MEMBERSHIP_MIGRATION, "then 033");
-  assert.deepEqual(files.slice(-10, -5), AREA_MIGRATIONS, "then Phase 5's five, in order");
-  assert.deepEqual(files.slice(-5, -3), HARDENING_MIGRATIONS, "then the Q1 hardening");
-  assert.deepEqual(files.slice(-3), LIFECYCLE_MIGRATIONS, "and Q2's Area lifecycle on top of that");
+  assert.equal(files.at(-20), MIGRATION, "026 must come first of these");
+  assert.equal(files.at(-19), REMINDER_MIGRATION, "then 027");
+  assert.equal(files.at(-18), OCCASION_MIGRATION, "then 028");
+  assert.equal(files.at(-17), BUDGET_MIGRATION, "then 029");
+  assert.equal(files.at(-16), CONTRIBUTOR_MIGRATION, "then 030");
+  assert.equal(files.at(-15), PRIVACY_MIGRATION, "then 031");
+  assert.equal(files.at(-14), PEOPLE_MIGRATION, "then 032");
+  assert.equal(files.at(-13), MEMBERSHIP_MIGRATION, "then 033");
+  assert.deepEqual(files.slice(-12, -7), AREA_MIGRATIONS, "then Phase 5's five, in order");
+  assert.deepEqual(files.slice(-7, -5), HARDENING_MIGRATIONS, "then the Q1 hardening");
+  assert.deepEqual(files.slice(-5, -2), LIFECYCLE_MIGRATIONS, "and Q2's Area lifecycle on top of that");
+  // Q3's 044 sits above all of it. Named here so adding another migration is
+  // still a deliberate act that has to come back through this file.
+  assert.equal(files.at(-2), "202608100044_area_scoped_person_administration.sql");
+  assert.equal(files.at(-1), "202608100045_area_scoped_mutation_hardening.sql");
   for (const prefix of ["202608100026", "202608100027", "202608100028", "202608100029", "202608100030", "202608100031", "202608100032", "202608100033"]) {
     assert.equal(
       files.filter((name) => name.startsWith(prefix)).length,
@@ -372,7 +376,7 @@ test("every write it does make is event-scoped and admin-checked", () => {
   // And the screen refuses to render its controls to a non-admin, over and
   // above the database checking each call itself.
   assert.match(settings, /if \(!isAdmin\) \{/u);
-  assert.match(settings, /Only the Global Admin can change an event/u);
+  assert.match(settings, /Only this family(&apos;|’)s admin can change an event/u);
 });
 
 test("the event's own title is its identity on the settings screen", () => {

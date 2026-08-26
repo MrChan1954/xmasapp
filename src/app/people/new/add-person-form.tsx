@@ -24,7 +24,7 @@ import { Button, Field, Input, Notice } from "../../components/ui";
  * refuses to make them a contributor, a member or an admin: adding somebody to
  * the directory says they are family, and nothing else.
  */
-export function AddPersonForm() {
+export function AddPersonForm({ existingNames = [] }: { existingNames?: string[] }) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [month, setMonth] = useState("");
@@ -41,6 +41,16 @@ export function AddPersonForm() {
   const birthdayValid = !wantsBirthday
     || (isValidBirthday(monthNumber, dayNumber) && isValidBirthYear(yearNumber));
   const canSave = name.trim().length > 0 && birthdayValid && !saving;
+
+  /*
+   * A WARNING, NEVER A REFUSAL. Two people in one family really can share a
+   * name, so this says what it sees and gets out of the way. Compared
+   * case-insensitively and on the trimmed value, because "  eden" and "Eden"
+   * are the duplicate somebody is about to create by accident.
+   */
+  const duplicate = existingNames.find(
+    (existing) => existing.trim().toLowerCase() === name.trim().toLowerCase(),
+  );
 
   const save = async () => {
     setSaving(true);
@@ -114,6 +124,13 @@ export function AddPersonForm() {
             />
           </div>
         </Field>
+
+        {duplicate && (
+          <Notice tone="warning">
+            {duplicate} is already in this family. You can still add another — families do have two
+            people with the same name — but if this is the same person, open them instead.
+          </Notice>
+        )}
 
         {wantsBirthday && !birthdayValid && (
           <p className="text-sm text-berry">

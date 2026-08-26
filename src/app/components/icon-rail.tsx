@@ -110,7 +110,7 @@ export function IconRail() {
           <p className="mt-auto mb-5 flex h-10 shrink-0 items-center gap-3.5 px-[25px] text-xs font-semibold whitespace-nowrap text-gold">
             <ShieldCheck aria-hidden size={18} strokeWidth={1.8} className="shrink-0" />
             <span className="opacity-0 transition-opacity duration-200 group-hover/rail:opacity-100 group-has-focus-visible/rail:opacity-100">
-              Global Admin
+              Family admin
             </span>
           </p>
         )}

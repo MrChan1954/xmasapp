@@ -68,11 +68,11 @@ function policyBody(sql, name) {
 
 describe("migrations 001-038 are applied and immutable", () => {
   test("039 and 040 are where they were, with Q2's work above them", () => {
-    // Q2 added 041-043. What matters here is that 039 and 040 have not moved
-    // and nothing has been slipped in between them.
+    // Q2 added 041-043 and Q3 added 044 and 045. What matters here is that 039 and 040
+    // have not moved and nothing has been slipped in between them.
     assert.equal(migrationFiles.indexOf(WISHLIST), migrationFiles.indexOf(AREA_AUTH) + 1);
     assert.equal(migrationFiles.indexOf(AREA_AUTH), 38, "039 is the thirty-ninth migration");
-    assert.equal(migrationFiles.length, 43);
+    assert.equal(migrationFiles.length, 45);
   });
 
   test("no earlier migration mentions the new ones", () => {

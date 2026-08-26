@@ -242,7 +242,7 @@ async function createOrSetUpAccount(
   if (membership?.role === "admin" || membership?.user_id === currentAuthUserId) {
     throw new FamilyAccessError(
       409,
-      "The Global Admin account cannot be changed with this action.",
+      "This family’s admin account cannot be changed with this action.",
     );
   }
 
@@ -519,7 +519,7 @@ async function setAccountActive(
   ) {
     throw new FamilyAccessError(
       403,
-      "The Global Admin account cannot be disabled or reactivated here.",
+      "This family’s admin cannot be disabled here. Hand the family over to somebody else first.",
     );
   }
 
@@ -563,7 +563,7 @@ async function updateAccountEmail(
   if (membership.role === "admin") {
     throw new FamilyAccessError(
       403,
-      "The Global Admin email cannot be changed from Family Access.",
+      "This family’s admin email cannot be changed from Family Access.",
     );
   }
 

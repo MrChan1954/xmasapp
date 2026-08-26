@@ -333,7 +333,7 @@ function ArchivedPeople({
         <span className="min-w-0">
           <span className="block font-display text-lg font-semibold">Removed people</span>
           <span className="mt-0.5 block text-sm text-ink-600">
-            {people.length} archived · only Global Admin can restore them
+            {people.length} archived · only an admin can restore them
           </span>
         </span>
         <IconChevronRight size={20} className="shrink-0 text-ink-400 transition group-open:rotate-90" />

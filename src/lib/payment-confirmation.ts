@@ -212,7 +212,7 @@ export function adminPaymentError(code?: string, message?: string): string {
   if (code === "42501") {
     return message?.includes("your own payment")
       ? "You cannot confirm your own payment. Record it normally and let the other person confirm it."
-      : "Only Global Admin can record a confirmed payment on behalf of others.";
+      : "Only this family’s admin can record a confirmed payment on behalf of others.";
   }
   if (code === "23514") return "That payment does not fit the current balance between these two people. Refresh and check what is outstanding.";
   if (code === "42P01" || code === "42883" || code === "PGRST202" || code === "PGRST205") {

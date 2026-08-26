@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentMember } from "@/utils/supabase/current-member";
+import { loadPeopleDirectory } from "@/utils/supabase/people-server";
 import { AddPersonForm } from "./add-person-form";
 
 export const dynamic = "force-dynamic";
@@ -16,5 +17,16 @@ export default async function AddPersonPage() {
   if (!user || !member) redirect("/login");
   if (member.role !== "admin") redirect("/people");
 
-  return <AddPersonForm />;
+  /*
+   * THE NAMES ALREADY IN THIS FAMILY, so the form can WARN about a duplicate
+   * without refusing one. Two people really can share a name -- a family with
+   * two Jameses is not a data-entry error -- so the honest answer is to say so
+   * and let whoever is adding them decide, never to block it.
+   *
+   * Area-scoped by `loadPeopleDirectory`, so it is this family's names only and
+   * no other family's are disclosed by the warning.
+   */
+  const directory = await loadPeopleDirectory();
+
+  return <AddPersonForm existingNames={directory.people.map((entry) => entry.name)} />;
 }

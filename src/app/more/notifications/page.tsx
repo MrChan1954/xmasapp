@@ -115,7 +115,7 @@ export default function NotificationsPage() {
   const otherDevices = Math.max(0, status.deviceCount - (status.state === "enabled" ? 1 : 0));
 
   return (
-    <AppShell width="narrow" title="Notifications" parent={{ href: "/more", label: "More" }}>
+    <AppShell width="narrow" title="Notifications" parent={{ href: "/settings", label: "Settings" }}>
       <PageHeader
         title="Notifications"
         description="Get told when something happens while the app is closed."

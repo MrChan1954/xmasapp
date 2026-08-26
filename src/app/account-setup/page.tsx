@@ -45,7 +45,7 @@ export default function AccountSetupPage() {
       }
       console.info(`[account-setup] link received | hashLength=${rawHash.length} queryLength=${rawQuery.length}`);
       if (rawHash.length > 20_000 || rawQuery.length > 2_048) {
-        setMessage("This setup link is invalid or has expired. Ask the Global Admin for a new link.");
+        setMessage("This setup link is invalid or has expired. Ask your family’s admin for a new link.");
         setStage("error");
         return;
       }
@@ -62,14 +62,14 @@ export default function AccountSetupPage() {
         console.error(
           `[account-setup] provider returned an error | ${hash.get("error") ?? query.get("error") ?? ""} ${hash.get("error_code") ?? query.get("error_code") ?? ""} ${hash.get("error_description") ?? query.get("error_description") ?? ""}`.trim(),
         );
-        setMessage("This setup link is invalid or has expired. Ask the Global Admin for a new link.");
+        setMessage("This setup link is invalid or has expired. Ask your family’s admin for a new link.");
         setStage("error");
         return;
       }
 
       const supabase = createClient();
       if ((accessToken || refreshToken) && (!isReasonableAuthToken(accessToken) || !isReasonableAuthToken(refreshToken))) {
-        setMessage("This setup link is invalid or has expired. Ask the Global Admin for a new link.");
+        setMessage("This setup link is invalid or has expired. Ask your family’s admin for a new link.");
         setStage("error");
         return;
       }
@@ -86,7 +86,7 @@ export default function AccountSetupPage() {
           console.error(
             `[account-setup] setSession rejected | status=${session.error.status} code=${session.error.code} message=${session.error.message}`,
           );
-          setMessage("This setup link is invalid or has expired. Ask the Global Admin for a new link.");
+          setMessage("This setup link is invalid or has expired. Ask your family’s admin for a new link.");
           setStage("error");
           return;
         }
@@ -101,7 +101,7 @@ export default function AccountSetupPage() {
         console.error(
           `[account-setup] getUser failed | status=${userResult.error?.status} code=${userResult.error?.code} message=${userResult.error?.message}`,
         );
-        setMessage("This setup link is invalid or has expired. Ask the Global Admin for a new link.");
+        setMessage("This setup link is invalid or has expired. Ask your family’s admin for a new link.");
         setStage("error");
         return;
       }
@@ -118,7 +118,7 @@ export default function AccountSetupPage() {
       const claim = await supabase.rpc("claim_app_member");
       if (claim.error) {
         await supabase.auth.signOut();
-        setMessage("This account is not approved for the Christmas app. Ask the Global Admin for help.");
+        setMessage("This account is not approved for the Christmas app. Ask your family’s admin for help.");
         setStage("error");
         return;
       }
@@ -136,7 +136,7 @@ export default function AccountSetupPage() {
 
       if (membership.error || !membership.data?.active || !membership.data.person_id) {
         await supabase.auth.signOut();
-        setMessage("This account is not approved for the Christmas app. Ask the Global Admin for help.");
+        setMessage("This account is not approved for the Christmas app. Ask your family’s admin for help.");
         setStage("error");
         return;
       }

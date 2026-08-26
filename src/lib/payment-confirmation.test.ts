@@ -167,7 +167,7 @@ test("admin override failures are translated, and name the two refusals apart", 
     adminPaymentError("42501", "You cannot confirm your own payment. Record it normally..."),
     /cannot confirm your own payment/,
   );
-  assert.match(adminPaymentError("42501", "Only Global Admin can record a confirmed payment"), /Only Global Admin/);
+  assert.match(adminPaymentError("42501", "Only Global Admin can record a confirmed payment"), /Only this family’s admin/);
   assert.match(adminPaymentError("23514"), /does not fit the current balance/);
   assert.match(adminPaymentError("42P01"), /admin payment override migration/i);
   assert.match(adminPaymentError(), /could not be recorded/);

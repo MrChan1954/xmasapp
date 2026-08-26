@@ -242,8 +242,8 @@ export function FamilyAccessClient() {
       <EmptyState
         className="mx-auto mt-10 max-w-xl"
         illustration="wreath"
-        title="Global Admin access only"
-        body="Your account can use the Christmas app, but it cannot manage other family accounts."
+        title="Family admin only"
+        body="Your account can use the app, but only this family’s admin can manage who else gets in."
         action={<ButtonLink href="/" size="lg">Back to Events</ButtonLink>}
       />
     );
@@ -255,7 +255,7 @@ export function FamilyAccessClient() {
         <div>
           <div className="flex items-center gap-2 text-xs font-semibold tracking-eyebrow text-gold uppercase">
             <IconShield size={16} className="text-gold" />
-            Global Admin
+            Family admin
           </div>
           <h1 className="mt-2 font-display text-[clamp(2rem,5vw,2.75rem)] leading-[1.08] font-semibold tracking-tight">Family Access</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-600">
@@ -508,8 +508,20 @@ function AccountCard({
               <StatusBadge status={person.status} />
             </div>
             <p className="mt-1 text-xs font-semibold text-ink-600">
-              {person.role === "admin" ? "Global Admin" : person.role === "member" ? "User" : "No account"}
+              {person.role === "admin" ? "Admin of this family" : person.role === "member" ? "Member" : "No account"}
             </p>
+            {/* THE PERSON BEHIND THE ACCOUNT.
+                This screen is about LOGINS; the profile is about the person --
+                their name, their birthday, whether they chip in, and everything
+                ever bought for them. They are two views of one human being and
+                each should be one tap from the other, so nobody has to go
+                looking for the directory to answer "who is this?". */}
+            <a
+              href={`/people/${person.personId}`}
+              className="mt-1 inline-block text-xs font-semibold text-accent hover:underline"
+            >
+              Open {person.name}&rsquo;s profile →
+            </a>
           </div>
         </div>
 
@@ -537,7 +549,7 @@ function AccountCard({
           {person.status === "active" && isProtectedAdmin && (
             <div className="flex min-h-11 items-center gap-2 rounded-xl bg-accent-soft px-3 text-xs leading-5 font-medium text-accent">
               <IconShield size={17} className="shrink-0 text-accent" />
-              The Global Admin account is protected.
+              This family’s admin is protected. Hand the family over to change who runs it.
             </div>
           )}
 

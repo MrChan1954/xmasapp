@@ -184,7 +184,7 @@ drop policy if exists "active members add gift ideas" on public.gift_ideas;`,
   },
   {
     name: "Q2-4. the handover demotes before it promotes, so the halves can part",
-    file: "supabase/migrations/202608100041_area_admin_handover.sql",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
     from: `  update public.app_members set role = 'admin', updated_at = now() where id = incoming.id;
   update public.app_members set role = 'member', updated_at = now() where id = outgoing.id;`,
     to: `  update public.app_members set role = 'member', updated_at = now() where id = outgoing.id;
@@ -193,7 +193,7 @@ drop policy if exists "active members add gift ideas" on public.gift_ideas;`,
   },
   {
     name: "Q2-5. the handover stops checking the successor is active",
-    file: "supabase/migrations/202608100041_area_admin_handover.sql",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
     from: `    and m.area_id = p_area_id
     and m.active = true
     and m.person_id is not null;`,
@@ -203,7 +203,7 @@ drop policy if exists "active members add gift ideas" on public.gift_ideas;`,
   },
   {
     name: "Q2-6. the handover stops checking the successor is in this family",
-    file: "supabase/migrations/202608100041_area_admin_handover.sql",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
     from: `  where m.id = p_new_admin_member_id
     and m.area_id = p_area_id
     and m.active = true`,
@@ -385,6 +385,189 @@ create or replace function public.is_area_admin(p_area_id uuid)`,
     from: '    ".open-next/**",',
     to: "",
     suites: ["scripts/lint-gate.test.mjs"],
+  },
+
+  // -------------------------------------------------------------------------
+  // Q3: Person, Contributor, Account and Admin are four things, in four places,
+  // and every one of them belongs to exactly one family.
+  // -------------------------------------------------------------------------
+  {
+    name: "Q3-1. a membership is written into the ACTING Area rather than the Person's own",
+    file: "src/app/api/admin/family-access/route.ts",
+    from: "    area_id: person.area_id,",
+    to: "    area_id: areaId,",
+    suites: ["scripts/people-and-access.test.mjs"],
+  },
+  {
+    name: "Q3-2. giving access stops linking the existing Person",
+    file: "src/app/api/admin/family-access/route.ts",
+    from: "    person_id: person.id,",
+    to: "    person_id: null,",
+    suites: ["scripts/people-and-access.test.mjs"],
+  },
+  {
+    name: "Q3-3. the contributor routine goes back to asking about the ACTING Area",
+    file: "supabase/migrations/202608100044_area_scoped_person_administration.sql",
+    from: `  if target_area is null or not public.is_area_admin(target_area) then
+    -- One refusal for "no such person" and for "not your family", so the
+    -- message cannot be used to discover who exists elsewhere.
+    raise exception 'Only this family''s administrator can change who contributes'`,
+    to: `  if not public.is_app_admin() then
+    raise exception 'Only this family''s administrator can change who contributes'`,
+    suites: ["scripts/people-and-access.test.mjs"],
+  },
+  {
+    name: "Q3-4. archiving a person stops checking which family they are in",
+    file: "supabase/migrations/202608100044_area_scoped_person_administration.sql",
+    from: `  if target_area is null or not public.is_area_admin(target_area) then
+    raise exception 'Only this family''s administrator can archive one of its people'`,
+    to: `  if not public.is_app_admin() then
+    raise exception 'Only this family''s administrator can archive one of its people'`,
+    suites: ["scripts/people-and-access.test.mjs"],
+  },
+  {
+    name: "Q3-5. renaming a person stops checking which family they are in",
+    file: "supabase/migrations/202608100044_area_scoped_person_administration.sql",
+    from: `  if target_area is null or not public.is_area_admin(target_area) then
+    raise exception 'Only this family''s administrator can rename one of its people'`,
+    to: `  if not public.is_app_admin() then
+    raise exception 'Only this family''s administrator can rename one of its people'`,
+    suites: ["scripts/people-and-access.test.mjs"],
+  },
+  {
+    name: "Q3-6. archiving a person deletes them instead of keeping their history",
+    file: "supabase/migrations/202608100044_area_scoped_person_administration.sql",
+    from: `  update public.people
+  set archived_at = case when p_archived then coalesce(archived_at, now()) else null end,`,
+    to: `  delete from public.people where id = p_person_id and p_archived;
+  update public.people
+  set archived_at = case when p_archived then coalesce(archived_at, now()) else null end,`,
+    suites: ["scripts/people-and-access.test.mjs"],
+  },
+  {
+    name: "Q3-7. the People directory stops scoping its account badges to this family",
+    file: "src/utils/supabase/people-server.ts",
+    from: `    .select("person_id,user_id,active,role")
+    .eq("area_id", areaId);`,
+    to: `    .select("person_id,user_id,active,role");`,
+    suites: ["scripts/people-and-access.test.mjs"],
+  },
+  {
+    name: "Q3-8. the service-role account list stops filtering by Area",
+    file: "src/app/api/admin/family-access/route.ts",
+    from: `        .select("id, name, area_id, is_family_contributor")
+        .eq("area_id", context.areaId)
+        .order("name"),`,
+    to: `        .select("id, name, area_id, is_family_contributor")
+        .order("name"),`,
+    suites: ["scripts/people-and-access.test.mjs"],
+  },
+  {
+    name: "Q3-9. the Person profile stops saying the contributor toggle is not a login",
+    file: "src/app/people/[id]/person-admin-panel.tsx",
+    from: "it neither gives nor removes account access, and it does not",
+    to: "it also gives them account access, and it may",
+    suites: ["scripts/people-and-access.test.mjs"],
+  },
+  {
+    name: "Q3-10. user-facing Global Admin wording comes back",
+    file: "src/app/people/[id]/person-admin-panel.tsx",
+    from: `              ? "Admin of this family"`,
+    to: `              ? "Global Admin"`,
+    suites: ["scripts/people-and-access.test.mjs"],
+  },
+
+  // -------------------------------------------------------------------------
+  // Q3 SECURITY: one family at a time. Each of these reopens a cross-Area hole
+  // that was PROVEN reachable before migration 045, so a survivor here is a
+  // real escalation nobody would notice.
+  // -------------------------------------------------------------------------
+  {
+    name: "Q3S-1. the guard stops comparing the target Area with the acting one",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: "    if acting <> p_area_id then",
+    to: "    if false then",
+    suites: ["scripts/area-mutation-security.test.mjs"],
+  },
+  {
+    name: "Q3S-2. the guard trusts the acting Area instead of the row's own",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: "  perform public.require_acting_area(public.area_of_event(p_event_id));\n  if not public.is_app_admin() then\n    raise exception 'Global Admin access required to archive an event'",
+    to: "  perform public.require_acting_area(public.acting_area());\n  if not public.is_app_admin() then\n    raise exception 'Global Admin access required to archive an event'",
+    suites: ["scripts/area-mutation-security.test.mjs"],
+  },
+  {
+    name: "Q3S-3. event update loses its target-Area check",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: "  perform public.require_acting_area(public.area_of_event(p_event_id));\n  if not public.is_app_admin() then\n    raise exception 'Global Admin access required to change an event'",
+    to: "  if not public.is_app_admin() then\n    raise exception 'Global Admin access required to change an event'",
+    suites: ["scripts/area-mutation-security.test.mjs"],
+  },
+  {
+    name: "Q3S-4. adding a recipient stops checking the event's Area",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: "  perform public.require_acting_area(public.area_of_event(p_event_id));\n  if not public.is_app_admin() then\n    raise exception 'Global Admin access required to add a recipient'",
+    to: "  if not public.is_app_admin() then\n    raise exception 'Global Admin access required to add a recipient'",
+    suites: ["scripts/area-mutation-security.test.mjs"],
+  },
+  {
+    name: "Q3S-5. recipient activation stops checking the recipient's Area",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: "  perform public.require_acting_area(public.area_of_recipient(p_christmas_recipient_id));",
+    to: "",
+    suites: ["scripts/area-mutation-security.test.mjs"],
+  },
+  {
+    name: "Q3S-6. the confirmed-payment routine stops checking the event's Area",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: "  perform public.require_acting_area(public.area_of_event(p_christmas_event_id));\n  if not public.is_app_admin() then",
+    to: "  if not public.is_app_admin() then",
+    suites: ["scripts/area-mutation-security.test.mjs"],
+  },
+  {
+    // The FIRST settlement guard in the file is `review_payment`'s -- the
+    // routine that confirms somebody else's money arrived.
+    name: "Q3S-7. confirming a payment stops checking the settlement's Area",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: "  perform public.require_acting_area(public.area_of_settlement(p_settlement_id));",
+    to: "",
+    suites: ["scripts/area-mutation-security.test.mjs"],
+  },
+  {
+    // The FIRST purchase guard in the file is `set_purchase_status`'s.
+    name: "Q3S-8. changing a purchase stops checking its Area",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: "  perform public.require_acting_area(public.area_of_purchase(p_purchase_id));",
+    to: "",
+    suites: ["scripts/area-mutation-security.test.mjs"],
+  },
+  {
+    name: "Q3S-9. a dual administrator may mutate the family they are NOT standing in",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: "      raise exception 'That belongs to another family. Switch to that family first.'\n        using errcode = '42501';\n    end if;\n    return;",
+    to: "      return;\n    end if;\n    return;",
+    suites: ["scripts/area-mutation-security.test.mjs"],
+  },
+  {
+    name: "Q3S-10. omitting the Area header becomes the way round the guard",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: "  if memberships <> 1 then\n    raise exception 'Say which family you are working in.' using errcode = '42501';\n  end if;",
+    to: "  if false then\n    raise exception 'Say which family you are working in.' using errcode = '42501';\n  end if;",
+    suites: ["scripts/area-mutation-security.test.mjs"],
+  },
+  {
+    name: "Q3S-11. anon regains execute on the guarded routines",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: "    execute format('revoke all on function %s from public, anon', fn);",
+    to: "    execute format('grant execute on function %s to anon', fn);",
+    suites: ["scripts/area-mutation-security.test.mjs"],
+  },
+  {
+    name: "Q3S-12. the guard loses its pinned search_path",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: "returns void\nlanguage plpgsql\nstable\nsecurity definer\nset search_path = ''",
+    to: "returns void\nlanguage plpgsql\nstable\nsecurity definer",
+    suites: ["scripts/area-mutation-security.test.mjs"],
   },
 ];
 

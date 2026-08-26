@@ -53,7 +53,7 @@ export function AccountMenu() {
               {isAdmin && (
                 <p className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-gold">
                   <ShieldCheck aria-hidden size={13} strokeWidth={2} />
-                  Global Admin
+                  Family admin
                 </p>
               )}
             </div>

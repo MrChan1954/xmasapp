@@ -112,10 +112,11 @@ test("the authorization migration explicitly enables RLS on every application ta
   // Deliberately pinned to the newest migration. Adding one fails this test on
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
-  // Q2 added 041-043 on top. What this file pins is that Phase 5's and Q1's
-  // security migrations are still there, and still in order.
-  assert.equal(migrationFiles.at(-4), wishlistMigrationName);
-  assert.equal(migrationFiles.at(-5), areaAuthMigrationName);
+  // Q2 added 041-043 on top; Q3 added 044. What this file pins is that Phase
+  // 5's and Q1's security migrations are still there, and still in order --
+  // every offset moves together, so nothing about them has changed.
+  assert.equal(migrationFiles.at(-6), wishlistMigrationName);
+  assert.equal(migrationFiles.at(-7), areaAuthMigrationName);
   assert.ok(migrationFiles.includes(actingMigrationName), "the acting-Area migration is still present");
   assert.ok(migrationFiles.includes(membershipMigrationName), "the membership guard migration is still present");
   assert.ok(migrationFiles.includes(peopleMigrationName), "the People directory migration is still present");

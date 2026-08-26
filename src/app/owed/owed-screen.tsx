@@ -337,7 +337,7 @@ function MyPaymentsSection({ payments, names, onRefresh }: { payments: OwedSettl
     const result = await createClient().rpc("void_settlement", { p_settlement_id: validId.value });
     if (result.error) {
       setError(result.error.code === "42501"
-        ? "This payment can no longer be cancelled. Ask the person you paid, or a Global Admin."
+        ? "This payment can no longer be cancelled. Ask the person you paid, or this family’s admin."
         : "This payment could not be cancelled. Nothing was changed.");
     } else {
       await onRefresh();
@@ -566,7 +566,7 @@ function AdminTools({ onOpen }: { onOpen: () => void }) {
     <section className="mt-8 rounded-2xl border border-dashed border-line-strong bg-surface-2 p-5 sm:p-6">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-display text-lg font-semibold">Admin tools</h2>
-        <Badge tone="neutral">Global Admin only</Badge>
+        <Badge tone="neutral">Admin only</Badge>
       </div>
       <p className="mt-2 text-sm leading-6 text-ink-600">
         For money that changed hands outside the app and was never recorded. This skips the normal
@@ -654,7 +654,7 @@ function AdminPaymentSheet({ data, onClose, onSaved }: { data: OwedData; onClose
       <form onSubmit={(event) => void save(event)}>
         <ModalHeader
           id="admin-payment-title"
-          eyebrow="Global Admin only"
+          eyebrow="Admin only"
           title="Record confirmed payment"
           onClose={onClose}
           closeLabel="Close admin payment form"
@@ -1175,7 +1175,7 @@ function todayInput() {
 }
 
 function settlementSaveError(code?: string) {
-  if (code === "42501") return "Only the payer, the receiver or Global Admin can record this payment.";
+  if (code === "42501") return "Only the payer, the receiver or this family’s admin can record this payment.";
   if (code === "23514") return "This payment is no longer valid. Refresh and check the current outstanding balance, including anything already awaiting confirmation.";
   if (code === "42P01" || code === "42883" || code === "PGRST202" || code === "PGRST205") return "Apply the payment confirmations migration before recording a payment.";
   return "This payment could not be recorded. Nothing was changed.";

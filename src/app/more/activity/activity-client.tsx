@@ -271,7 +271,7 @@ export function ActivityClient() {
                     <p className="mt-0.5 text-sm text-ink-600">
                       {/* A missing actor can only come from the service-role
                           client, which nothing but the Family Access route uses. */}
-                      {entry.actor_name ?? "Global Admin (Family Access)"} · {formatWhen(entry.occurred_at)} ·{" "}
+                      {entry.actor_name ?? "Family admin (Family Access)"} · {formatWhen(entry.occurred_at)} ·{" "}
                       {KINDS[entry.table_name as keyof typeof KINDS] ?? entry.table_name}
                     </p>
                   </div>

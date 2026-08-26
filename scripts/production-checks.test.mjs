@@ -383,3 +383,125 @@ describe("the Q2 check file actually runs, against a 041-043 database", () => {
     assert.deepEqual(await fingerprint(), before_);
   });
 });
+
+/* ===========================================================================
+ * Q3 -- docs/Q3-POST-APPLY-CHECKS.sql
+ *
+ * A THIRD FILE, for the same reason there is a second. Q3 adds migration 044,
+ * which rewrites two function bodies and adds one, and the state it describes
+ * did not exist before it. The Phase 5 and Q2 files describe the database as it
+ * was at their own moments and are not edited to keep up: each one is the
+ * record of what was true when it was written.
+ * =========================================================================== */
+
+const Q3_CHECKS = join(ROOT, "docs", "Q3-POST-APPLY-CHECKS.sql");
+const q3Sql = readFileSync(Q3_CHECKS, "utf8").replace(/\r\n/gu, "\n");
+const q3Executable = stripCommentsAndLiterals(q3Sql);
+
+describe("the Q3 check file cannot change anything either", () => {
+  test("it contains no statement that writes, and none that changes an object", () => {
+    const FORBIDDEN = [
+      "insert", "update", "delete", "upsert", "merge",
+      "alter", "create", "drop", "truncate",
+      "grant", "revoke", "comment on", "call", "do",
+      "vacuum", "analyze", "reindex", "cluster", "refresh",
+      "copy", "lock", "set ", "reset", "begin", "commit", "rollback",
+      "security definer", "perform", "notify",
+    ];
+
+    const found = FORBIDDEN.filter((word) =>
+      new RegExp(String.raw`(?<![\w.])${word.trim()}(?![\w])`, "iu").test(q3Executable));
+
+    assert.deepEqual(found, [],
+      `these words appear as executable SQL, not just in comments: ${found.join(", ")}`);
+  });
+
+  test("every statement in it is a SELECT", () => {
+    const statements = q3Executable.split(";").map((s) => s.trim()).filter(Boolean);
+    assert.equal(statements.length, 1, "one statement, so the SQL Editor shows its result");
+    assert.match(statements[0], /^with\b/iu);
+  });
+
+  test("and it reads no money", () => {
+    for (const column of [
+      "budget_pennies", "actual_price_pennies", "estimated_price_pennies",
+      "planned_amount_pennies", "responsibility_pennies", "amount_pennies",
+    ]) {
+      assert.ok(!q3Executable.includes(column), `the check file must not read ${column}`);
+    }
+  });
+
+  test("and it names no person, no family and no gift", () => {
+    // A check file gets pasted into chats and screenshots. Counts are safe;
+    // "Grandma" and "The Taylors" are not.
+    for (const column of ["p.name", "a.name", "people.name", "areas.name", "description", "title"]) {
+      assert.ok(!q3Executable.includes(column), `the check file must not read ${column}`);
+    }
+  });
+
+  test("it says how to read its own output", () => {
+    for (const phrase of ["PASS", "FAIL", "INFO", "REVIEW", "HOW TO RUN IT", "HOW TO READ THE RESULT"]) {
+      assert.ok(q3Sql.includes(phrase), `the header must explain ${phrase}`);
+    }
+  });
+
+  test("IT CHECKS 045, NOT JUST 044", () => {
+    /*
+     * The file was written for 044 alone. 045 is the larger half -- nineteen
+     * routines rather than three -- and a check file that quietly stopped at
+     * the smaller one would report PASS on a database still carrying the
+     * escalation it was meant to catch.
+     */
+    for (const needle of [
+      "045 mutation hardening", "045 grants", "045 structural integrity",
+      "EVERY targeted mutation calls the guard",
+      "NO OTHER authenticated mutation is Area-blind",
+      "area_of_settlement", "require_acting_area",
+    ]) {
+      assert.ok(q3Sql.includes(needle), `the file must check ${needle}`);
+    }
+  });
+
+  test("and it explains what 044 was for", () => {
+    // Whoever runs this months from now was not in the conversation.
+    assert.match(q3Sql, /is_app_admin\(\)/u);
+    assert.match(q3Sql, /area_of_person/u);
+    assert.match(q3Sql, /write barrier/iu);
+  });
+});
+
+describe("the Q3 check file actually runs, against a 044+045 database", () => {
+  let db;
+  let result;
+
+  before(async () => {
+    db = await buildRehearsal({});
+    await asOwner(db);
+    result = await db.query(readFileSync(Q3_CHECKS, "utf8"));
+  });
+  after(async () => { await db?.close(); });
+
+  test("it returns one table with the four columns a reader needs", () => {
+    assert.ok(result.rows.length > 10, "it should cover the routines, the grants and the guards");
+    assert.deepEqual(
+      Object.keys(result.rows[0]).sort(),
+      ["check_name", "detail", "section", "verdict"],
+    );
+  });
+
+  test("the first row is the summary", () => {
+    assert.equal(result.rows[0].section, "SUMMARY");
+    assert.match(result.rows[0].detail, /passed, .* failed, .* to review/u);
+  });
+
+  test("and against a correctly migrated database, nothing fails", () => {
+    const bad = result.rows.filter((row) => row.verdict === "FAIL" || row.verdict === "REVIEW");
+    assert.deepEqual(bad.map((row) => `${row.section} :: ${row.check_name}`), []);
+  });
+
+  test("every verdict is one of the four the header explains", () => {
+    for (const kind of new Set(result.rows.map((row) => row.verdict))) {
+      assert.ok(["PASS", "FAIL", "INFO", "REVIEW"].includes(kind), `unexpected verdict: ${kind}`);
+    }
+  });
+});

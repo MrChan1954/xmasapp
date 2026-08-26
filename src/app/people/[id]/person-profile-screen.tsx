@@ -8,15 +8,8 @@ import { partitionGiftHistory, totalGiftCount, totalSpentPennies, type PersonAcc
 import { formatPennies } from "@/lib/currency";
 import { AppShell, PageHeader } from "../../components/app-shell";
 import { GarlandRule } from "../../components/festive/garland";
-import { Badge, ButtonLink, EmptyState } from "../../components/ui";
-
-/** One word each, so the four states are never conflated on screen. */
-const ACCOUNT_LABEL: Record<PersonAccount["status"], string> = {
-  none: "No account",
-  invited: "Invited, not signed in yet",
-  active: "Active",
-  disabled: "Disabled",
-};
+import { Badge, EmptyState } from "../../components/ui";
+import { PersonAccountSummary, PersonAdminPanel } from "./person-admin-panel";
 
 /**
  * One person: who they are, and what has actually been bought for them.
@@ -37,6 +30,7 @@ export function PersonProfileScreen({
   account,
   isAdmin,
   canEditBirthdays,
+  areaName,
   today,
 }: {
   person: PersonDirectoryEntry;
@@ -45,6 +39,7 @@ export function PersonProfileScreen({
   account: PersonAccount;
   isAdmin: boolean;
   canEditBirthdays: boolean;
+  areaName: string;
   today: string;
 }) {
   const next = person.birthday ? nextBirthdayOccurrence(person.birthday, today) : null;
@@ -74,52 +69,29 @@ export function PersonProfileScreen({
         </p>
       )}
 
-      {/* WHO THEY ARE, WHETHER THEY CAN SIGN IN, AND WHETHER THEY CHIP IN --
-          shown as the three separate facts they are. Admin only, because
-          nobody else may read a membership row, and showing everybody a status
-          the database refuses to tell them would just be showing them a wrong
-          one. */}
+      {/* WHO THEY ARE, WHETHER THEY CAN SIGN IN, WHETHER THEY CHIP IN, AND WHO
+          RUNS THIS FAMILY -- shown as the four separate facts they are, never
+          as one status. Admin only, because nobody else may read a membership
+          row, and showing everybody a status the database refuses to tell them
+          would just be showing them a wrong one. */}
       {isAdmin && (
-        <section className="mt-6 rounded-2xl border border-line bg-surface p-5">
-          <h2 className="font-display text-lg font-semibold text-ink-900">Access</h2>
-          <dl className="mt-3 space-y-2 text-sm">
-            <div className="flex flex-wrap items-baseline justify-between gap-x-4">
-              <dt className="text-ink-600">Account access</dt>
-              <dd className="font-semibold text-ink-900">{ACCOUNT_LABEL[account.status]}</dd>
-            </div>
-            <div className="flex flex-wrap items-baseline justify-between gap-x-4">
-              <dt className="text-ink-600">Contributor</dt>
-              <dd className="font-semibold text-ink-900">
-                {person.isFamilyContributor ? "Yes" : "No"}
-              </dd>
-            </div>
-            {account.isAdmin && (
-              <div className="flex flex-wrap items-baseline justify-between gap-x-4">
-                <dt className="text-ink-600">Role</dt>
-                <dd className="font-semibold text-ink-900">Global Admin</dd>
-              </div>
-            )}
-          </dl>
-
-          <p className="mt-3 text-xs leading-5 text-ink-600">
-            {account.status === "none"
-              ? "Most people never need one. An account is only for somebody who signs in — it is not needed to buy for them, or for them to chip in."
-              : "Removing account access keeps this person, their birthday and everything bought for them. The two are separate."}
-          </p>
-
-          <div className="mt-4">
-            <ButtonLink href="/more/family-access" variant="secondary" className="min-h-11">
-              {account.status === "none" ? "Give account access" : "Manage account access"}
-            </ButtonLink>
-          </div>
-        </section>
+        <div className="mt-6">
+          <PersonAccountSummary person={person} account={account} areaName={areaName} />
+        </div>
       )}
 
-      {!person.birthday && (
+      <PersonAdminPanel
+        person={person}
+        account={account}
+        isAdmin={isAdmin}
+        canEditBirthdays={canEditBirthdays}
+        areaName={areaName}
+        isSelf={isSelf}
+      />
+
+      {!person.birthday && !canEditBirthdays && (
         <p className="mt-4 text-sm text-ink-600">
-          {canEditBirthdays
-            ? "No birthday added yet — add one from the Birthdays page and it appears here."
-            : "No birthday added yet."}
+          No birthday added yet. An admin or a family contributor can add one.
         </p>
       )}
 

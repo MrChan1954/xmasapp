@@ -233,7 +233,7 @@ export function PersonModal({
       await archive(person.id);
       onClose();
     } catch {
-      setError("Only Global Admin can remove someone from this event.");
+      setError("Only this family’s admin can remove someone from this event.");
       setConfirmingRemove(false);
     }
     setRemoving(false);

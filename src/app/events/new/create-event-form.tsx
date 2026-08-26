@@ -229,7 +229,7 @@ export function CreateEventForm({
   return (
     <AppShell width="narrow">
       <PageHeader
-        eyebrow="Global Admin"
+        eyebrow="Family admin"
         title="Create event"
         description="Set up an occasion for the family to plan and pay for together."
       />

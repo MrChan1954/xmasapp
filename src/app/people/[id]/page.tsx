@@ -31,6 +31,7 @@ export default async function PersonPage({ params }: PageProps<"/people/[id]">) 
       account={profile.account}
       isAdmin={profile.isAdmin}
       canEditBirthdays={profile.canEditBirthdays}
+      areaName={profile.areaName}
       today={profile.today}
     />
   );

@@ -6,7 +6,7 @@ import { CalendarDays, ChevronRight, Search } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { describeDaysAway, describeTurningAge, formatBirthday, nextBirthdayOccurrence } from "@/lib/birthdays.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { type PersonDirectoryEntry } from "@/lib/people.ts";
+import { type PersonAccount, type PersonDirectoryEntry } from "@/lib/people.ts";
 import { AppShell, PageHeader } from "../components/app-shell";
 import { GarlandRule } from "../components/festive/garland";
 import { ButtonLink, EmptyState, FilterChip, Input, cx } from "../components/ui";
@@ -30,11 +30,13 @@ export function PeopleDirectoryScreen({
   today,
   isAdmin,
   canEditBirthdays,
+  accounts,
 }: {
   people: PersonDirectoryEntry[];
   today: string;
   isAdmin: boolean;
   canEditBirthdays: boolean;
+  accounts: Record<string, PersonAccount>;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("active");
@@ -112,7 +114,12 @@ export function PeopleDirectoryScreen({
         : (
           <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {shown.map((person) => (
-              <PersonCard key={person.personId} person={person} today={today} />
+              <PersonCard
+                key={person.personId}
+                person={person}
+                today={today}
+                account={accounts[person.personId] ?? null}
+              />
             ))}
           </div>
         )}
@@ -126,7 +133,15 @@ export function PeopleDirectoryScreen({
   );
 }
 
-function PersonCard({ person, today }: { person: PersonDirectoryEntry; today: string }) {
+function PersonCard({
+  person,
+  today,
+  account,
+}: {
+  person: PersonDirectoryEntry;
+  today: string;
+  account: PersonAccount | null;
+}) {
   const next = person.birthday ? nextBirthdayOccurrence(person.birthday, today) : null;
   const turning = person.birthday && next ? describeTurningAge(person.birthday, next.year) : null;
 
@@ -156,11 +171,64 @@ function PersonCard({ person, today }: { person: PersonDirectoryEntry; today: st
           )}
         </p>
         {turning && <p className="mt-1 text-xs font-semibold text-accent">{turning}</p>}
-        {person.archivedAt && (
-          <p className="mt-1 text-xs font-semibold tracking-eyebrow text-ink-600 uppercase">Archived</p>
-        )}
+        <PersonTags person={person} account={account} />
       </div>
       <ChevronRight size={16} aria-hidden className="shrink-0 text-ink-600" />
     </Link>
+  );
+}
+
+/**
+ * WHAT THIS PERSON IS, AS SEPARATE WORDS.
+ *
+ * PERSON is the card itself -- everybody here is one. The tags are the other
+ * three facts, and each is shown only when it is TRUE, so an ordinary person
+ * with no account and no contributor flag carries no tags at all and the list
+ * stays readable for the families who are mostly that.
+ *
+ * "Can sign in" is deliberately not a tag: a login is not a status somebody
+ * wears, and most people never need one. Only the states worth noticing appear
+ * -- an invitation nobody has taken up, and access that has been switched off.
+ */
+function PersonTags({
+  person,
+  account,
+}: {
+  person: PersonDirectoryEntry;
+  account: PersonAccount | null;
+}) {
+  const tags: Array<{ key: string; label: string; tone: string }> = [];
+
+  if (person.archivedAt) {
+    tags.push({ key: "archived", label: "Archived", tone: "border-line bg-surface-3 text-ink-600" });
+  }
+  // ADMIN is a property of the membership, never of the person.
+  if (account?.isAdmin) {
+    tags.push({ key: "admin", label: "Admin", tone: "border-gold/30 bg-gold-soft text-gold" });
+  }
+  if (account?.status === "invited") {
+    tags.push({ key: "invited", label: "Invited", tone: "border-line bg-surface-2 text-ink-700" });
+  }
+  if (account?.status === "disabled") {
+    tags.push({ key: "disabled", label: "Access off", tone: "border-line bg-surface-3 text-ink-600" });
+  }
+  // CONTRIBUTOR is a property of the person, and has nothing to do with logging in.
+  if (person.isFamilyContributor) {
+    tags.push({ key: "contributor", label: "Contributor", tone: "border-accent/30 bg-accent-soft text-accent" });
+  }
+
+  if (tags.length === 0) return null;
+
+  return (
+    <ul className="mt-1.5 flex flex-wrap gap-1.5">
+      {tags.map((tag) => (
+        <li
+          key={tag.key}
+          className={cx("rounded-full border px-2 py-0.5 text-[11px] font-semibold", tag.tone)}
+        >
+          {tag.label}
+        </li>
+      ))}
+    </ul>
   );
 }
