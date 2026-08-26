@@ -379,6 +379,13 @@ create or replace function public.is_area_admin(p_area_id uuid)`,
     to: "",
     suites: ["scripts/area-discoverability.test.mjs"],
   },
+  {
+    name: "QA-11. the lint gate goes back to linting the Cloudflare build output",
+    file: "eslint.config.mjs",
+    from: '    ".open-next/**",',
+    to: "",
+    suites: ["scripts/lint-gate.test.mjs"],
+  },
 ];
 
 function runSuite(suite) {

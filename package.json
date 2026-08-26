@@ -65,6 +65,7 @@
     "test:settings-nav": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/settings-navigation.test.mjs",
     "test:lifecycle": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/area-lifecycle.test.mjs",
     "test:area-discoverability": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/area-discoverability.test.mjs",
+    "test:lint-gate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/lint-gate.test.mjs",
     "test:production-checks": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/production-checks.test.mjs"
   },
   "dependencies": {
