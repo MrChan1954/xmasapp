@@ -84,6 +84,35 @@ export function shouldOfferSwitcher(areas: readonly Area[]): boolean {
   return areas.length > 1;
 }
 
+/**
+ * WHETHER TO OFFER "START ANOTHER FAMILY".
+ *
+ * Creating a second family was buildable from the first day Areas existed and
+ * reachable by nobody: `/areas/new` was linked from no screen in the app, so
+ * the only way to a second family was to know the route and type it. The
+ * switcher listed the families somebody already had and stopped there, which
+ * reads as "these are your families" rather than "these are your families so
+ * far".
+ *
+ * It is offered to anybody who already has one. AN ACCOUNT WITH NONE IS NOT
+ * SHOWN IT, because the root already renders the create form for them -- a menu
+ * item pointing at the screen they are looking at is noise, not discovery.
+ *
+ * NOTHING HERE IS A PERMISSION. `create_area` makes an Area, a person and an
+ * administrator in one transaction and cannot reach an existing family, so
+ * there is nothing to withhold; this decides only whether the door is visible.
+ */
+export function shouldOfferCreate(areas: readonly Area[]): boolean {
+  return areas.length > 0;
+}
+
+/** Where that door leads. Written once so the menu, Settings and the tests
+ *  cannot each name a different route. */
+export const CREATE_AREA_PATH = "/areas/new";
+
+/** And what it says. One string, so desktop and mobile cannot drift apart. */
+export const CREATE_AREA_LABEL = "Create new family";
+
 export type AreaChoice = Area & { active: boolean };
 
 /** The switcher's list: every family, in order, with the current one marked. */

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { AREA_COOKIE, validateAreaName } from "@/lib/areas";
+import { validateAreaName } from "@/lib/areas";
+import { rememberArea } from "@/utils/area-cookie";
 import { isSameOrigin } from "@/utils/request-origin";
 import { createClient } from "@/utils/supabase/server";
 
@@ -16,21 +17,6 @@ import { createClient } from "@/utils/supabase/server";
  * The route exists because a Server Component cannot write a cookie. The work is
  * trivial and the authority is entirely in Postgres.
  */
-
-const YEAR = 60 * 60 * 24 * 365;
-
-/** Not httpOnly: the switcher reads it to show which family is selected. It is
- * a preference, and forging it grants nothing -- see the note above. */
-function remember(response: NextResponse, areaId: string) {
-  response.cookies.set(AREA_COOKIE, areaId, {
-    httpOnly: false,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: YEAR,
-  });
-  return response;
-}
 
 export async function PUT(request: Request) {
   // Switching grants nothing, but it does change what the person sees next, and
@@ -55,7 +41,7 @@ export async function PUT(request: Request) {
   const { data } = await db.from("areas").select("id").eq("id", areaId).maybeSingle();
   if (!data) return NextResponse.json({ error: "That family is not yours" }, { status: 403 });
 
-  return remember(NextResponse.json({ ok: true }), areaId);
+  return rememberArea(NextResponse.json({ ok: true }), areaId);
 }
 
 export async function POST(request: Request) {
@@ -83,5 +69,5 @@ export async function POST(request: Request) {
   });
   if (error || !data) return NextResponse.json({ error: "We could not create that family." }, { status: 400 });
 
-  return remember(NextResponse.json({ ok: true, areaId: String(data) }), String(data));
+  return rememberArea(NextResponse.json({ ok: true, areaId: String(data) }), String(data));
 }

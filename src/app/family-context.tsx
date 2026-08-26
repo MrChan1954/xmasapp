@@ -9,6 +9,7 @@ import {
   validateRecipientAllocationSnapshot,
   type RecipientAllocation,
 } from "@/lib/recipient-allocations";
+import { ensureAreaChosen } from "@/utils/supabase/area-choice-client";
 import { getCurrentMemberClient } from "@/utils/supabase/current-member-client";
 import { createClient } from "@/utils/supabase/client";
 import { isAuthRoute } from "./components/nav-items";
@@ -72,6 +73,30 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     // an administrator -- in both.
     const membership = { data: await getCurrentMemberClient() };
     if (!membership.data) {
+      /*
+       * "NO MEMBERSHIP" IS TWO DIFFERENT ANSWERS, AND THIS USED TO CONFLATE
+       * THEM.
+       *
+       *   Your access was taken away.        -> sign out. What this was for.
+       *   You have not said WHICH family.    -> ask, and carry on.
+       *
+       * `getCurrentMemberClient` deliberately refuses to guess between several
+       * memberships, so the second answer arrives looking exactly like the
+       * first -- and an account in two or more families with no `gp_area`
+       * cookie was therefore signed out during its own first render, every
+       * single time, with no way out from inside the app. A new browser, a
+       * private window, a cleared cookie, another device, or leaving a family
+       * was enough. Found by somebody unable to sign in at all.
+       *
+       * So the question is asked before the conclusion is drawn. `chosen` means
+       * a family has been remembered and the whole page must be re-read under
+       * it -- a reload rather than a re-render, for the same reason switching
+       * family reloads: half the screen holding one family while the other half
+       * fetches another is not a state worth having.
+       */
+      const outcome = await ensureAreaChosen();
+      if (outcome === "chosen") { window.location.reload(); return; }
+
       await db.auth.signOut();
       setRole(null);
       setLoading(false);

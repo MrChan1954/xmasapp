@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { INPUT_LIMITS, validateEmail } from "@/lib/input-validation";
+import { ensureAreaChosen } from "@/utils/supabase/area-choice-client";
 import { createClient } from "@/utils/supabase/client";
 import { AuthHeading, AuthScreen } from "../components/auth-card";
 import { Button, Field, Input, Notice } from "../components/ui";
@@ -51,7 +52,11 @@ export default function LoginPage() {
         .eq("active", true)
         .limit(1)
         .maybeSingle();
-      if (!cancelled && member.data) router.replace("/");
+      if (cancelled || !member.data) return;
+      // Same reason as in `submit` below: they belong somewhere, so the browser
+      // must know WHICH somewhere before the app is rendered.
+      await ensureAreaChosen();
+      if (!cancelled) router.replace("/");
     };
     void check();
     return () => { cancelled = true; };
@@ -68,6 +73,23 @@ export default function LoginPage() {
     // `maybeSingle()` errors and locks them out of their own login.
     const member = await db.from("app_members").select("id").eq("user_id", result.data.user.id).eq("active", true).limit(1).maybeSingle();
     if (!member.data) { await db.auth.signOut(); setMessage("This account does not have access to this Christmas."); setBusy(false); return; }
+    /*
+     * WHICH FAMILY THEY ARE SIGNING IN TO, settled here rather than left to the
+     * first screen to discover.
+     *
+     * Signing in never wrote the Area cookie. For an account in one family that
+     * was invisible -- every lookup falls back to the only membership there is.
+     * For an account in two it was a LOCKOUT: `getCurrentMemberClient` refuses
+     * to guess between memberships, `FamilyProvider` reads that refusal as
+     * revoked access, and the session was signed out mid-render. Sign in, get
+     * signed out, for ever.
+     *
+     * `FamilyProvider` now recovers from that on its own, so this line is not
+     * the only thing standing between somebody and their app. It is here so the
+     * FIRST render is already about the right family, instead of a dashboard
+     * that appears, discovers it has no Area and reloads itself.
+     */
+    await ensureAreaChosen();
     router.push("/"); router.refresh();
   };
 

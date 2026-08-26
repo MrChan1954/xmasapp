@@ -193,6 +193,18 @@ export const NEVER_IN_EVENT_SCOPE: readonly string[] = [
   "Activity",
   "Birthdays",
   "Appearance",
+  /*
+   * WHICH FAMILIES YOU BELONG TO, AND STARTING ANOTHER ONE.
+   *
+   * The widest reach anything in this app has: it is a fact about the ACCOUNT,
+   * identical in every family and unchanged by switching between them. Offered
+   * from inside Mother's Day it would read as "create a family for this event",
+   * which is not a thing that exists. It belongs to the account menu and to
+   * Your settings, and it is listed here so an event screen cannot quietly
+   * acquire it.
+   */
+  "Your families",
+  "Create new family",
 ];
 
 export function scopeMeta(scope: SettingsScope): ScopeMeta {

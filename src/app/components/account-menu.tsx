@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Check, Home, LogOut, Settings, ShieldCheck, Snowflake, User } from "lucide-react";
+import { Check, Home, LogOut, Plus, Settings, ShieldCheck, Snowflake, User } from "lucide-react";
 import { useEffect, useState } from "react";
+import { CREATE_AREA_LABEL, CREATE_AREA_PATH } from "@/lib/areas";
 import { createClient } from "@/utils/supabase/client";
 import { useFamily } from "../family-context";
 import { useFestive } from "./festive/festive-context";
@@ -14,7 +15,7 @@ export function AccountMenu() {
   // FamilyProvider short-circuits on auth routes, so tolerate an empty role.
   const { isAdmin } = useFamily();
   const { snow, setSnow, reducedMotion } = useFestive();
-  const { active, choices, canSwitch, switchTo } = useAreas();
+  const { active, choices, canSwitch, canCreate, switchTo } = useAreas();
   const [email, setEmail] = useState("");
 
   useEffect(() => {
@@ -58,9 +59,25 @@ export function AccountMenu() {
             </div>
           </PopoverSection>
 
-          {canSwitch && (
+          {/*
+            THE FAMILY SECTION IS NOT ONLY A SWITCHER.
+
+            It used to be: it rendered when there was more than one family and
+            not otherwise, which is right for a CHOOSER -- a list with one entry
+            is a control that can only ever do nothing. But it also carried the
+            only route to starting another family, so somebody with one family
+            was shown nothing at all, and "start another" was reachable only by
+            knowing that `/areas/new` exists and typing it. The people who most
+            needed the door were the only ones who could not see it.
+
+            So the two questions are asked separately now: LIST when there is
+            something to switch to, OFFER TO CREATE whenever they already have
+            one. This menu is in the top bar at every width, so the phone gets
+            the same door as the desktop without a second implementation.
+          */}
+          {(canSwitch || canCreate) && (
             <PopoverSection label="Family">
-              {choices.map((choice) => (
+              {canSwitch && choices.map((choice) => (
                 <button
                   key={choice.id}
                   type="button"
@@ -75,6 +92,26 @@ export function AccountMenu() {
                   {choice.active && <Check aria-hidden size={15} strokeWidth={2.2} className="text-gold" />}
                 </button>
               ))}
+
+              {canCreate && (
+                /*
+                 * A LINK, not a button that creates anything. It opens the
+                 * existing `/areas/new` form -- the same screen a brand new
+                 * account is given -- and nothing exists until that form is
+                 * submitted. There is no second copy of create-a-family here.
+                 *
+                 * Ruled off from the families above it, so it reads as an
+                 * action rather than as one more family to switch into.
+                 */
+                <div className={canSwitch ? "mt-1.5 border-t border-line pt-1.5" : ""}>
+                  <PopoverItem
+                    href={CREATE_AREA_PATH}
+                    icon={<Plus aria-hidden size={16} strokeWidth={2} />}
+                  >
+                    {CREATE_AREA_LABEL}
+                  </PopoverItem>
+                </div>
+              )}
             </PopoverSection>
           )}
 

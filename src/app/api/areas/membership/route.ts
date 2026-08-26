@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { AREA_COOKIE } from "@/lib/areas";
+import { areaFromRow, resolveActiveArea } from "@/lib/areas";
+import { forgetArea, rememberArea } from "@/utils/area-cookie";
 import { isSameOrigin } from "@/utils/request-origin";
 import { createClient } from "@/utils/supabase/server";
 
@@ -78,15 +79,41 @@ export async function POST(request: Request) {
     }
 
     /**
-     * The cookie is cleared because it now names a family this login can no
-     * longer read, and a remembered choice that resolves to nothing produces an
-     * empty screen with no explanation. It is a preference, not a permission --
-     * the database had already stopped answering for that Area before this line
-     * ran.
+     * LEAVING ONE FAMILY MUST NOT LOG YOU OUT OF THE OTHERS.
+     *
+     * The cookie cannot simply be deleted. It named the family just left, so it
+     * has to change -- but this login may still belong to several, and
+     * `getCurrentMember` deliberately answers NOTHING when there are several
+     * and no choice has been made. Clearing the cookie therefore left somebody
+     * who still administered two other families with no resolvable membership
+     * at all, and the app signed them out: `/login?error=access_denied`. Found
+     * in live browser QA; both rules were right on their own and wrong
+     * together.
+     *
+     * So the choice is MOVED rather than removed: to whichever family they
+     * still belong to. Only when nothing is left is the cookie deleted, which
+     * is the one case where having no choice is the truth.
      */
+    const remaining = await db
+      .from("areas")
+      .select("id,name,archived_at")
+      .neq("id", areaId);
+
+    const next = resolveActiveArea((remaining.data ?? []).map(areaFromRow), null);
+
     const response = NextResponse.json({ ok: true, message: "You have left that family." });
-    response.cookies.delete(AREA_COOKIE);
-    return response;
+
+    /*
+     * ONLY A GENUINELY EMPTY LIST CLEARS THE COOKIE. If the read above FAILED
+     * we do not know whether anything is left, and guessing "nothing" is the
+     * expensive way to be wrong: it is the old behaviour, and the old behaviour
+     * locked people out. Leaving the cookie alone leaves it naming the family
+     * just left, which the database ignores and `ensureAreaChosen` repairs on
+     * the next render.
+     */
+    if (next) return rememberArea(response, next.id);
+    if (remaining.error) return response;
+    return forgetArea(response);
   }
 
   const { error } = await db.rpc("set_area_archived", {

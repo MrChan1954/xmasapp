@@ -110,8 +110,26 @@ describe("a person can always tell which family is on screen", () => {
     assert.match(menu, /aria-checked=\{choice\.active\}/);
   });
 
-  test("but is not offered when there is nowhere to switch to", () => {
-    assert.match(menu, /\{canSwitch && \(/);
+  test("but the LIST is not offered when there is nowhere to switch to", () => {
+    /*
+     * A chooser with one entry is a control that can only ever do nothing, so
+     * the list is still gated on there being a choice.
+     *
+     * WHAT CHANGED, AND WHY THE ASSERTION MOVED. This used to gate the whole
+     * SECTION -- and the section is also where the way to start another family
+     * lives. So somebody with one family was shown no family section at all,
+     * and `/areas/new` became reachable only by typing it: the people who had
+     * never started a second family were the only ones who could not find out
+     * how. The two questions are separate now, and this one is unchanged.
+     */
+    assert.match(menu, /\{canSwitch && choices\.map/);
+  });
+
+  test("and the SECTION appears whenever either question has an answer", () => {
+    assert.match(menu, /\{\(canSwitch \|\| canCreate\) && \(/);
+    // Proved as behaviour in `src/lib/areas.test.ts`, and swept across the
+    // screens in `scripts/area-discoverability.test.mjs`.
+    assert.match(menu, /CREATE_AREA_PATH/);
   });
 
   test("and switching goes through the route that writes the cookie", () => {

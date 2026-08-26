@@ -342,6 +342,43 @@ create or replace function public.is_area_admin(p_area_id uuid)`,
     to: "",
     suites: ["scripts/areas-and-tenancy.test.mjs"],
   },
+  {
+    name: "QA-6. leaving a family clears the remembered Area again, locking out a multi-family login",
+    file: "src/app/api/areas/membership/route.ts",
+    from: "    const next = resolveActiveArea((remaining.data ?? []).map(areaFromRow), null);",
+    to: "    const next = null;",
+    suites: ["scripts/area-lifecycle.test.mjs"],
+  },
+  {
+    name: "QA-7. signing in stops asking which family, and signs a multi-family login straight out",
+    file: "src/app/family-context.tsx",
+    from: "      const outcome = await ensureAreaChosen();"
+      + String.fromCharCode(10)
+      + '      if (outcome === "chosen") { window.location.reload(); return; }',
+    to: "",
+    suites: ["scripts/area-lifecycle.test.mjs"],
+  },
+  {
+    name: "QA-8. the way to start another family disappears from the switcher",
+    file: "src/app/components/account-menu.tsx",
+    from: "              {canCreate && (",
+    to: "              {false && canCreate && (",
+    suites: ["scripts/area-discoverability.test.mjs"],
+  },
+  {
+    name: "QA-9. the family section hides again from anybody with only one family",
+    file: "src/app/components/account-menu.tsx",
+    from: "          {(canSwitch || canCreate) && (",
+    to: "          {canSwitch && (",
+    suites: ["scripts/area-discoverability.test.mjs"],
+  },
+  {
+    name: "QA-10. global Settings stops offering the families this account belongs to",
+    file: "src/app/settings/settings-screen.tsx",
+    from: "      <YourFamilies />",
+    to: "",
+    suites: ["scripts/area-discoverability.test.mjs"],
+  },
 ];
 
 function runSuite(suite) {

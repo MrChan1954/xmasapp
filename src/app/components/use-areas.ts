@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { AREA_COOKIE, areaChoices, areaFromRow, resolveActiveArea, shouldOfferSwitcher, type Area, type AreaChoice } from "@/lib/areas.ts";
+import { AREA_COOKIE, areaChoices, areaFromRow, resolveActiveArea, shouldOfferCreate, shouldOfferSwitcher, type Area, type AreaChoice } from "@/lib/areas.ts";
 import { createClient } from "@/utils/supabase/client";
 
 /**
@@ -67,6 +67,15 @@ export function useAreas() {
     active,
     choices: areas ? (areaChoices(areas, active?.id ?? null) as AreaChoice[]) : [],
     canSwitch: areas ? shouldOfferSwitcher(areas) : false,
+    /*
+     * WHETHER TO SHOW THE WAY TO A SECOND FAMILY.
+     *
+     * Separate from `canSwitch` on purpose, and this is the whole point of the
+     * distinction: somebody with ONE family cannot switch, so the menu showed
+     * them no family section at all -- and the route to starting another was
+     * therefore invisible to precisely the people who had never started one.
+     */
+    canCreate: areas ? shouldOfferCreate(areas) : false,
     switchTo,
   };
 }

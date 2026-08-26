@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { describe } from "node:test";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { AREA_COOKIE, areaChoices, areaFromRow, areaLabel, needsFirstArea, resolveActiveArea, shouldOfferSwitcher, sortAreas, validateAreaName, type Area } from "./areas.ts";
+import { AREA_COOKIE, CREATE_AREA_LABEL, CREATE_AREA_PATH, areaChoices, areaFromRow, areaLabel, needsFirstArea, resolveActiveArea, shouldOfferCreate, shouldOfferSwitcher, sortAreas, validateAreaName, type Area } from "./areas.ts";
 
 const area = (id: string, name: string, archivedAt: string | null = null): Area => ({ id, name, archivedAt });
 
@@ -95,5 +95,39 @@ describe("rows from the database", () => {
 
   test("and the cookie name is stable, because a browser remembers it", () => {
     assert.equal(AREA_COOKIE, "gp_area");
+  });
+});
+
+describe("the way to another family", () => {
+  /**
+   * `/areas/new` shipped with Areas and was linked from NO screen in the app.
+   * The switcher listed what somebody already had and stopped there, so a
+   * second family was reachable only by knowing the route and typing it -- and
+   * the switcher itself was hidden from anybody with one family, which is
+   * exactly who needed it.
+   */
+  test("offered to anybody who already has a family", () => {
+    assert.equal(shouldOfferCreate([HOME]), true, "ONE family is the case that was invisible");
+    assert.equal(shouldOfferCreate([HOME, OTHER]), true);
+    assert.equal(shouldOfferCreate([OLD]), true, "even if the only one is archived");
+  });
+
+  test("and NOT to an account with none, which is already looking at the form", () => {
+    // The root renders `CreateAreaForm` for them. A menu item pointing at the
+    // screen they are on is noise, not discovery.
+    assert.equal(shouldOfferCreate([]), false);
+  });
+
+  test("it is a different question from whether there is anything to switch to", () => {
+    // Conflating the two is the entire bug: no switch, therefore no menu,
+    // therefore no door.
+    assert.equal(shouldOfferSwitcher([HOME]), false);
+    assert.equal(shouldOfferCreate([HOME]), true);
+  });
+
+  test("the route and the wording are written down once", () => {
+    // So the account menu, Settings and the tests cannot each name their own.
+    assert.equal(CREATE_AREA_PATH, "/areas/new");
+    assert.equal(CREATE_AREA_LABEL, "Create new family");
   });
 });

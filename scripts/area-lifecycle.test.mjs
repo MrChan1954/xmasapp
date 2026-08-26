@@ -1030,3 +1030,269 @@ describe("switching family changes who you are, and carries nothing over", () =>
     }
   });
 });
+
+// ===========================================================================
+// 11. Belonging to several families, and staying signed in to them
+// ===========================================================================
+
+/**
+ * TWO DEFECTS, ONE CAUSE, BOTH FOUND BY A PERSON RATHER THAN BY A TEST.
+ *
+ *   A. Leaving one family signed you out of the others.
+ *   B. Signing in signed you straight back out again, for ever.
+ *
+ * The cause is the same in both. Three rules, each defensible alone:
+ *
+ *   1. `getCurrentMember` -- and migration 038 in the database -- REFUSE TO
+ *      GUESS which family a login with several memberships means. Right, and
+ *      the reason two families cannot bleed into each other.
+ *   2. `FamilyProvider` treats "no membership" as "your access was revoked",
+ *      signs the session out and shows `/login?error=access_denied`.
+ *   3. Nothing in the sign-in path ever wrote the `gp_area` cookie, and leaving
+ *      a family DELETED it.
+ *
+ * Put together: an account in two or more families with no cookie could not
+ * survive one render. Leaving a family caused it (A); so did a new browser, a
+ * private window, a cleared cookie, a second device, or simply signing in on a
+ * machine that had never switched family (B). There was no way out from inside
+ * the app.
+ *
+ * THE REFUSAL IS NOT WHAT CHANGED. Rule 1 stays exactly as it was. What was
+ * missing is that "has not chosen yet" is not "has no access": it is a question
+ * nobody asked. The app asks it now -- at sign-in, and again if it ever finds
+ * itself without an answer -- and only concludes "revoked" once there is
+ * genuinely nothing to choose.
+ */
+
+const source = (relative) =>
+  readFileSync(new URL("../" + relative, import.meta.url), "utf8").replace(/\r\n/gu, "\n");
+
+describe("leaving one family leaves the others alone -- in the app, not just the database", () => {
+  const route = source("src/app/api/areas/membership/route.ts");
+  const leave = route.slice(route.indexOf('if (action === "leave")'), route.indexOf("set_area_archived"));
+
+  test("the leave branch does not simply delete the remembered Area", () => {
+    assert.match(leave, /resolveActiveArea\(/u,
+      "it must choose another family the person still belongs to");
+    assert.match(leave, /rememberArea\(response, next\.id\)/u,
+      "and write that choice, so the next request can resolve a membership");
+  });
+
+  test("the Area just left is excluded from the choice", () => {
+    assert.match(leave, /\.neq\("id", areaId\)/u,
+      "otherwise it could re-select the family they just walked out of");
+  });
+
+  test("the cookie is cleared ONLY when the list of remaining families is known to be empty", () => {
+    /*
+     * The failure this orders. `remaining` erroring is not the same as
+     * "nothing left", and treating it as such is the OLD behaviour -- which
+     * locked people out. A known-empty list clears; an unknown one leaves the
+     * cookie alone for `ensureAreaChosen` to repair.
+     */
+    const remembered = leave.indexOf("rememberArea(response, next.id)");
+    const errorGuard = leave.indexOf("if (remaining.error) return response;");
+    const forgotten = leave.indexOf("forgetArea(response)");
+    assert.ok(remembered > 0 && errorGuard > remembered && forgotten > errorGuard,
+      "order must be: choose, then bail out on an unknown list, then forget");
+  });
+
+  test("and the two routes that remember an Area share one implementation", () => {
+    // A `maxAge` or a `path` that disagreed between them would expire a choice
+    // early and sign a multi-family login out -- this defect, from a typo.
+    const cookie = source("src/utils/area-cookie.ts");
+    assert.match(cookie, /export function rememberArea/u);
+    assert.match(cookie, /export function forgetArea/u);
+    for (const file of ["src/app/api/areas/route.ts", "src/app/api/areas/membership/route.ts"]) {
+      assert.match(source(file), /from "@\/utils\/area-cookie"/u, file);
+      assert.ok(!/cookies\.set\(AREA_COOKIE/u.test(source(file)),
+        file + " must not write the cookie itself");
+    }
+  });
+
+  test("AND THE DATABASE HALF WAS ALWAYS RIGHT -- one membership ends, the rest do not", async () => {
+    // Re-proving the invariant the app broke, so the two halves are pinned
+    // together: Jade leaves Bravo and keeps Alpha.
+    await restoreAlpha();
+    const left = await probe(db, who(f.users.jade, f.areas.bravo),
+      "select public.leave_area($1)", [f.areas.bravo]);
+    assert.ok(left.ok, left.error);
+
+    await asOwner(db);
+    const mine = await rows(db, `
+      select a.name, m.active from public.app_members m
+      join public.areas a on a.id = m.area_id
+      where m.user_id = $1 order by a.name`, [f.users.jade]);
+    assert.deepEqual(mine, [
+      { name: "Alpha", active: true },
+      { name: "Bravo", active: false },
+    ], "exactly one membership ends");
+
+    await asOwner(db);
+    await db.query("update public.app_members set active = true where user_id = $1 and area_id = $2",
+      [f.users.jade, f.areas.bravo]);
+  });
+
+  test("THREE FAMILIES, LEAVE ONE, TWO REMAIN -- and both are still readable", async () => {
+    /*
+     * `dual` administers Alpha and Charlie and is an ordinary member of Bravo:
+     * the exact account live QA was signed out of. Leaving Bravo must leave two
+     * families it can still read, which is what the route now points the cookie
+     * at.
+     */
+    await restoreAlpha();
+    const mine = async () => {
+      const read = await probe(db, who(f.users.dual, null), "select name from public.areas order by name");
+      assert.ok(read.ok, read.error);
+      return read.rows.map((row) => row.name);
+    };
+
+    // Asserted as a DELTA rather than a fixed list: earlier sections of this
+    // file hand `dual` more families, and what matters is that leaving one
+    // removes exactly that one.
+    const before = await mine();
+    assert.ok(before.includes("Bravo") && before.includes("Alpha") && before.includes("Charlie"),
+      "the account under test must start out in at least three families");
+
+    const left = await probe(db, who(f.users.dual, f.areas.bravo),
+      "select public.leave_area($1)", [f.areas.bravo]);
+    assert.ok(left.ok, left.error);
+
+    const after = await mine();
+    assert.deepEqual(after, before.filter((name) => name !== "Bravo"),
+      "exactly the family they left goes; every other one stays readable");
+    assert.ok(after.length >= 2, "and there is more than one left to point the cookie at");
+
+    await asOwner(db);
+    await db.query("update public.app_members set active = true where user_id = $1 and area_id = $2",
+      [f.users.dual, f.areas.bravo]);
+  });
+
+  test("leaving the ONLY family leaves nothing to choose, which is the one case for clearing", async () => {
+    /*
+     * A login of its own, belonging to Alpha and to nothing else, because the
+     * fixture accounts have collected other families from the sections above
+     * and this is the one assertion that needs the list to reach ZERO.
+     */
+    await restoreAlpha();
+    await asOwner(db);
+    const solitary = await value(db, `
+      insert into auth.users (email, email_confirmed_at)
+      values ('solitary@example.test', now()) returning id`);
+    const person = await value(db,
+      "insert into public.people (name, area_id) values ('Solitary', $1) returning id", [f.areas.alpha]);
+    await db.query(`
+      insert into public.app_members (area_id, person_id, user_id, email, role, active)
+      values ($1, $2, $3, 'solitary@example.test', 'member', true)`, [f.areas.alpha, person, solitary]);
+
+    const before = await probe(db, who(solitary, null), "select id from public.areas");
+    assert.equal(before.rows.length, 1, "exactly one family to start with");
+
+    const left = await probe(db, who(solitary, f.areas.alpha),
+      "select public.leave_area($1)", [f.areas.alpha]);
+    assert.ok(left.ok, left.error);
+
+    const readable = await probe(db, who(solitary, null), "select id from public.areas");
+    assert.deepEqual(readable.rows, [], "nothing left to point a cookie at");
+    await restoreAlpha();
+  });
+
+  test("a sole administrator is still refused, and their other families are untouched", async () => {
+    await restoreAlpha();
+    const administered = async () => {
+      await asOwner(db);
+      return (await rows(db, `
+        select a.name from public.app_members m
+        join public.areas a on a.id = m.area_id
+        where m.user_id = $1 and m.active and m.role = 'admin' order by a.name`, [f.users.dual]))
+        .map((row) => row.name);
+    };
+
+    const before = await administered();
+    assert.ok(before.includes("Alpha"), "they must run Alpha for the refusal to be the sole-admin one");
+
+    const refused = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select public.leave_area($1)", [f.areas.alpha]);
+    assert.equal(refused.ok, false, "Alpha's only admin cannot walk out of it");
+
+    assert.deepEqual(await administered(), before, "a refusal changes nothing anywhere");
+  });
+});
+
+describe("signing in cannot sign you out again", () => {
+  const provider = source("src/app/family-context.tsx");
+  const login = source("src/app/login/page.tsx");
+  const chooser = source("src/utils/supabase/area-choice-client.ts");
+
+  test("THE PROVIDER ASKS WHICH FAMILY BEFORE IT CONCLUDES THERE IS NO ACCESS", () => {
+    const branch = provider.slice(
+      provider.indexOf("if (!membership.data)"),
+      provider.indexOf("setRole(membership.data.role"));
+    assert.match(branch, /ensureAreaChosen\(\)/u,
+      "the question that was never asked");
+    const asked = branch.indexOf("ensureAreaChosen()");
+    const signedOut = branch.indexOf("db.auth.signOut()");
+    assert.ok(asked > 0 && signedOut > asked,
+      "asking must come BEFORE signing out, or the fix does nothing");
+  });
+
+  test("and reloads rather than re-rendering once one is chosen", () => {
+    // Half the screen holding one family while the other half fetches another
+    // is not a state worth having -- the same reason switching reloads.
+    assert.match(provider, /if \(outcome === "chosen"\) \{ window\.location\.reload\(\); return; \}/u);
+  });
+
+  test("signing in settles the family, so the first screen is already right", () => {
+    assert.match(login, /await ensureAreaChosen\(\);/u);
+    const chosen = login.indexOf("await ensureAreaChosen();");
+    const home = login.indexOf('router.push("/")');
+    assert.ok(chosen > 0 && home > chosen, "before the app is opened, not after");
+  });
+
+  test("THE CHOICE IS THE SWITCHER'S OWN RULE, not a second one invented here", () => {
+    // Two rules would drift, and the family the app picked would stop matching
+    // the family the menu showed as current.
+    assert.match(chooser, /resolveActiveArea\(areas, remembered\)/u);
+    assert.match(chooser, /\.from\("areas"\)/u, "read the caller's own families");
+  });
+
+  test("an account that belongs to nothing is NOT given a family", () => {
+    assert.match(chooser, /if \(areas\.length === 0\) return "none";/u,
+      "zero families is a real answer -- the product signs them out and says so");
+  });
+
+  test("and it cannot loop: the same choice is never written twice", () => {
+    assert.match(chooser, /if \(chosen\.id === remembered\) return "unchanged";/u);
+  });
+
+  test("THE DATABASE STILL REFUSES TO GUESS, which is what the cookie exists to answer", async () => {
+    /*
+     * The rule the app must never work around. `dual` is in three families; with
+     * no acting Area claimed, `is_app_admin()` is FALSE even though they
+     * administer two of them. That is migration 038 doing its job, and it is
+     * why "choose a family" had to be answered rather than skipped.
+     */
+    await restoreAlpha();
+    const unsaid = await probe(db, who(f.users.dual, null), "select public.is_app_admin() as admin");
+    assert.equal(unsaid.rows[0].admin, false, "no Area claimed, no administration");
+
+    const said = await probe(db, who(f.users.dual, f.areas.alpha), "select public.is_app_admin() as admin");
+    assert.equal(said.rows[0].admin, true, "say which family, and the answer arrives");
+  });
+
+  test("AND A CHOICE IS ALWAYS AVAILABLE TO BE MADE -- the fix is possible at all", async () => {
+    /*
+     * `ensureAreaChosen` reads `areas` with no Area claimed. If that read were
+     * itself gated on having chosen one, the repair could never run. It is not:
+     * `areas` answers `is_area_member(id)` directly.
+     */
+    const readable = await probe(db, who(f.users.dual, null), "select name from public.areas order by name");
+    assert.ok(readable.ok, readable.error);
+    const names = readable.rows.map((row) => row.name);
+    for (const expected of ["Alpha", "Bravo", "Charlie"]) {
+      assert.ok(names.includes(expected), `${expected} must be choosable with nothing claimed`);
+    }
+    assert.ok(names.length > 1,
+      "more than one, which is the case the cookie exists to answer");
+  });
+});
