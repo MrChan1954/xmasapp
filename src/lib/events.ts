@@ -404,6 +404,24 @@ export function eventNavMode(activeRecipientCount: number | null): EventNavMode 
 // Dashboard ordering
 // ---------------------------------------------------------------------------
 
+/**
+ * How many people an event is for, said the way a person would say it.
+ *
+ * WHY THIS IS A FUNCTION AND NOT A TEMPLATE STRING ON THE CARD. "0 people" is
+ * the wrong sentence for an event nobody has been added to yet -- it reads as a
+ * figure rather than as a next step -- and "1 people" is the bug every list of
+ * counts eventually ships. Both are decided once, here, where a test can run
+ * them, rather than in the markup of whichever screen happens to need a count.
+ *
+ * ACTIVE RECIPIENTS ONLY, decided by the caller. An archived recipient is
+ * somebody the family has stopped planning for, and counting them would make a
+ * card disagree with the screen it opens.
+ */
+export function recipientSummary(activeRecipientCount: number): string {
+  if (!Number.isFinite(activeRecipientCount) || activeRecipientCount <= 0) return "Nobody added yet";
+  return activeRecipientCount === 1 ? "1 person" : `${activeRecipientCount} people`;
+}
+
 export type PartitionedEvents<T extends EventSummary> = {
   /** Today or later, soonest first — what the family is actually planning. */
   upcoming: T[];

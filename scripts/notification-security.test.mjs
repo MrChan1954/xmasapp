@@ -371,3 +371,98 @@ test("push is an alert, not a data channel, and does not displace Realtime", () 
   // would otherwise stream endpoints and device keys to every subscriber.
   assert.doesNotMatch(migration, /alter publication supabase_realtime add table/);
 });
+
+/**
+ * AN AUDIENCE IS DRAWN FROM ONE FAMILY, AND THE CALLER HAS TO SAY WHICH.
+ *
+ * THE BUG THIS PINS. `loadFamilyContext` builds its audience through the ADMIN
+ * client, which bypasses row level security on purpose -- the dispatcher must
+ * see every membership to work out who is left out. Its `areaId` parameter
+ * defaults to `null`, and null means "every membership in the database". That
+ * default was correct while one Area existed and became a cross-Area broadcast
+ * the moment a second one did.
+ *
+ * `dispatchNotificationEvent` and `dispatchOutboxEvent` both omitted the
+ * argument. Measured against the real database: two gift ideas added inside one
+ * QA Area produced fifteen notifications across four Areas -- eight of them
+ * delivered to a DIFFERENT family's members, titled "New gift idea for
+ * <person>", naming somebody those readers have no relationship to, and
+ * linking to an event they cannot open.
+ *
+ * A source sweep rather than a spelling check: it counts the ARGUMENTS at every
+ * call site, so re-introducing the bug by dropping the last one fails here
+ * whatever the variable is called.
+ */
+test("EVERY notification audience is narrowed to one Area, at every call site", () => {
+  /** The argument list of each call, with nesting and strings respected. */
+  const callSites = (source) => {
+    const calls = [];
+    const needle = "loadFamilyContext(";
+    for (let at = source.indexOf(needle); at !== -1; at = source.indexOf(needle, at + 1)) {
+      // The declaration itself is not a call.
+      const before = source.slice(Math.max(0, at - 30), at);
+      if (/function\s+$/u.test(before)) continue;
+
+      let depth = 0;
+      let args = "";
+      for (let i = at + needle.length - 1; i < source.length; i += 1) {
+        const ch = source[i];
+        if (ch === "(") { depth += 1; if (depth === 1) continue; }
+        if (ch === ")") { depth -= 1; if (depth === 0) break; }
+        args += ch;
+      }
+
+      // Split on top-level commas only, so a nested call counts as one argument.
+      const parts = [];
+      let current = "";
+      let nesting = 0;
+      for (const ch of args) {
+        if ("([{".includes(ch)) nesting += 1;
+        if (")]}".includes(ch)) nesting -= 1;
+        if (ch === "," && nesting === 0) { parts.push(current.trim()); current = ""; continue; }
+        current += ch;
+      }
+      if (current.trim()) parts.push(current.trim());
+      calls.push(parts);
+    }
+    return calls;
+  };
+
+  const files = [
+    ["src", "utils", "supabase", "notifications-server.ts"],
+    ["src", "lib", "notification-dispatch.ts"],
+  ];
+
+  let total = 0;
+  for (const parts of files.map((f) => [f, callSites(read(...f))])) {
+    const [file, calls] = parts;
+    for (const args of calls) {
+      total += 1;
+      assert.ok(
+        args.length >= 5,
+        `${file.join("/")}: loadFamilyContext(${args.join(", ")}) has ${args.length} arguments. ` +
+        "The fifth is the Area the audience is drawn from; without it the admin read returns " +
+        "every membership in every family and the notification is broadcast across Areas.",
+      );
+      const areaArgument = args[4];
+      assert.doesNotMatch(
+        areaArgument,
+        /^(null|undefined)$/u,
+        `${file.join("/")}: the Area argument is hard-coded to ${areaArgument}, which means "tell everybody".`,
+      );
+    }
+  }
+  assert.ok(total >= 4, `expected every dispatch path to be swept, found ${total} call sites`);
+});
+
+test("the Area a notification is about is resolved from its subject, not the request", () => {
+  // Both dispatch paths in the server module must work the Area out themselves.
+  assert.match(serverModule, /resolveSubjectAreaId\(/u,
+    "notifications-server.ts must resolve the subject's Area before loading an audience");
+
+  // It is derived from the subject and its event -- never from anything the
+  // caller passed in, which a member could otherwise use to choose an audience.
+  const resolver = dispatcher.slice(dispatcher.indexOf("export async function resolveSubjectAreaId"));
+  assert.doesNotMatch(resolver.slice(0, 1200), /request|params|body|searchParams/iu,
+    "the Area must come from the row, never from the request");
+});

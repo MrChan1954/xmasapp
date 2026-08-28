@@ -68,6 +68,8 @@
     "test:lint-gate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/lint-gate.test.mjs",
     "test:people-access": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/people-and-access.test.mjs",
     "test:area-mutation-security": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/area-mutation-security.test.mjs",
+    "test:mutation-gate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/mutation-gate.test.mjs",
+    "test:events-recipients": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/events-and-recipients.test.mjs",
     "test:production-checks": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/production-checks.test.mjs"
   },
   "dependencies": {

@@ -8,7 +8,7 @@ import type { BirthdayPlanning } from "@/utils/supabase/birthdays-server";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { SELF_PRIVATE_DETAIL, SELF_PRIVATE_HEADLINE, birthdayCardState, birthdayWorkspacePath, birthdaysWithinWindow, describeDaysAway, describeTurningAge, formatBirthday, type UpcomingBirthday } from "@/lib/birthdays.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { eventPath, eventTypeMeta, formatEventDate, groupDashboardEvents, type EventSummary } from "@/lib/events.ts";
+import { eventPath, eventTypeMeta, formatEventDate, groupDashboardEvents, recipientSummary, type EventSummary } from "@/lib/events.ts";
 import { AppShell, PageHeader } from "./components/app-shell";
 import { GarlandRule } from "./components/festive/garland";
 import { FinancialProgressBar } from "./components/financial-progress";
@@ -19,6 +19,8 @@ import { SELF_PRIVATE_CTA } from "@/lib/wishlist.ts";
 export type DashboardEvent = EventSummary & {
   spentPennies: number;
   budgetPennies: number;
+  /** Active recipients only -- the people still being planned for. */
+  activeRecipientCount: number;
 };
 
 /**
@@ -52,9 +54,17 @@ export function EventsDashboard({
   viewerPersonId = null,
   today,
   isAdmin,
+  areaName,
   error,
 }: {
   events: DashboardEvent[];
+  /**
+   * WHICH FAMILY THIS LIST IS. Named on the page, for the same reason Q3 named
+   * it on a Person: somebody who belongs to several reads an identical layout in
+   * each, and "Christmas 2026" exists in more than one of them. Without it the
+   * only clue to which family is on screen is a two-letter avatar in the corner.
+   */
+  areaName: string;
   /** Everyone with a birthday, already ordered by how soon it next falls. */
   birthdays?: UpcomingBirthday[];
   /**
@@ -79,9 +89,9 @@ export function EventsDashboard({
   return (
     <AppShell width="default">
       <PageHeader
-        eyebrow="Family gift planner"
+        eyebrow={areaName}
         title="Events"
-        description="Every occasion the family plans and pays for together. Open one to see its people, purchases and balances."
+        description={`Every occasion ${areaName} plans and pays for together. Open one to see its people, purchases and balances.`}
         // Birthdays are NOT a header button. The dashboard already has one
         // route into them -- the Upcoming birthdays section below, and its
         // "All birthdays" link -- and a second, larger control at the top of
@@ -433,6 +443,13 @@ function EventCard({ event, muted }: { event: DashboardEvent; muted: boolean }) 
             {formatEventDate(event.eventDate)}
             <span aria-hidden>·</span>
             <span>{meta.label}</span>
+            {/* WHO IT IS FOR, as a number.
+                A card that shows a budget and a spend but never says how many
+                people they are spread across answers the second question before
+                the first. Active recipients only, so it counts exactly the
+                population those two figures are summed over. */}
+            <span aria-hidden>·</span>
+            <span>{recipientSummary(event.activeRecipientCount)}</span>
           </p>
         </div>
         {event.status === "archived" && <Badge tone="neutral">Archived</Badge>}

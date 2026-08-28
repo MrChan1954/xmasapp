@@ -1,6 +1,8 @@
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { upcomingBirthdays, type UpcomingBirthday } from "@/lib/birthdays.ts";
 import { loadFamilyBirthdays, londonToday, type BirthdayPlanning } from "@/utils/supabase/birthdays-server";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { areaLabel } from "@/lib/areas.ts";
 import { loadAreaContext } from "@/utils/supabase/areas-server";
 import { getCurrentMember } from "@/utils/supabase/current-member";
 import { listEvents } from "@/utils/supabase/events-server";
@@ -33,7 +35,7 @@ export default async function EventsPage() {
   // leaking anything. The client provider performs the sign-in redirect, as it
   // has since the proxy was removed.
   if (!user || !member) {
-    return <EventsDashboard events={[]} birthdays={[]} today={londonToday()} isAdmin={false} />;
+    return <EventsDashboard events={[]} birthdays={[]} today={londonToday()} isAdmin={false} areaName="Your family" />;
   }
 
   // AN ACCOUNT WITH NO FAMILY IS NOT AN EMPTY DASHBOARD. Somebody who has just
@@ -45,7 +47,7 @@ export default async function EventsPage() {
   // redirect here is a hop on every cold start and, historically, the way the
   // front door kept ending up inside Christmas. An account that HAS a family
   // never reaches this line at all.
-  const { needsSetup } = await loadAreaContext();
+  const { active, needsSetup } = await loadAreaContext();
   if (needsSetup) return <CreateAreaForm first />;
 
   const today = londonToday();
@@ -90,6 +92,7 @@ export default async function EventsPage() {
       viewerPersonId={viewerPersonId}
       today={today}
       isAdmin={member.role === "admin"}
+      areaName={areaLabel(active)}
       error={error}
     />
   );

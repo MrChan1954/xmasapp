@@ -21,6 +21,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
+import { summariseMutationRun } from "./mutation-summary.mjs";
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const DB_SUITES = ["scripts/tenancy-runtime.test.mjs", "scripts/migration-execution.test.mjs"];
@@ -569,6 +571,276 @@ create or replace function public.is_area_admin(p_area_id uuid)`,
     to: "returns void\nlanguage plpgsql\nstable\nsecurity definer",
     suites: ["scripts/area-mutation-security.test.mjs"],
   },
+
+  // -------------------------------------------------------------------------
+  // Q4: an event is an occasion; a recipient is a role somebody holds in one.
+  // Blurring the two, or letting either escape its family, is the whole list.
+  // -------------------------------------------------------------------------
+  {
+    name: "Q4-1. the events list stops scoping to the family on screen",
+    file: "src/utils/supabase/events-server.ts",
+    from: `db.from("events").select(EVENT_COLUMNS).eq("area_id", areaId),`,
+    to: `db.from("events").select(EVENT_COLUMNS),`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-2. opening one event stops checking which family it is in",
+    file: "src/utils/supabase/events-server.ts",
+    from: `.from("events").select(EVENT_COLUMNS).eq("id", validId.value).eq("area_id", areaId).maybeSingle();`,
+    to: `.from("events").select(EVENT_COLUMNS).eq("id", validId.value).maybeSingle();`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-3. an event card counts archived recipients as people it is for",
+    file: "src/utils/supabase/events-server.ts",
+    from: `  const recipients = (recipientResult.data ?? []).filter((row) => row.active);`,
+    to: `  const recipients = (recipientResult.data ?? []);`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-4. the events index stops naming which family it is listing",
+    file: "src/app/events-dashboard.tsx",
+    from: `        eyebrow={areaName}`,
+    to: `        eyebrow="Family gift planner"`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-5. an event screen can rename the durable Person again",
+    file: "src/app/people/person-modal.tsx",
+    from: `        name: person.name,
+        budgetPennies: parsedBudget.value,`,
+    to: `        name: name,
+        budgetPennies: parsedBudget.value,`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-6. the recipient editor offers a Name field again",
+    file: "src/app/people/person-modal.tsx",
+    from: `      <Field label="Budget" className="mt-4">`,
+    to: `      <Field label="Name" className="mt-4"><Input value={name} onChange={() => {}} /></Field>
+      <Field label="Budget" className="mt-4">`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-7. adding a recipient stops checking the event's Area",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: `  perform public.require_acting_area(public.area_of_event(p_event_id));
+  if not public.is_app_admin() then
+    raise exception 'Global Admin access required to add a recipient'`,
+    to: `  if not public.is_app_admin() then
+    raise exception 'Global Admin access required to add a recipient'`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-8. removing a recipient hard-deletes them and their history",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: `  update public.christmas_recipients
+  set active = p_active, updated_at = now()
+  where id = p_christmas_recipient_id
+  returning * into updated_recipient;`,
+    to: `  delete from public.christmas_recipients
+  where id = p_christmas_recipient_id
+  returning * into updated_recipient;`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-9. event contributor management stops checking the event's Area",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: `  perform public.require_acting_area(public.area_of_event(p_event_id));
+  if not public.is_app_admin() then
+    raise exception 'Global Admin access required to change contributors'`,
+    to: `  if not public.is_app_admin() then
+    raise exception 'Global Admin access required to change contributors'`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-10. archiving an event stops checking the event's Area",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: `  perform public.require_acting_area(public.area_of_event(p_event_id));
+  if not public.is_app_admin() then
+    raise exception 'Global Admin access required to archive an event'`,
+    to: `  if not public.is_app_admin() then
+    raise exception 'Global Admin access required to archive an event'`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-11. deleting an event stops caring whether it is empty",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: `  if blocking_count > 0 then
+    raise exception
+      'This event has % % and cannot be deleted. Archive it instead`,
+    to: `  if false then
+    raise exception
+      'This event has % % and cannot be deleted. Archive it instead`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-11b. deleting an event stops checking the event's Area",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: `  perform public.require_acting_area(public.area_of_event(p_event_id));
+  if not public.is_app_admin() then
+    raise exception 'Only the Global Admin can delete an event'`,
+    to: `  if not public.is_app_admin() then
+    raise exception 'Only the Global Admin can delete an event'`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-12. Christmas uniqueness loses its Area dimension",
+    file: "supabase/migrations/202608100035_area_integrity.sql",
+    from: `  on public.events (area_id, year)`,
+    to: `  on public.events (year)`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-13. a custom event title becomes globally unique instead of per family",
+    file: "supabase/migrations/202608100035_area_integrity.sql",
+    from: `  on public.events (area_id, lower(trim(name)), event_date);`,
+    to: `  on public.events (lower(trim(name)), event_date);`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-14. global settings creep back into an event's settings screen",
+    file: "src/app/events/[eventId]/settings/settings-screen.tsx",
+    from: `export function EventSettingsScreen(`,
+    to: `const CREEP = "Family access";
+export function EventSettingsScreen(`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-15. adding somebody twice stops reusing their existing recipient row",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: `  on conflict (christmas_event_id, person_id)
+  do update set active = true
+  returning * into saved_recipient;`,
+    to: `  on conflict (christmas_event_id, person_id)
+  do update set budget_pennies = public.christmas_recipients.budget_pennies
+  returning * into saved_recipient;`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-16. an event page stops resolving its event through the gate",
+    file: "src/app/events/[eventId]/settings/page.tsx",
+    from: `requireEvent(`,
+    to: `getEventUnchecked(`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+
+  // -------------------------------------------------------------------------
+  // Q4, second pass: the two rules the audit found were asserted by reading the
+  // SQL rather than by running it. A regular expression cannot tell a key of
+  // (person, year) from a key of (person, date), and it cannot tell a policy
+  // that hides a birthday from one that merely mentions hiding it.
+  // -------------------------------------------------------------------------
+  {
+    name: "Q4-17. a birthday becomes unique per DATE instead of per YEAR",
+    file: "supabase/migrations/202608100026_add_birthdays_and_event_administration.sql",
+    from: `  on public.events (celebrant_person_id, (extract(year from event_date)))`,
+    to: `  on public.events (celebrant_person_id, event_date)`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  // MIGRATION 036, NOT 031, IS WHERE BIRTHDAY PRIVACY ACTUALLY LIVES.
+  //
+  // 031 introduced the rule; 036 dropped and recreated the same policies to add
+  // the Area predicate, and its versions are the ones the database ends up
+  // with. Mutating 031 changes a policy that is replaced later in the chain, so
+  // the final schema is untouched -- which is exactly what happened on the
+  // first attempt at these two: both survived. 031 catches its own mutation
+  // with an end-state block, and that block is still worth having, but it runs
+  // before 036 overwrites its work and therefore protects nothing at the end.
+  // The rule that ships is 036's, so that is what gets broken here.
+  {
+    name: "Q4-18. the celebrant can see their own birthday EVENT again",
+    file: "supabase/migrations/202608100036_area_scoped_visibility.sql",
+    from: `    public.is_active_app_member()
+    and public.is_area_member(area_id)
+    and not public.is_own_birthday_event(id)`,
+    to: `    public.is_active_app_member()
+    and public.is_area_member(area_id)`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-19. the celebrant can see what the family paid each other for their present",
+    file: "supabase/migrations/202608100036_area_scoped_visibility.sql",
+    from: `create policy "active members read family settlements"
+  on public.settlements for select
+  using (
+    public.is_active_app_member()
+    and public.is_area_member(public.area_of_event(christmas_event_id))
+    and not public.is_own_birthday_event(christmas_event_id)
+  );`,
+    to: `create policy "active members read family settlements"
+  on public.settlements for select
+  using (
+    public.is_active_app_member()
+    and public.is_area_member(public.area_of_event(christmas_event_id))
+  );`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-20. a filtered mutation run reports a misleading denominator again",
+    file: "scripts/mutation-summary.mjs",
+    from: "return `${caught}/${selectedCount} mutations caught${scope}.`;",
+    to: "return `${caught}/${totalCount} mutations caught${scope}.`;",
+    suites: ["scripts/mutation-gate.test.mjs"],
+  },
+
+  // -------------------------------------------------------------------------
+  // AND THE SAME TWO RULES BROKEN WITHOUT LOOKING BROKEN.
+  //
+  // A check that searches a policy for the words `is_own_birthday` -- which is
+  // what migration 031's end-state block does -- passes on both of these. The
+  // function is still called, from the same policy, on the same table. It is
+  // handed an id that does not exist, so it always answers false, so `not
+  // false` shows everybody everything. Nothing but an assertion about what a
+  // reader can actually SEE can tell these apart from the real thing.
+  // -------------------------------------------------------------------------
+  {
+    name: "Q4-21. birthday privacy on the EVENT is neutered while still looking present",
+    file: "supabase/migrations/202608100036_area_scoped_visibility.sql",
+    from: `    and not public.is_own_birthday_event(id)`,
+    to: `    and not public.is_own_birthday_event('00000000-0000-0000-0000-000000000000'::uuid)`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    name: "Q4-22. birthday privacy on the MONEY is neutered while still looking present",
+    file: "supabase/migrations/202608100036_area_scoped_visibility.sql",
+    from: `create policy "active members read family settlements"
+  on public.settlements for select
+  using (
+    public.is_active_app_member()
+    and public.is_area_member(public.area_of_event(christmas_event_id))
+    and not public.is_own_birthday_event(christmas_event_id)
+  );`,
+    to: `create policy "active members read family settlements"
+  on public.settlements for select
+  using (
+    public.is_active_app_member()
+    and public.is_area_member(public.area_of_event(christmas_event_id))
+    and not public.is_own_birthday_event('00000000-0000-0000-0000-000000000000'::uuid)
+  );`,
+    suites: ["scripts/events-and-recipients.test.mjs"],
+  },
+  {
+    /*
+     * THE CROSS-AREA BROADCAST. `loadFamilyContext` draws its audience through
+     * the admin client, so the Area argument is the only thing standing between
+     * one family notification and every other family phones. Dropping it
+     * restores the default -- `null`, meaning everybody -- while the call still
+     * reads as though it were scoped.
+     */
+    name: "Q4-23. the live notification path stops naming the Area its audience comes from",
+    file: "src/utils/supabase/notifications-server.ts",
+    from: `  const context = await loadFamilyContext(reader, admin as unknown as DataClient, eventId, undefined, areaId);`,
+    to: `  const context = await loadFamilyContext(reader, admin as unknown as DataClient, eventId);`,
+    suites: ["scripts/notification-security.test.mjs"],
+  },
+  {
+    name: "Q4-24. the outbox retry path stops naming the Area its audience comes from",
+    file: "src/utils/supabase/notifications-server.ts",
+    from: `  const context = await loadFamilyContext(admin, admin, eventId, undefined, areaId);`,
+    to: `  const context = await loadFamilyContext(admin, admin, eventId, undefined, null);`,
+    suites: ["scripts/notification-security.test.mjs"],
+  },
 ];
 
 function runSuite(suite) {
@@ -595,10 +867,19 @@ function runSuite(suite) {
   }
 }
 
+// An optional argument runs one family of mutations -- `node scripts/mutation-check.mjs Q4`
+// -- while no argument runs every one of them, which is what the gate does.
+const only = process.argv[2] ?? "";
+const selected = only ? MUTATIONS.filter((m) => m.name.startsWith(only)) : MUTATIONS;
+if (only && selected.length === 0) {
+  console.error(`No mutation name starts with "${only}".`);
+  process.exit(1);
+}
+
 let caught = 0;
 const survived = [];
 
-for (const mutation of MUTATIONS) {
+for (const mutation of selected) {
   const path = join(ROOT, mutation.file);
   const original = readFileSync(path, "utf8");
   const eol = original.includes("\r\n") ? "\r\n" : "\n";
@@ -631,7 +912,14 @@ for (const mutation of MUTATIONS) {
   }
 }
 
-console.log(`\n${caught}/${MUTATIONS.length} mutations caught.`);
+// THE DENOMINATOR IS WHAT WAS RUN, NOT WHAT EXISTS. See mutation-summary.mjs
+// for the sentence itself and for the reading it used to produce.
+console.log("\n" + summariseMutationRun({
+  caught,
+  selectedCount: selected.length,
+  totalCount: MUTATIONS.length,
+  filter: only,
+}));
 if (survived.length > 0) {
   console.log("Survivors:");
   for (const name of survived) console.log(`  - ${name}`);

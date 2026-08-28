@@ -30,6 +30,14 @@ export type EventRecord = EventSummary & {
   spentPennies: number;
   /** The sum of every active recipient's budget for this event. */
   budgetPennies: number;
+  /**
+   * HOW MANY PEOPLE THIS EVENT IS FOR, counting ACTIVE recipients only.
+   *
+   * The same population the two figures above are summed over, so a card
+   * cannot say "3 people" beside a budget computed from two. An archived
+   * recipient is not someone the family is still planning for.
+   */
+  activeRecipientCount: number;
 };
 
 const EVENT_COLUMNS = "id,name,event_type,event_date,status,year,celebrant_person_id,description";
@@ -112,8 +120,10 @@ export async function listEvents(): Promise<EventRecord[]> {
   const eventByRecipient = new Map(recipients.map((row) => [row.id, row.christmas_event_id]));
 
   const budgetByEvent = new Map<string, number>();
+  const recipientCountByEvent = new Map<string, number>();
   for (const row of recipients) {
     budgetByEvent.set(row.christmas_event_id, (budgetByEvent.get(row.christmas_event_id) ?? 0) + row.budget_pennies);
+    recipientCountByEvent.set(row.christmas_event_id, (recipientCountByEvent.get(row.christmas_event_id) ?? 0) + 1);
   }
 
   const spentByEvent = new Map<string, number>();
@@ -135,6 +145,7 @@ export async function listEvents(): Promise<EventRecord[]> {
     ...toSummary(row as EventRow),
     spentPennies: spentByEvent.get(row.id) ?? 0,
     budgetPennies: budgetByEvent.get(row.id) ?? 0,
+    activeRecipientCount: recipientCountByEvent.get(row.id) ?? 0,
   }));
 }
 

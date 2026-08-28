@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { formatPennies } from "../../lib/currency";
-import { INPUT_LIMITS, parseMoneyToPennies, validateRequiredText } from "../../lib/input-validation";
+import { INPUT_LIMITS, parseMoneyToPennies } from "../../lib/input-validation";
 import { validateRecipientAllocationSnapshot, type RecipientAllocation } from "../../lib/recipient-allocations";
 import { purchaseProgressStatus, type PurchaseProgressStatus } from "../../lib/purchases";
 import { useFamily, type ActiveEvent, type Person } from "../family-context";
@@ -13,7 +13,6 @@ import {
   Button,
   ConfirmDialog,
   Field,
-  Input,
   Modal,
   ModalFooter,
   ModalHeader,
@@ -71,7 +70,10 @@ export function PersonModal({
   const [loading, setLoading] = useState(true);
   const [contributionsLoaded, setContributionsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [name, setName] = useState(person.name);
+  // DISPLAY ONLY, and no longer state. It was editable here, and saving it
+  // renamed the durable Person family-wide; the name now comes straight from
+  // the person and is changed on their profile.
+  const name = person.name;
   const [budget, setBudget] = useState(priceInput(person.budgetPennies));
   const [saving, setSaving] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
@@ -206,15 +208,23 @@ export function PersonModal({
   };
 
   const savePerson = async (allocations: RecipientAllocation[]) => {
-    const validName = validateRequiredText(name, { field: "a name", maxLength: INPUT_LIMITS.name });
-    if (!validName.ok) { setError(validName.error); return; }
+    /*
+     * THE NAME GOES BACK EXACTLY AS IT CAME.
+     *
+     * `save_christmas_recipient_with_contributions` takes a name and writes it
+     * to the PERSON -- so anything but the current value renames them in every
+     * event, every purchase and the whole family history, from a screen about
+     * one occasion. It is passed because the routine requires the argument, not
+     * because this screen has an opinion about it. A name is corrected on the
+     * person's own profile.
+     */
     const parsedBudget = parseMoneyToPennies(budget, { field: "a budget" });
     if (!parsedBudget.ok || parsedBudget.value === null) { setError(parsedBudget.ok ? "Enter a budget." : parsedBudget.error); return; }
     setSaving(true);
     try {
       await saveRecipient({
         id: person.id,
-        name: validName.value,
+        name: person.name,
         budgetPennies: parsedBudget.value,
         allocations,
       });
@@ -277,13 +287,13 @@ export function PersonModal({
         )}
         {mode === "person" && (
           <PersonEditor
-            name={name}
+            personId={person.personId}
+            name={person.name}
             budget={budget}
             rows={rows}
             saving={saving}
-            setName={setName}
             setBudget={setBudget}
-            cancel={() => { setName(person.name); setBudget(priceInput(person.budgetPennies)); setMode("view"); setError(null); }}
+            cancel={() => { setBudget(priceInput(person.budgetPennies)); setMode("view"); setError(null); }}
             save={(allocations) => void savePerson(allocations)}
           />
         )}
@@ -454,7 +464,22 @@ function DetailView({
   );
 }
 
-function PersonEditor({ name, budget, rows, saving, setName, setBudget, cancel, save }: { name: string; budget: string; rows: Contribution[]; saving: boolean; setName: (value: string) => void; setBudget: (value: string) => void; cancel: () => void; save: (allocations: RecipientAllocation[]) => void }) {
+/**
+ * WHAT AN EVENT MAY CHANGE ABOUT SOMEBODY: their budget here, and who is
+ * chipping in. NOT their name.
+ *
+ * THE BUG THIS REMOVES. This screen used to carry a Name field, and saving it
+ * ran `update public.people set name = ...` -- renaming the DURABLE PERSON in
+ * every event, every purchase and the whole family history, from a panel that
+ * reads as "this event's entry for them". Proven against a real database: an
+ * edit here renamed Taylor everywhere.
+ *
+ * A recipient is a ROLE a person holds inside one event. It has a budget and a
+ * contributor plan, and those are the two things below. The person's name
+ * belongs to the person, and Q3 gave it a home on their profile -- which is
+ * where the link goes.
+ */
+function PersonEditor({ personId, name, budget, rows, saving, setBudget, cancel, save }: { personId: string; name: string; budget: string; rows: Contribution[]; saving: boolean; setBudget: (value: string) => void; cancel: () => void; save: (allocations: RecipientAllocation[]) => void }) {
   const [allocationRows, setAllocationRows] = useState(() => createRecipientAllocationDraftRows(rows));
   const parsedBudget = parseMoneyToPennies(budget, { field: "a budget" });
   const budgetPennies = parsedBudget.ok ? parsedBudget.value : null;
@@ -465,10 +490,15 @@ function PersonEditor({ name, budget, rows, saving, setName, setBudget, cancel, 
 
   return (
     <section className="mt-5 rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
-      <h3 className="font-display text-lg font-semibold">Edit person</h3>
-      <Field label="Name" className="mt-5" required>
-        <Input required maxLength={INPUT_LIMITS.name} value={name} onChange={(event) => setName(event.target.value)} />
-      </Field>
+      <h3 className="font-display text-lg font-semibold">Budget &amp; contributors for {name}</h3>
+      <p className="mt-1.5 text-xs leading-5 text-ink-600">
+        This is what {name} gets in THIS event. Their name, birthday and everything bought for them
+        across every other event belong to them rather than to this occasion —{" "}
+        <a href={`/people/${personId}`} className="font-semibold text-accent hover:underline">
+          open their profile
+        </a>{" "}
+        to change those.
+      </p>
       <Field label="Budget" className="mt-4">
         <MoneyInput maxLength={INPUT_LIMITS.money} value={budget} onValueChange={setBudget} />
       </Field>

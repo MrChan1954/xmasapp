@@ -9,6 +9,7 @@ import {
   callerMustBeActor,
   drainNotificationOutbox,
   loadFamilyContext,
+  resolveSubjectAreaId,
   resolveSubjectEventId,
   NotificationError,
   notificationSetupError,
@@ -252,7 +253,20 @@ export async function dispatchNotificationEvent(
   // default. A subject whose event cannot be resolved is not notifiable.
   const eventId = await resolveSubjectEventId(kind, id.value, reader);
   if (!eventId) throw new NotificationError(404, "That record could not be found.");
-  const context = await loadFamilyContext(reader, admin as unknown as DataClient, eventId);
+  /*
+   * WHICH FAMILY IS TOLD. Resolved from the subject's own event, never from the
+   * request, and passed on so the audience is drawn from that Area alone.
+   *
+   * WITHOUT IT THIS IS A CROSS-AREA BROADCAST. `loadFamilyContext` builds its
+   * audience through the ADMIN client, which bypasses row level security; with
+   * no Area to narrow to it returns every active membership in every family.
+   * Omitting this argument sent "New gift idea for <someone>" -- another
+   * family's person, by name -- to every member of every other Area, and wrote
+   * those rows into their notification centres. Proven against the real
+   * database before it was fixed, and pinned by a test.
+   */
+  const areaId = await resolveSubjectAreaId(kind, id.value, eventId, reader);
+  const context = await loadFamilyContext(reader, admin as unknown as DataClient, eventId, undefined, areaId);
 
   const report = await runNotificationEvent({
     admin: admin as unknown as DataClient,
@@ -313,7 +327,11 @@ export async function dispatchOutboxEvent(kind: NotificationEventKind, subjectId
   const admin = createAdminClient() as unknown as DataClient;
   const eventId = await resolveSubjectEventId(kind, subjectId, admin);
   if (!eventId) throw new NotificationError(404, "That record could not be found.");
-  const context = await loadFamilyContext(admin, admin, eventId);
+  // The retry path narrows to the subject's Area for the same reason the live
+  // one does: the admin client sees every family, so an unscoped audience tells
+  // all of them.
+  const areaId = await resolveSubjectAreaId(kind, subjectId, eventId, admin);
+  const context = await loadFamilyContext(admin, admin, eventId, undefined, areaId);
   return runNotificationEvent({
     admin,
     reader: admin,
