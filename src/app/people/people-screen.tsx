@@ -170,7 +170,16 @@ function PeopleView({
       eventId={eventId}
       eventName={eventName}
       areaId={areaId}
-      alreadyRecipientPersonIds={people.map((person) => person.personId)}
+      /*
+       * ONLY THE PEOPLE STILL ON THE LIST ARE EXCLUDED.
+       *
+       * This used to exclude every recipient row, ACTIVE OR NOT -- so somebody
+       * removed from the event vanished from the dropdown too, and the only way
+       * to bring them back was the Event settings chips. `add_event_recipient`
+       * reactivates the existing row rather than making a second, so offering
+       * them here is both safe and the obvious place to look.
+       */
+      alreadyRecipientPersonIds={people.filter((person) => person.active).map((person) => person.personId)}
       onCancel={() => setAdding(false)}
       onSave={async (personId, name, budget, allocations) => {
         await addExistingPerson({ personId, name, budgetPennies: budget, allocations });

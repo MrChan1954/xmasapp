@@ -193,6 +193,19 @@ describe("F3: the Add recipient dialog chooses a Person and submits", () => {
       "the dropdown excludes existing recipients, so a duplicate add is not reachable");
   });
 
+  test("BUT SOMEBODY REMOVED FROM IT IS, so the dialog can bring them back", () => {
+    /*
+     * The exclusion used to cover every recipient row, active or not. Removing
+     * somebody therefore took them out of the dropdown as well, and the only
+     * route back was the Event settings chips -- which is not where anybody
+     * looks. `add_event_recipient` reactivates the existing row rather than
+     * creating a second, so offering them is safe.
+     */
+    const source = screen();
+    assert.match(source, /alreadyRecipientPersonIds=\{people\.filter\(\(person\) => person\.active\)/u,
+      "only ACTIVE recipients are excluded from the dropdown");
+  });
+
   /*
    * WHAT THE DIALOG DOES ONCE IT SUBMITS -- reusing an existing recipient row
    * rather than creating a second, and refusing a foreign Person -- is proven

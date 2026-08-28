@@ -894,6 +894,17 @@ export function EventSettingsScreen(`,
     to: `  return message || fallback;`,
     suites: ["src/lib/event-errors.test.ts"],
   },
+  {
+    /*
+     * F3. Excluding INACTIVE recipients too is what made a removed person
+     * unreachable from the dialog that is supposed to bring them back.
+     */
+    name: "Q4-30. a removed recipient disappears from the add-recipient dropdown again",
+    file: "src/app/people/people-screen.tsx",
+    from: `      alreadyRecipientPersonIds={people.filter((person) => person.active).map((person) => person.personId)}`,
+    to: `      alreadyRecipientPersonIds={people.map((person) => person.personId)}`,
+    suites: ["scripts/event-people-scope.test.mjs"],
+  },
 ];
 
 function runSuite(suite) {
