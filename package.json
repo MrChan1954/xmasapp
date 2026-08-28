@@ -70,7 +70,10 @@
     "test:area-mutation-security": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/area-mutation-security.test.mjs",
     "test:mutation-gate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/mutation-gate.test.mjs",
     "test:events-recipients": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/events-and-recipients.test.mjs",
-    "test:production-checks": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/production-checks.test.mjs"
+    "test:production-checks": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/production-checks.test.mjs",
+    "test:notification-area-scope": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/notification-area-scope.test.mjs",
+    "test:event-people-scope": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/event-people-scope.test.mjs",
+    "test:event-errors": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/event-errors.test.ts"
   },
   "dependencies": {
     "@opennextjs/cloudflare": "^1.20.2",

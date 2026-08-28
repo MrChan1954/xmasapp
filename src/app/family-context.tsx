@@ -31,7 +31,7 @@ export type SaveRecipientInput = {
  * celebrant; every other kind has none.
  */
 export type ActiveEvent = { id: string; name: string; type: string; eventDate: string; status: string; year: number | null; celebrantPersonId: string | null };
-type Family = { eventId: string | null; event: ActiveEvent | null; people: Person[]; loading: boolean; error: string | null; role: "admin" | "member" | null; isAdmin: boolean; saveRecipient: (input: SaveRecipientInput) => Promise<void>; addExistingPerson: (input: { personId: string; name: string; budgetPennies: number; allocations: RecipientAllocation[] }) => Promise<void>; archive: (id: string) => Promise<void>; restore: (id: string) => Promise<void>; setIdeaCount: (id: string, count: number) => void; setPurchaseMetrics: (id: string, spentPennies: number, count: number) => void; refresh: (quiet?: boolean) => Promise<void> };
+type Family = { eventId: string | null; event: ActiveEvent | null; areaId: string | null; people: Person[]; loading: boolean; error: string | null; role: "admin" | "member" | null; isAdmin: boolean; saveRecipient: (input: SaveRecipientInput) => Promise<void>; addExistingPerson: (input: { personId: string; name: string; budgetPennies: number; allocations: RecipientAllocation[] }) => Promise<void>; archive: (id: string) => Promise<void>; restore: (id: string) => Promise<void>; setIdeaCount: (id: string, count: number) => void; setPurchaseMetrics: (id: string, spentPennies: number, count: number) => void; refresh: (quiet?: boolean) => Promise<void> };
 const Context = createContext<Family | null>(null);
 
 /**
@@ -53,6 +53,12 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [role, setRole] = useState<"admin" | "member" | null>(null);
+  /**
+   * WHICH FAMILY THE SCREEN IS IN, for the controls that must offer only its
+   * People. Read from the membership the provider already resolved, never from
+   * a prop or a query string.
+   */
+  const [areaId, setAreaId] = useState<string | null>(null);
   const authRoute = isAuthRoute(pathname);
 
   // `quiet` skips the loading flag so a background refresh (another device
@@ -104,6 +110,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     setRole(membership.data.role === "admin" ? "admin" : "member");
+    setAreaId((membership.data.area_id as string | null) ?? null);
     // Outside an event there is nothing event-scoped to fetch. The role above
     // is still needed, because the navigation chrome renders everywhere.
     if (!eventId) { setPeople([]); setEvent(null); setError(null); setLoading(false); return; }
@@ -258,7 +265,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
   const restore = async (id: string) => setActive(id, true);
   const setIdeaCount = useCallback((id: string, count: number) => setPeople((current) => current.map((person) => person.id === id ? { ...person, ideaCount: count } : person)), []);
   const setPurchaseMetrics = useCallback((id: string, spentPennies: number, count: number) => setPeople((current) => current.map((person) => person.id === id ? { ...person, spentPennies, giftCount: count } : person)), []);
-  return <Context.Provider value={{ eventId, event, people, loading, error, role, isAdmin: role === "admin", saveRecipient, addExistingPerson, archive, restore, setIdeaCount, setPurchaseMetrics, refresh: load }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ eventId, event, areaId, people, loading, error, role, isAdmin: role === "admin", saveRecipient, addExistingPerson, archive, restore, setIdeaCount, setPurchaseMetrics, refresh: load }}>{children}</Context.Provider>;
 }
 
 export function useFamily() { const value = useContext(Context); if (!value) throw new Error("FamilyProvider missing"); return value; }

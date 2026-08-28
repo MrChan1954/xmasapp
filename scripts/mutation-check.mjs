@@ -841,6 +841,59 @@ export function EventSettingsScreen(`,
     to: `  const context = await loadFamilyContext(admin, admin, eventId, undefined, null);`,
     suites: ["scripts/notification-security.test.mjs"],
   },
+  {
+    /*
+     * F2. The Area predicate IS the fix. Without it row level security hands
+     * back every Area the READER belongs to, and the picker renders another
+     * family by name -- twenty-three People in a two-person family, measured.
+     */
+    name: "Q4-25. the event settings People read goes Area-blind again",
+    file: "src/app/events/[eventId]/settings/page.tsx",
+    from: `    db.from("people").select("id,name,is_family_contributor").eq("area_id", areaId).order("name"),`,
+    to: `    db.from("people").select("id,name,is_family_contributor").order("name"),`,
+    suites: ["scripts/event-people-scope.test.mjs"],
+  },
+  {
+    name: "Q4-26. the add-recipient directory goes Area-blind again",
+    file: "src/app/people/people-screen.tsx",
+    from: `      const withArchive = await db.from("people").select("id,name,archived_at").eq("area_id", areaId).order("name");`,
+    to: `      const withArchive = await db.from("people").select("id,name,archived_at").order("name");`,
+    suites: ["scripts/event-people-scope.test.mjs"],
+  },
+  {
+    /*
+     * F3. Restores the exact shape that made the dialog unusable: a bare
+     * `name`, which in a browser resolves to `window.name` -- the empty string --
+     * so every submit refused with "Enter a name." beside no name field.
+     */
+    name: "Q4-27. the add-recipient dialog validates a name it never collects again",
+    file: "src/app/people/people-screen.tsx",
+    from: `    const chosen = directory.find((entry) => entry.personId === personId);`,
+    to: `    const validName = validateRequiredText(name, { field: "a name" });
+    if (!validName.ok) { setError(validName.error); return; }
+    const chosen = directory.find((entry) => entry.personId === personId);`,
+    suites: ["scripts/event-people-scope.test.mjs"],
+  },
+  {
+    /* F4. One duplicate mapping removed: that case loses its wording. */
+    name: "Q4-28. the name-and-date duplicate loses its friendly wording",
+    file: "src/lib/event-errors.ts",
+    from: `  if (/name_and_date|name.*date/iu.test(message)) {`,
+    to: `  if (/name_and_date_and_definitely_not_this/iu.test(message)) {`,
+    suites: ["src/lib/event-errors.test.ts"],
+  },
+  {
+    /*
+     * F4, THE ORIGINAL BUG. The old mapper ended in `return message`, which is
+     * exactly how a raw index name reached production. Restoring that
+     * fall-through must fail the sweep that says no input may name internals.
+     */
+    name: "Q4-29. a failed event write falls through to the database's own text again",
+    file: "src/lib/event-errors.ts",
+    from: `  return fallback;`,
+    to: `  return message || fallback;`,
+    suites: ["src/lib/event-errors.test.ts"],
+  },
 ];
 
 function runSuite(suite) {

@@ -3,7 +3,7 @@
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { formatPennies } from "../../lib/currency";
-import { INPUT_LIMITS, parseMoneyToPennies, validateRequiredText } from "../../lib/input-validation";
+import { INPUT_LIMITS, parseMoneyToPennies } from "../../lib/input-validation";
 import {
   validateRecipientAllocationSnapshot,
   type RecipientAllocation,
@@ -104,7 +104,7 @@ function PeopleView({
   eventName: string;
   fixedRecipientPersonId: string | null;
 }) {
-  const { people, addExistingPerson, restore, loading, error, isAdmin } = useFamily();
+  const { people, addExistingPerson, restore, loading, error, isAdmin, areaId } = useFamily();
   const { budgetPennies } = useTotals();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
@@ -169,6 +169,7 @@ function PeopleView({
     <AddForm
       eventId={eventId}
       eventName={eventName}
+      areaId={areaId}
       alreadyRecipientPersonIds={people.map((person) => person.personId)}
       onCancel={() => setAdding(false)}
       onSave={async (personId, name, budget, allocations) => {
@@ -424,9 +425,18 @@ function progressPresentation(status: PurchaseProgressStatus): { label: string; 
  * Eden rows with separate birthdays and separate histories. The directory is
  * the source of people now; somebody genuinely new is added there first, once.
  */
-function AddForm({ eventId, eventName, alreadyRecipientPersonIds, onCancel, onSave }: {
+function AddForm({ eventId, eventName, areaId, alreadyRecipientPersonIds, onCancel, onSave }: {
   eventId: string;
   eventName: string;
+  /**
+   * WHICH FAMILY THIS EVENT IS IN, and therefore whose People may be offered.
+   *
+   * Row level security hands back every Area the READER belongs to, which is
+   * right as a permission and wrong as a picker: without this the dropdown
+   * listed another family's People by name. Null means the Area is not known
+   * yet, and the directory stays EMPTY rather than falling back to everybody.
+   */
+  areaId: string | null;
   /** Already on this event: offering them again would just fail a unique key. */
   alreadyRecipientPersonIds: string[];
   onCancel: () => void;
@@ -454,12 +464,23 @@ function AddForm({ eventId, eventName, alreadyRecipientPersonIds, onCancel, onSa
   useEffect(() => {
     let cancelled = false;
     const loadDirectory = async () => {
+      /*
+       * ONE FAMILY'S PEOPLE, NOT EVERY FAMILY THE READER BELONGS TO.
+       *
+       * Both reads below are filtered by Area. Row level security already
+       * refuses Areas this account has nothing to do with, and migration 045
+       * refuses a foreign Person at the WRITE with 23514 -- so this predicate
+       * is about showing the right list, not about being the boundary. It was
+       * missing, and an account in two families saw both families listed in
+       * one event's picker, by name.
+       */
+      if (!areaId) { setDirectory([]); setDirectoryLoading(false); return; }
       const db = createClient();
-      const withArchive = await db.from("people").select("id,name,archived_at").order("name");
+      const withArchive = await db.from("people").select("id,name,archived_at").eq("area_id", areaId).order("name");
       // `archived_at` arrives with migration 032; before it is applied the
       // column does not exist, and everybody was active anyway.
       const rows = withArchive.error
-        ? (await db.from("people").select("id,name").order("name")).data ?? []
+        ? (await db.from("people").select("id,name").eq("area_id", areaId).order("name")).data ?? []
         : (withArchive.data ?? []).filter((row) => (row as { archived_at?: string | null }).archived_at == null);
       if (cancelled) return;
       setDirectory(rows.map((row) => ({ personId: row.id as string, name: row.name as string })));
@@ -467,7 +488,7 @@ function AddForm({ eventId, eventName, alreadyRecipientPersonIds, onCancel, onSa
     };
     void loadDirectory();
     return () => { cancelled = true; };
-  }, []);
+  }, [areaId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -528,8 +549,29 @@ function AddForm({ eventId, eventName, alreadyRecipientPersonIds, onCancel, onSa
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    const validName = validateRequiredText(name, { field: "a name", maxLength: INPUT_LIMITS.name });
-    if (!validName.ok) { setError(validName.error); return; }
+    // Belt and braces beside the disabled button: a second submit while the
+    // first is in flight would add the same person twice.
+    if (saving) return;
+
+    /*
+     * WHAT THIS FORM REQUIRES: A PERSON, A BUDGET, AND A COMPLETE PLAN.
+     * NOT A NAME.
+     *
+     * THE BUG THIS REMOVES. This line used to validate a `name` -- and no such
+     * variable exists in this component. Q4 took the Name field out on purpose,
+     * because an event may not rename the durable Person; what it left behind
+     * was a bare identifier, which in a browser resolves to `window.name`. That
+     * is the empty string, so the check failed on every submit and the dialog
+     * refused with "Enter a name." next to no name field at all. The intended
+     * route into an event was therefore impossible; only the Event settings
+     * chips still worked. Reproduced against production before it was fixed.
+     *
+     * The person is CHOSEN, never typed. Their name travels with them from the
+     * directory so the routine's argument is satisfied with the value the
+     * Person already has -- which is what stops this screen renaming anybody.
+     */
+    const chosen = directory.find((entry) => entry.personId === personId);
+    if (!chosen) { setError("Choose who this is for."); return; }
     if (!parsedBudget.ok || parsedBudget.value === null) { setError(parsedBudget.ok ? "Enter a budget." : parsedBudget.error); return; }
     if (!parsedDraft.ok) { setError(parsedDraft.error); return; }
     const validPlan = validateRecipientAllocationSnapshot(parsedBudget.value, parsedDraft.value);
@@ -540,8 +582,6 @@ function AddForm({ eventId, eventName, alreadyRecipientPersonIds, onCancel, onSa
         : `Allocation exceeds the budget by ${formatPennies(total - parsedBudget.value)}.`);
       return;
     }
-    const chosen = directory.find((entry) => entry.personId === personId);
-    if (!chosen) { setError("Choose who this is for."); return; }
     setSaving(true);
     setError(null);
     try { await onSave(chosen.personId, chosen.name, parsedBudget.value, validPlan.value); }

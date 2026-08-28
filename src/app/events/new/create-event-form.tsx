@@ -11,6 +11,8 @@ import { nextOccurrenceYear, occasionDateExplanation, suggestedOccasionDate } fr
 
 import { INPUT_LIMITS } from "@/lib/input-validation";
 import { createClient } from "@/utils/supabase/client";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { describeEventWriteError } from "@/lib/event-errors.ts";
 import { AppShell, PageHeader } from "../../components/app-shell";
 import { GarlandRule } from "../../components/festive/garland";
 import {
@@ -210,7 +212,7 @@ export function CreateEventForm({
     setSaving(false);
 
     if (result.error) {
-      setError(friendlyCreateError(result.error.message));
+      setError(describeEventWriteError(result.error, "That event could not be created."));
       return;
     }
     const created = Array.isArray(result.data) ? result.data[0] : result.data;
@@ -497,25 +499,17 @@ function describePeople(people: CreatablePerson[], ids: string[]): string {
   return people.filter((person) => ids.includes(person.personId)).map((person) => person.name).join(", ");
 }
 
-/**
- * This year's birthday if it is still to come, otherwise next year's.
+/*
+ * WHAT A FAILED CREATE IS ALLOWED TO SAY.
  *
- * Takes the family's own date rather than reading the clock: a UTC instant is
- * the wrong day for part of every evening in British Summer Time, and this
- * decides which YEAR somebody is planning.
+ * There used to be a `friendlyCreateError` here, and it matched on index NAMES:
+ * `events_name_and_date_unique_idx` and `events_one_christmas_per_year_idx`.
+ * Migration 035 renamed both when uniqueness became per-Area, so two of its
+ * three branches were dead, and its last line returned the database's own text
+ * -- which is how `duplicate key value violates unique constraint "..."` ended
+ * up on screen in production.
  *
-
-
-/** The database's own message, unless it is one the reader cannot act on. */
-function friendlyCreateError(message: string): string {
-  if (/events_one_birthday_per_person_per_year_idx/u.test(message)) {
-    return "That person already has a birthday event for this year. Open it from the Birthdays page.";
-  }
-  if (/events_one_christmas_per_year_idx/u.test(message)) {
-    return "There is already a Christmas for that year.";
-  }
-  if (/events_name_and_date_unique_idx/u.test(message)) {
-    return "An event with that name already exists on that date.";
-  }
-  return message || "That event could not be created.";
-}
+ * It is gone. `describeEventWriteError` decides by SQLSTATE, refines the
+ * wording with a name FRAGMENT rather than a whole name, and has no path that
+ * returns raw database text. It is unit-tested, which this never was.
+ */

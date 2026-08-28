@@ -8,7 +8,9 @@ import { describeDaysAway, describeTurningAge, formatBirthday, nextBirthdayOccur
 import { formatPennies } from "@/lib/currency";
 import { INPUT_LIMITS, parseMoneyToPennies } from "@/lib/input-validation";
 import { splitPenniesEqually } from "@/lib/recipient-allocations";
-import { describeSupabaseError, describeThrown } from "@/lib/supabase-error";
+import { describeThrown } from "@/lib/supabase-error";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { describeEventWriteError } from "@/lib/event-errors.ts";
 import { createClient } from "@/utils/supabase/client";
 import { AppShell, PageHeader } from "../../components/app-shell";
 import { WishlistPanel } from "../../components/wishlist-panel";
@@ -181,7 +183,9 @@ export function StartPlanningScreen({
       });
 
       if (result.error) {
-        setError(describeSupabaseError(result.error, "The birthday could not be set up."));
+        // One birthday per person per year is a unique index; a second attempt
+        // must read as a sentence, not as `events_one_birthday_..._idx`.
+        setError(describeEventWriteError(result.error, "The birthday could not be set up."));
         return;
       }
       const created = Array.isArray(result.data) ? result.data[0] : result.data;

@@ -7,6 +7,8 @@ import { Archive, RotateCcw, Trash2 } from "lucide-react";
 import { eventTypeMeta, hasFixedSingleRecipient, validateEventInput } from "@/lib/events.ts";
 import { INPUT_LIMITS } from "@/lib/input-validation";
 import { describeSupabaseError, describeThrown } from "@/lib/supabase-error";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { describeEventWriteError } from "@/lib/event-errors.ts";
 import { createClient } from "@/utils/supabase/client";
 import { AppShell, PageHeader } from "../../../components/app-shell";
 import { GarlandRule } from "../../../components/festive/garland";
@@ -101,8 +103,13 @@ export function EventSettingsScreen({
     try {
       const result = await work();
       if (result.error) {
-        // The database's own sentence, with its code. Never a shrug.
-        setError(describeSupabaseError(result.error, "That change could not be saved."));
+        /*
+         * A DUPLICATE HERE IS A RENAME ONTO AN EXISTING NAME AND DATE, which
+         * trips exactly the index the create wizard does. `describeSupabaseError`
+         * passes the database's sentence through and appends the SQLSTATE, so
+         * this screen would have shown the index name too.
+         */
+        setError(describeEventWriteError(result.error, "That change could not be saved."));
         return;
       }
       done?.();
