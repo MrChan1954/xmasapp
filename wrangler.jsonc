@@ -6,6 +6,33 @@
   // the family-access and payment-log routes both pin `runtime = "nodejs"`.
   "compatibility_date": "2024-12-30",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  /**
+   * ESBUILD MUST NOT REWRITE FUNCTION NAMES IN THIS WORKER.
+   *
+   * Wrangler bundles the Worker with esbuild and defaults `keep_names` to true,
+   * which preserves `Function.prototype.name` by emitting a helper call after
+   * every function declaration:
+   *
+   *     function k2(theme) { ... }
+   *     __name(k2, "k2");
+   *
+   * That is harmless for code that only ever runs inside the Worker, because
+   * esbuild also defines `__name` once at module scope. It is NOT harmless for
+   * a function that is SERIALISED and sent to the browser.
+   *
+   * `next-themes` builds its pre-hydration theme script by stringifying a
+   * function -- `(${script.toString()})(...)` -- and inlining the result in the
+   * document. After keep_names, that serialised text carries the `__name(...)`
+   * call into an inline <script> where no such binding exists, so the script
+   * threw `ReferenceError: __name is not defined` on every page load and the
+   * stored theme was never applied before first paint. Found in Q6 live QA.
+   *
+   * Turning it off costs nothing here: the OpenNext server bundle is already
+   * minified before wrangler sees it, so the names being "kept" are mangled
+   * identifiers like `k2` that aid no debugging, and this Worker binds no
+   * Durable Object classes that are resolved by name.
+   */
+  "keep_names": false,
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"

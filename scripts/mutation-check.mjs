@@ -1237,6 +1237,19 @@ export function EventSettingsScreen(`,
     ) then`,
     suites: DB_SUITES,
   },
+
+  // -------------------------------------------------------------------------
+  // The pre-hydration theme script. Not a quarter's feature work -- a build
+  // setting, which is exactly the kind of thing that gets "tidied up" by
+  // somebody who cannot see what depends on it.
+  // -------------------------------------------------------------------------
+  {
+    name: "THEME-1. wrangler keeps function names again, breaking the inlined theme script",
+    file: "wrangler.jsonc",
+    from: `  "keep_names": false,`,
+    to: `  "keep_names": true,`,
+    suites: ["scripts/theme-bootstrap.test.mjs"],
+  },
 ];
 
 function runSuite(suite) {
