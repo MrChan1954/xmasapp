@@ -882,3 +882,315 @@ describe("an Area cannot be created or renamed from a browser", () => {
     assert.equal(byAdmin.ok, true, byAdmin.error);
   });
 });
+
+// ===========================================================================
+// Q5. Removing a gift idea: the acting Area, and the purchase it paid for
+// ===========================================================================
+
+/*
+ * MIGRATION 046, AND THE ONE WRITE 045 COULD NOT REACH.
+ *
+ * 045 put `require_acting_area()` at the top of sixteen routines. Removing a
+ * gift idea was not one of them, because the application did not call a
+ * routine -- it deleted the row directly, so its only boundary was this
+ * table's DELETE policy, and that policy asked `is_area_member(...)`. That is
+ * the right permission and the wrong question: a login belonging to two
+ * families passes it in both. Measured on 001-045, the dual-Area account
+ * standing in Bravo deleted Alpha's gift idea and nothing refused.
+ *
+ * The same delete cost history. `originating_gift_idea_id` is
+ * `on delete set null`, so removing an idea somebody had already bought left
+ * the purchase standing with its provenance quietly nulled.
+ *
+ * These are the direct-table attacks a browser can make against PostgREST,
+ * not calls to the routine -- because a routine cannot defend a table.
+ */
+describe("Q5: a gift idea belongs to the family on screen", () => {
+  /** A fresh idea in Alpha, owned by the fixture's Alpha recipient. */
+  const freshIdea = async (title) => {
+    const created = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select id from public.save_gift_idea(null, $1, $2, 500, null, null, null)", [f.recipient, title]);
+    assert.equal(created.ok, true, created.error);
+    return created.rows[0].id;
+  };
+
+  test("A DIRECT DELETE FROM THE WRONG FAMILY IS REFUSED", async () => {
+    const idea = await freshIdea("Wrong-Area delete target");
+
+    const attack = await probe(db, who(f.users.dual, f.areas.bravo),
+      "delete from public.gift_ideas where id = $1 returning id", [idea]);
+
+    assert.equal(attack.count, 0,
+      "standing in Bravo deleted an Alpha gift idea: the acting Area is not being enforced");
+
+    await asOwner(db);
+    assert.equal(await value(db, "select count(*)::int from public.gift_ideas where id = $1", [idea]), 1);
+  });
+
+  test("A DIRECT UPDATE FROM THE WRONG FAMILY IS REFUSED", async () => {
+    const idea = await freshIdea("Wrong-Area update target");
+
+    const attack = await probe(db, who(f.users.dual, f.areas.bravo),
+      "update public.gift_ideas set title = 'HIJACKED' where id = $1 returning id", [idea]);
+    assert.equal(attack.count, 0, "standing in Bravo rewrote an Alpha gift idea");
+
+    await asOwner(db);
+    assert.equal(await value(db, "select title from public.gift_ideas where id = $1", [idea]),
+      "Wrong-Area update target", "the title changed, so `using` let a foreign row be chosen");
+  });
+
+  test("AN UPDATE MAY NOT CARRY A ROW INTO ANOTHER FAMILY", async () => {
+    /*
+     * `with check`, not `using`. The two answer different questions -- which
+     * rows may be chosen, and what they may become -- and a policy carrying
+     * only the first would let a legitimate edit move a row into a family the
+     * editor could never have selected it from.
+     */
+    const idea = await freshIdea("Stays in Alpha");
+
+    const attack = await probe(db, who(f.users.dual, f.areas.alpha),
+      "update public.gift_ideas set christmas_recipient_id = $2 where id = $1 returning id",
+      [idea, f.bravoRecipient]);
+    assert.equal(attack.count, 0, "an Alpha idea was moved into Bravo");
+
+    await asOwner(db);
+    assert.equal(
+      await value(db, "select christmas_recipient_id from public.gift_ideas where id = $1", [idea]),
+      f.recipient, "the idea changed family");
+  });
+
+  test("but the family it belongs to may still remove it", async () => {
+    const idea = await freshIdea("Ordinary removal");
+
+    const removed = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select public.remove_gift_idea($1)", [idea]);
+    assert.equal(removed.ok, true, removed.error);
+
+    await asOwner(db);
+    assert.equal(await value(db, "select count(*)::int from public.gift_ideas where id = $1", [idea]), 0);
+  });
+
+  test("and the routine names the problem rather than failing silently", async () => {
+    const idea = await freshIdea("Routine refusal");
+
+    const refused = await probe(db, who(f.users.dual, f.areas.bravo),
+      "select public.remove_gift_idea($1)", [idea]);
+    assert.equal(refused.ok, false);
+    assert.match(refused.error, /another family/u);
+    assert.doesNotMatch(refused.error, /policy|row-level|constraint|relation/iu,
+      "the refusal must read as a sentence, not as a database complaint");
+  });
+});
+
+describe("Q5: an idea that was bought is the record of why", () => {
+  test("A PURCHASED IDEA CANNOT BE DELETED, EVEN FROM ITS OWN FAMILY", async () => {
+    await asOwner(db);
+    const linkBefore = await value(db,
+      "select originating_gift_idea_id from public.purchases where id = $1", [f.purchase]);
+    assert.equal(linkBefore, f.secretIdea, "precondition: the fixture purchase came from the secret idea");
+
+    const attack = await probe(db, who(f.users.dual, f.areas.alpha),
+      "delete from public.gift_ideas where id = $1 returning id", [f.secretIdea]);
+    assert.equal(attack.count, 0, "the idea a purchase came from was deleted");
+
+    await asOwner(db);
+    assert.equal(await value(db, "select count(*)::int from public.gift_ideas where id = $1", [f.secretIdea]), 1);
+  });
+
+  test("AND THE PURCHASE KEEPS ITS ORIGINATING IDEA", async () => {
+    /*
+     * The half of this that is easy to miss. `on delete set null` means the
+     * purchase SURVIVES a deleted idea -- it just forgets what it was for.
+     * Nothing raises; the money stays; the reason goes.
+     */
+    await asOwner(db);
+    const link = await value(db,
+      "select originating_gift_idea_id from public.purchases where id = $1", [f.purchase]);
+    assert.equal(link, f.secretIdea,
+      "the purchase lost its provenance, which is the history this rule exists to keep");
+  });
+
+  test("the routine explains the refusal in the product's own words", async () => {
+    const refused = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select public.remove_gift_idea($1)", [f.secretIdea]);
+    assert.equal(refused.ok, false);
+    assert.match(refused.error, /already been bought/u);
+    assert.doesNotMatch(refused.error, /SQLSTATE|constraint|foreign key|23503|relation/iu);
+  });
+
+  test("voiding the purchase releases the idea again", async () => {
+    /*
+     * The guard is about LIVE purchases. `void_purchase` is a soft reversal --
+     * the row stays with `deleted_at` set -- so once the spending is withdrawn
+     * the idea is an ordinary idea again. Anything stricter would strand it.
+     */
+    const created = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select id from public.save_gift_idea(null, $1, 'Releasable', 500, null, null, null)", [f.recipient]);
+    assert.equal(created.ok, true, created.error);
+    const newIdea = created.rows[0].id;
+
+    await asOwner(db);
+    const purchase = await value(db,
+      "insert into public.purchases"
+      + " (christmas_recipient_id, description, actual_price_pennies,"
+      + "  checkout_payer_contributor_id, created_by_app_member_id, originating_gift_idea_id)"
+      + " values ($1, 'Releasable buy', 500, $2, $3, $4) returning id",
+      [f.recipient, f.jadeContributor, f.members.jadeAlpha, newIdea]);
+
+    const blocked = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select public.remove_gift_idea($1)", [newIdea]);
+    assert.equal(blocked.ok, false, "a live purchase must hold the idea in place");
+
+    await asOwner(db);
+    await db.query("update public.purchases set deleted_at = now() where id = $1", [purchase]);
+
+    const allowed = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select public.remove_gift_idea($1)", [newIdea]);
+    assert.equal(allowed.ok, true, allowed.error);
+  });
+});
+
+describe("Q5: the celebrant cannot write the secrets they cannot read", () => {
+  /** The fixture's own-birthday celebrant, standing in their own family. */
+  const celebrant = () => who(f.users.taylor, f.areas.alpha);
+
+  test("THEY CANNOT DELETE A SECRET IDEA BY NAMING ITS ID", async () => {
+    const attack = await probe(db, celebrant(),
+      "delete from public.gift_ideas where id = $1 returning id", [f.secretIdea]);
+    assert.equal(attack.count, 0, "the celebrant deleted a secret for their own birthday");
+
+    await asOwner(db);
+    assert.equal(await value(db, "select count(*)::int from public.gift_ideas where id = $1", [f.secretIdea]), 1);
+  });
+
+  test("THEY CANNOT EDIT ONE EITHER", async () => {
+    await asOwner(db);
+    const before = await value(db, "select title from public.gift_ideas where id = $1", [f.secretIdea]);
+
+    const attack = await probe(db, celebrant(),
+      "update public.gift_ideas set title = 'Tell me' where id = $1 returning id", [f.secretIdea]);
+    assert.equal(attack.count, 0, "the celebrant rewrote a secret for their own birthday");
+
+    await asOwner(db);
+    assert.equal(await value(db, "select title from public.gift_ideas where id = $1", [f.secretIdea]), before);
+  });
+
+  test("and the routine refuses without confirming the idea exists", async () => {
+    const refused = await probe(db, celebrant(),
+      "select public.remove_gift_idea($1)", [f.secretIdea]);
+    assert.equal(refused.ok, false);
+    assert.match(refused.error, /could not be found/u,
+      "telling the celebrant it exists but is not theirs is itself the disclosure");
+  });
+});
+
+// ===========================================================================
+// Q5. The braces, tested without the belt
+// ===========================================================================
+
+/*
+ * WHY THIS BLOCK EXISTS.
+ *
+ * 046 does two things to the raw delete path: it takes back the table GRANT
+ * that made the path reachable, and it tightens the POLICY that governs it.
+ * The grant is the belt and it is the one doing the work today -- which means
+ * every test above passes whatever the policy says, because permission is
+ * refused before a policy is ever consulted.
+ *
+ * That is a comfortable place for a mistake to hide. A future migration that
+ * hands `delete` back -- to "fix" some other screen -- would silently restore
+ * the original bug, and nothing here would have noticed, because nothing here
+ * was ever asking the policy a question.
+ *
+ * So this block hands the grant back on purpose, asks the policy directly, and
+ * takes it away again. Every assertion below is about the policy alone.
+ */
+describe("Q5: if the delete grant ever comes back, the policy still refuses", () => {
+  before(async () => {
+    await asOwner(db);
+    await db.query("grant delete on table public.gift_ideas to authenticated");
+  });
+
+  after(async () => {
+    await asOwner(db);
+    await db.query("revoke delete on table public.gift_ideas from authenticated");
+  });
+
+  const freshIdea = async (title) => {
+    const created = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select id from public.save_gift_idea(null, $1, $2, 500, null, null, null)", [f.recipient, title]);
+    assert.equal(created.ok, true, created.error);
+    return created.rows[0].id;
+  };
+
+  test("THE POLICY REFUSES A DELETE FROM THE WRONG FAMILY", async () => {
+    const idea = await freshIdea("Policy: wrong family");
+
+    // The grant is present, so this reaches the policy. Anything other than
+    // zero rows means the acting Area is not in the policy any more.
+    const attack = await probe(db, who(f.users.dual, f.areas.bravo),
+      "delete from public.gift_ideas where id = $1 returning id", [idea]);
+    assert.equal(attack.count, 0,
+      "with the grant restored, the policy alone let a foreign delete through");
+
+    await asOwner(db);
+    assert.equal(await value(db, "select count(*)::int from public.gift_ideas where id = $1", [idea]), 1);
+  });
+
+  test("THE POLICY REFUSES A DELETE OF A PURCHASED IDEA", async () => {
+    const attack = await probe(db, who(f.users.dual, f.areas.alpha),
+      "delete from public.gift_ideas where id = $1 returning id", [f.secretIdea]);
+    assert.equal(attack.count, 0, "the provenance guard is not in the policy");
+
+    await asOwner(db);
+    assert.equal(
+      await value(db, "select originating_gift_idea_id from public.purchases where id = $1", [f.purchase]),
+      f.secretIdea, "the purchase lost its reason");
+  });
+
+  test("THE POLICY REFUSES THE CELEBRANT DELETING THEIR OWN BIRTHDAY SECRET", async () => {
+    /*
+     * An UNBOUGHT idea, deliberately. The fixture's `secretIdea` has a purchase
+     * hanging off it, so the provenance guard refuses it too -- and a test that
+     * used it would pass even with the celebrant exclusion taken out, which is
+     * exactly what it is supposed to be measuring. This one is refused by the
+     * celebrant rule or not at all.
+     */
+    const idea = await freshIdea("Policy: celebrant, unbought");
+
+    const attack = await probe(db, who(f.users.taylor, f.areas.alpha),
+      "delete from public.gift_ideas where id = $1 returning id", [idea]);
+    assert.equal(attack.count, 0, "the celebrant exclusion is not in the delete policy");
+
+    await asOwner(db);
+    assert.equal(await value(db, "select count(*)::int from public.gift_ideas where id = $1", [idea]), 1);
+  });
+
+  test("and still allows an ordinary delete in the right family", async () => {
+    // The negative controls above are only worth something if the positive one
+    // works: a policy that refuses everything would pass all three.
+    const idea = await freshIdea("Policy: ordinary");
+    const allowed = await probe(db, who(f.users.dual, f.areas.alpha),
+      "delete from public.gift_ideas where id = $1 returning id", [idea]);
+    assert.equal(allowed.count, 1, allowed.error ?? "the policy refuses a legitimate delete");
+  });
+
+  test("the grant really is the belt: without it, permission is refused first", async () => {
+    /*
+     * Proves the pairing rather than assuming it. With the grant taken away
+     * again the same legitimate delete fails on permission, which is why the
+     * four tests above had to hand it back to say anything about the policy.
+     */
+    const idea = await freshIdea("Policy: belt check");
+    await asOwner(db);
+    await db.query("revoke delete on table public.gift_ideas from authenticated");
+
+    const refused = await probe(db, who(f.users.dual, f.areas.alpha),
+      "delete from public.gift_ideas where id = $1 returning id", [idea]);
+    assert.equal(refused.ok, false);
+    assert.match(refused.error, /permission denied/u);
+
+    await asOwner(db);
+    await db.query("grant delete on table public.gift_ideas to authenticated");
+  });
+});

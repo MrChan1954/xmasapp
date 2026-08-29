@@ -155,18 +155,34 @@ export function GiftIdeas({
     return null;
   };
 
+  /**
+   * Removal goes through the routine, like every other write here.
+   *
+   * This used to delete the row straight from the browser. That path never
+   * reached migration 045's `require_acting_area`, so its only boundary was the
+   * table's own policy -- and that asked whether the reader is a MEMBER of the
+   * idea's family, which a login belonging to two families satisfies in both.
+   * Measured against a real database: standing in one family, it deleted the
+   * other's idea and nothing refused.
+   *
+   * It also cost history. `purchases.originating_gift_idea_id` is
+   * `on delete set null`, so removing an idea somebody had already bought left
+   * the purchase in place with no record of what it had been for -- while this
+   * very screen promised that purchases would not change.
+   *
+   * `remove_gift_idea` refuses both cases and says which, so the message below
+   * is the database's own sentence rather than a guess made from an error code.
+   */
   const removeIdea = async (idea: GiftIdea) => {
     setSaving(true);
     setError(null);
     setNotice(null);
-    const result = await createClient()
-      .from("gift_ideas")
-      .delete()
-      .eq("id", idea.id)
-      .eq("christmas_recipient_id", recipientId);
+    const result = await createClient().rpc("remove_gift_idea", {
+      p_gift_idea_id: idea.id,
+    });
 
     if (result.error) {
-      setError(giftIdeaError("remove", result.error.code));
+      setError(giftIdeaError("remove", result.error.code, result.error.message));
       setSaving(false);
       return;
     }
@@ -275,13 +291,27 @@ export function GiftIdeas({
                   </a>
                 )}
                 <Button variant="secondary" onClick={() => { setEditor({ kind: "edit", idea }); setConfirming(null); setError(null); setNotice(null); }}>Edit</Button>
-                <Button variant="dangerGhost" onClick={() => { setConfirming(idea); setError(null); setNotice(null); }}>Remove</Button>
+                {/*
+                  No Remove once it has been bought. The database refuses it --
+                  the idea is the record of what the money was for -- so
+                  offering the button would only be a way to be told no.
+                */}
+                {!purchasedIdeaIds.has(idea.id) && (
+                  <Button variant="dangerGhost" onClick={() => { setConfirming(idea); setError(null); setNotice(null); }}>Remove</Button>
+                )}
               </div>
 
               {confirming?.id === idea.id && (
                 <div className="mt-3 rounded-xl border border-berry-soft-border bg-berry-soft p-3.5">
                   <p className="text-sm font-semibold">Remove “{idea.title}”?</p>
-                  <p className="mt-1 text-xs leading-5 text-ink-600">This removes the idea only. Purchases and budgets will not change.</p>
+                  {/*
+                    This used to say purchases would not change, which was not
+                    true of an idea somebody had bought: the delete cascaded to
+                    `originating_gift_idea_id` and the purchase lost its reason.
+                    That case is refused outright now, so the sentence is only
+                    about what this actually does.
+                  */}
+                  <p className="mt-1 text-xs leading-5 text-ink-600">Nothing has been bought from this idea, so no purchase or budget is affected.</p>
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <Button variant="secondary" disabled={saving} onClick={() => setConfirming(null)}>Cancel</Button>
                     <Button variant="danger" disabled={saving} onClick={() => void removeIdea(idea)}>{saving ? "Removing..." : "Remove"}</Button>
@@ -412,9 +442,25 @@ function priceInput(pennies: number) {
   return (pennies / 100).toFixed(2).replace(/\.00$/, "");
 }
 
-function giftIdeaError(action: "load" | "add" | "edit" | "remove", code?: string) {
+/**
+ * What went wrong, in the product's voice.
+ *
+ * `message` is passed for removal only, and only for the two refusals
+ * `remove_gift_idea` raises deliberately. Those are written as sentences for a
+ * person to read, so repeating one is better than replacing it with a vaguer
+ * guess. Everything else falls through to the generic wording: a raw database
+ * complaint must never reach the screen.
+ */
+function giftIdeaError(action: "load" | "add" | "edit" | "remove", code?: string, message?: string) {
   if (code === "42P01" || code === "42883" || code === "PGRST202") {
     return "Gift Ideas is not ready yet. The Gift Ideas database migration must be applied first.";
+  }
+  // Already bought (23503) and wrong family (42501) both arrive with wording
+  // meant for the reader. Anything longer than a sentence, or carrying
+  // punctuation only a database uses, is not that.
+  if (action === "remove" && (code === "23503" || code === "42501") && message
+      && message.length <= 200 && !/[_"]|::|pg_|SQLSTATE/u.test(message)) {
+    return message;
   }
   const messages = {
     load: "Gift ideas could not be loaded. Check your connection and try again.",

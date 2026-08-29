@@ -232,7 +232,25 @@ export function PurchaseForm({ eventId }: { eventId: string }) {
         setAllocations(Object.fromEntries((allocationsResult.data as AllocationRow[]).map((row) => [row.contributor_id, row.responsibility_pennies])));
         setAutomaticSnapshotLocked(purchase.split_type === "automatic");
       } else if (ideaId) {
-        const ideaResult = await db.from("gift_ideas").select("id,christmas_recipient_id,title,estimated_price_pennies,retailer").eq("id", ideaId).maybeSingle();
+        /*
+         * BOUNDED TO THIS EVENT'S RECIPIENTS, not merely to the id in the URL.
+         *
+         * `?idea=` is a query string, so it is whatever somebody typed. Row
+         * level security narrows ideas to the Areas the READER belongs to,
+         * which for a login in two families includes the other one -- so an id
+         * from the other family would have been read and its title, estimated
+         * price and retailer copied onto this form. The purchase itself would
+         * have been refused later by `require_acting_area`, but only after the
+         * screen had already shown what it said.
+         *
+         * `recipientIds` came from this event, and the event came from a route
+         * the server validated against the selected Area, so this is that Area
+         * asked as a question the database can answer.
+         */
+        const ideaResult = recipientIds.length
+          ? await db.from("gift_ideas").select("id,christmas_recipient_id,title,estimated_price_pennies,retailer")
+            .eq("id", ideaId).in("christmas_recipient_id", recipientIds).maybeSingle()
+          : { data: null, error: null };
         if (!active) return;
         if (ideaResult.error || !ideaResult.data) {
           setError("This gift idea could not be used. It may have been removed.");

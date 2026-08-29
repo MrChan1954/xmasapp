@@ -951,6 +951,112 @@ export function EventSettingsScreen(`,
     }`,
     suites: ["scripts/area-context.test.mjs"],
   },
+  {
+    /*
+     * Q5. THE BUG ITSELF. The acting-Area predicate comes off the DELETE
+     * policy, leaving the membership question that a login in two families
+     * answers yes to in both. Measured on 001-045: this is what let somebody
+     * standing in Bravo delete Alpha's gift idea.
+     */
+    name: "Q5-4. the gift idea delete policy stops asking which family you are standing in",
+    file: "supabase/migrations/202608100046_area_scoped_gift_idea_removal.sql",
+    from: `    and public.is_acting_area(public.area_of_recipient(christmas_recipient_id))
+    and not public.is_own_birthday_recipient(christmas_recipient_id)
+    and not exists (`,
+    to: `    and not public.is_own_birthday_recipient(christmas_recipient_id)
+    and not exists (`,
+    suites: DB_SUITES,
+  },
+  {
+    /*
+     * Q5. The provenance guard comes off, so deleting a bought idea is allowed
+     * again and `on delete set null` quietly empties the purchase's reason.
+     */
+    name: "Q5-5. a purchased gift idea becomes deletable again",
+    file: "supabase/migrations/202608100046_area_scoped_gift_idea_removal.sql",
+    from: `    and not exists (
+      select 1
+      from public.purchases p
+      where p.originating_gift_idea_id = public.gift_ideas.id
+        and p.deleted_at is null
+    )`,
+    to: "",
+    suites: DB_SUITES,
+  },
+  {
+    /*
+     * Q5. The routine stops refusing a bought idea, so the friendly sentence
+     * disappears and the delete falls through to whatever the policy allows.
+     */
+    name: "Q5-6. remove_gift_idea stops protecting a purchase's provenance",
+    file: "supabase/migrations/202608100046_area_scoped_gift_idea_removal.sql",
+    from: `  if exists (
+    select 1
+    from public.purchases
+    where originating_gift_idea_id = p_gift_idea_id
+      and deleted_at is null
+  ) then`,
+    to: `  if false then`,
+    suites: DB_SUITES,
+  },
+  {
+    /*
+     * Q5. `is_acting_area` stops disagreeing with anything -- the predicate the
+     * new policies are built on always says yes. Every acting-Area rule this
+     * migration added evaporates at once.
+     */
+    name: "Q5-8. the acting-Area predicate always agrees",
+    file: "supabase/migrations/202608100046_area_scoped_gift_idea_removal.sql",
+    from: `  if acting is not null then
+    return acting = p_area_id;
+  end if;`,
+    to: `  if acting is not null then
+    return true;
+  end if;`,
+    suites: DB_SUITES,
+  },
+  {
+    /*
+     * Q5. The application goes back to deleting the row itself, bypassing the
+     * routine. With the grant revoked this now fails outright -- but the source
+     * sweep is what stops the grant being handed back to "fix" it.
+     */
+    name: "Q5-9. the gift idea screen deletes the row directly again",
+    file: "src/app/people/gift-ideas.tsx",
+    from: `    const result = await createClient().rpc("remove_gift_idea", {
+      p_gift_idea_id: idea.id,
+    });`,
+    to: `    const result = await createClient()
+      .from("gift_ideas")
+      .delete()
+      .eq("id", idea.id)
+      .eq("christmas_recipient_id", recipientId);`,
+    suites: ["scripts/gift-idea-lifecycle.test.mjs"],
+  },
+  {
+    /*
+     * Q5. Remove is offered on an idea that has already been bought -- the
+     * button the server will refuse, and the sentence that used to lie.
+     */
+    name: "Q5-10. a bought idea is offered for removal again",
+    file: "src/app/people/gift-ideas.tsx",
+    from: `                {!purchasedIdeaIds.has(idea.id) && (
+                  <Button variant="dangerGhost" onClick={() => { setConfirming(idea); setError(null); setNotice(null); }}>Remove</Button>
+                )}`,
+    to: `                <Button variant="dangerGhost" onClick={() => { setConfirming(idea); setError(null); setNotice(null); }}>Remove</Button>`,
+    suites: ["scripts/gift-idea-lifecycle.test.mjs"],
+  },
+  {
+    /*
+     * Q5. The buy-this-idea prefill stops being bounded to the event, so an
+     * `?idea=` from the other family copies its title and price onto the form.
+     */
+    name: "Q5-11. the purchase prefill reads a gift idea from any family",
+    file: "src/app/add-purchase/purchase-form.tsx",
+    from: `            .eq("id", ideaId).in("christmas_recipient_id", recipientIds).maybeSingle()`,
+    to: `            .eq("id", ideaId).maybeSingle()`,
+    suites: ["scripts/gift-idea-lifecycle.test.mjs"],
+  },
 ];
 
 function runSuite(suite) {
