@@ -17,9 +17,25 @@ import { transform } from "esbuild";
 
 const ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-/** `@/x` is the app's alias for `src/x`; esbuild is not doing resolution here. */
+/**
+ * Modules replaced for the DOM suite.
+ *
+ * A stub only bites when a test imports something that reaches it, so this map
+ * is not as broad as it looks: `next/link` is here because Next resolves it
+ * through its bundler rather than plain Node, and the four below are here so
+ * `FamilyProvider` -- the global Area/event context -- can be RENDERED against
+ * a fixture instead of a network. Nothing else in the repository imports them
+ * from a test.
+ *
+ * The Supabase stub deliberately does no scoping of its own; see the comment in
+ * that file for why that is the whole point.
+ */
 const STUBS = new Map([
   ["next/link", "scripts/dom/stubs/next-link.mjs"],
+  ["next/navigation", "scripts/dom/stubs/next-navigation.mjs"],
+  ["@/utils/supabase/client", "scripts/dom/stubs/supabase-client.mjs"],
+  ["@/utils/supabase/current-member-client", "scripts/dom/stubs/current-member-client.mjs"],
+  ["@/utils/supabase/area-choice-client", "scripts/dom/stubs/area-choice-client.mjs"],
 ]);
 
 const EXTENSIONS = [".tsx", ".ts", ".mjs", ".js", "/index.tsx", "/index.ts"];

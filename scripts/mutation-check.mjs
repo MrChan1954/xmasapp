@@ -905,12 +905,73 @@ export function EventSettingsScreen(`,
     to: `      alreadyRecipientPersonIds={people.map((person) => person.personId)}`,
     suites: ["scripts/event-people-scope.test.mjs"],
   },
+  {
+    /*
+     * PRE-Q5. THE BUG ITSELF, PUT BACK.
+     *
+     * The event chrome asking only for an id and trusting row level security to
+     * mean "in this family". It does not: RLS answers for the READER, and a
+     * login in two families passes it in both.
+     */
+    name: "Q5-1. the event chrome stops scoping its lookup to the selected Area",
+    file: "src/app/family-context.tsx",
+    from: `      .eq("id", eventId)
+      .eq("area_id", currentAreaId)`,
+    to: `      .eq("id", eventId)`,
+    suites: ["scripts/area-context.test.mjs"],
+  },
+  {
+    /*
+     * PRE-Q5. Clearing only the NAME, which is the half-fix that looks right.
+     * The recipient read below then still runs on the foreign event, loading its
+     * people, budgets and totals into the same provider.
+     */
+    name: "Q5-2. a foreign event clears its name but still loads its people",
+    file: "src/app/family-context.tsx",
+    from: `    if (!eventRow.data) {
+      setPeople([]); setEvent(null); setError(null); setLoading(false); return;
+    }`,
+    to: `    if (!eventRow.data) { setEvent(null); }`,
+    suites: ["scripts/area-context.test.mjs"],
+  },
+  {
+    /*
+     * PRE-Q5. The other half-fix: the foreign event's PEOPLE are dropped but
+     * the previously resolved event is left sitting in the provider. Nothing on
+     * the current screen is foreign, so it reads as safe -- and the masthead
+     * still names an event the reader has navigated away from.
+     */
+    name: "Q5-3. a foreign event leaves the previous event's name in the chrome",
+    file: "src/app/family-context.tsx",
+    from: `    if (!eventRow.data) {
+      setPeople([]); setEvent(null); setError(null); setLoading(false); return;
+    }`,
+    to: `    if (!eventRow.data) {
+      setPeople([]); setError(null); setLoading(false); return;
+    }`,
+    suites: ["scripts/area-context.test.mjs"],
+  },
 ];
 
 function runSuite(suite) {
   try {
     execFileSync(process.execPath,
-      ["--disable-warning=MODULE_TYPELESS_PACKAGE_JSON", "--test", suite],
+      [
+        "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON",
+        /*
+         * THE SAME WAY `test:all` RUNS THEM.
+         *
+         * Suites that render components import `.tsx`, which Node cannot load
+         * without this hook -- and a suite that cannot even load EXITS NON-ZERO,
+         * which this runner would have read as "the mutation was caught". That
+         * is the one failure mode a mutation harness must not have: it reports
+         * a hole in the tests as proof there isn't one. Passing the hook to
+         * every suite costs nothing (it only claims `.tsx`) and removes the
+         * chance of a false catch entirely.
+         */
+        "--import", "./scripts/dom/tsx-hook-register.mjs",
+        "--test", suite,
+      ],
       { cwd: ROOT, stdio: "pipe" });
     return null;
   } catch (error) {

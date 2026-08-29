@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventIdFromPath } from "@/lib/events.ts";
@@ -61,10 +61,25 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
   const [areaId, setAreaId] = useState<string | null>(null);
   const authRoute = isAuthRoute(pathname);
 
+  /**
+   * WHICH LOAD IS ALLOWED TO WRITE.
+   *
+   * `load` is async and is started by three different things -- the route
+   * effect, `refresh()`, and the realtime subscription -- so two can easily be
+   * in flight at once. Back and forward through event routes is the everyday
+   * way to get there: leave event A for event B and, if A's queries happen to
+   * settle last, A's name and A's people land in the provider while the address
+   * bar says B. Nothing cancels an awaited fetch, so each run takes a ticket
+   * and only the newest one is permitted to call a setter.
+   */
+  const latestLoad = useRef(0);
+
   // `quiet` skips the loading flag so a background refresh (another device
   // changed something) updates the data in place instead of blanking the page
   // behind a skeleton. Matches the same option on Family Access.
   const load = useCallback(async (quiet = false) => {
+    const ticket = ++latestLoad.current;
+    const superseded = () => ticket !== latestLoad.current;
     if (authRoute) { setLoading(false); return; }
     const db = createClient(); if (!quiet) setLoading(true);
     const auth = await db.auth.getUser();
@@ -110,17 +125,55 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     setRole(membership.data.role === "admin" ? "admin" : "member");
-    setAreaId((membership.data.area_id as string | null) ?? null);
+    const currentAreaId = (membership.data.area_id as string | null) ?? null;
+    setAreaId(currentAreaId);
     // Outside an event there is nothing event-scoped to fetch. The role above
     // is still needed, because the navigation chrome renders everywhere.
     if (!eventId) { setPeople([]); setEvent(null); setError(null); setLoading(false); return; }
-    // Identity only, for the chrome that has to name the active event. The
-    // server has already validated this id in `requireEvent`; this read is
-    // behind the same RLS policy and cannot widen what it returns.
-    const eventRow = await db.from("events").select("id,name,event_type,event_date,status,year,celebrant_person_id").eq("id", eventId).maybeSingle();
-    setEvent(eventRow.data
-      ? { id: eventRow.data.id, name: eventRow.data.name, type: eventRow.data.event_type, eventDate: String(eventRow.data.event_date).slice(0, 10), status: eventRow.data.status, year: eventRow.data.year, celebrantPersonId: eventRow.data.celebrant_person_id ?? null }
-      : null);
+    /*
+     * THE EVENT IS REACHED THROUGH THE FAMILY ON SCREEN OR NOT AT ALL.
+     *
+     * This read used to say only `.eq("id", eventId)` and lean on row level
+     * security, with a comment claiming `requireEvent` had already validated
+     * the id. Both halves were wrong in the same way.
+     *
+     * RLS narrows rows to the Areas the READER belongs to. That is the right
+     * permission and the wrong question: a login that belongs to two families
+     * passes it in both, so standing in QA Charlie and opening a QA Alpha event
+     * URL returned the Alpha row. The page body 404ed correctly -- `getEvent`
+     * has always carried `.eq("area_id", ...)` -- but this provider feeds the
+     * CHROME, so the masthead, the event nav and the tab title went on naming
+     * an event from a family the reader was not in. Found in live QA.
+     *
+     * `requireEvent` running on the server is not a substitute either. It
+     * guards the route, not this query, and it is not on the path at all for a
+     * client-side history navigation: switch family, press Back, and the old
+     * event route re-renders from the client with no server gate in sight.
+     *
+     * The Area comes from the membership resolved above -- the `gp_area`
+     * cookie reconciled against this reader's own memberships -- never from a
+     * prop, a query string or the event row itself.
+     */
+    if (!currentAreaId) { setPeople([]); setEvent(null); setError(null); setLoading(false); return; }
+    const eventRow = await db
+      .from("events")
+      .select("id,name,event_type,event_date,status,year,celebrant_person_id")
+      .eq("id", eventId)
+      .eq("area_id", currentAreaId)
+      .maybeSingle();
+    /*
+     * A foreign event clears the whole context rather than only its name.
+     * Letting the recipient read below run would have loaded that event's
+     * people, budgets, idea counts and purchase totals into the same provider
+     * -- so "no foreign event name" has to mean "no foreign event anything".
+     */
+    // A newer load has started while this one was awaiting the network; it owns
+    // the provider now, and writing here would put a stale event back.
+    if (superseded()) return;
+    if (!eventRow.data) {
+      setPeople([]); setEvent(null); setError(null); setLoading(false); return;
+    }
+    setEvent({ id: eventRow.data.id, name: eventRow.data.name, type: eventRow.data.event_type, eventDate: String(eventRow.data.event_date).slice(0, 10), status: eventRow.data.status, year: eventRow.data.year, celebrantPersonId: eventRow.data.celebrant_person_id ?? null });
     const recipients = await db.from("christmas_recipients").select("id,person_id,active,budget_pennies").eq("christmas_event_id", eventId).order("created_at");
     if (recipients.error) { setError("This event's people list could not be loaded."); setLoading(false); return; }
     const recipientIds = recipients.data.map((row) => row.id);
@@ -133,6 +186,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
         ? db.from("purchases").select("id,christmas_recipient_id,actual_price_pennies").in("christmas_recipient_id", recipientIds).is("deleted_at", null)
         : Promise.resolve({ data: [], error: null }),
     ]);
+    if (superseded()) return;
     if (personRows.error) { setError("Family names could not be loaded."); setLoading(false); return; }
     const names = new Map(personRows.data.map((row) => [row.id, row.name]));
     const ideaCounts = new Map<string, number>();
