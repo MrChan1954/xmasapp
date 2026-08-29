@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { MILESTONE_AGES, REMINDER_STAGES, SELF_PRIVATE_DETAIL, SELF_PRIVATE_HEADLINE, addCalendarMonths, ageOnOccurrence, birthdayCardState, birthdayOccurrence, birthdaysWithinWindow, describeDaysAway, describeTurningAge, dueReminderStages, formatBirthday, isMilestoneAge, isValidBirthday, isValidBirthYear, nextBirthdayOccurrence, peopleWithoutBirthdays, personBirthdayFromRow, suggestedBirthdayEventName, upcomingBirthdays, type PersonBirthday } from "./birthdays.ts";
+import { BUDGET_NOT_SET, MILESTONE_AGES, REMINDER_STAGES, SELF_PRIVATE_DETAIL, SELF_PRIVATE_HEADLINE, addCalendarMonths, ageOnOccurrence, birthdayBudgetLabel, birthdayCardState, birthdayOccurrence, birthdaysWithinWindow, describeDaysAway, describeTurningAge, dueReminderStages, formatBirthday, isMilestoneAge, isValidBirthday, isValidBirthYear, nextBirthdayOccurrence, peopleWithoutBirthdays, personBirthdayFromRow, suggestedBirthdayEventName, upcomingBirthdays, type PersonBirthday } from "./birthdays.ts";
 
 // ---------------------------------------------------------------------------
 // What this file is for
@@ -632,5 +632,103 @@ test("no real family birthday is hard-coded anywhere in this module", () => {
     text,
     /(month|day)\s*[:=]\s*(?!0\b)\d+\s*,\s*(month|day)\s*[:=]\s*\d+/u,
     "no month/day pair is baked in as a default",
+  );
+});
+
+// ===========================================================================
+// Q9 closeout -- the budget an Upcoming birthday card shows
+// ===========================================================================
+
+/** A budget that exists, at the given amount. */
+const setTo = (budgetPennies: number) => ({ budgetPennies, budgetIsSet: true });
+
+test("a planner sees the amount, formatted by the app's own formatter", () => {
+  assert.equal(
+    birthdayBudgetLabel({ isSelf: false, planning: setTo(1234) }),
+    "Budget £12.34",
+  );
+  assert.equal(
+    birthdayBudgetLabel({ isSelf: false, planning: setTo(4000) }),
+    "Budget £40",
+    "whole pounds drop the pence, exactly as every other figure in the app does",
+  );
+  assert.equal(
+    birthdayBudgetLabel({ isSelf: false, planning: setTo(100000) }),
+    "Budget £1,000",
+  );
+});
+
+test("ZERO IS A BUDGET SOMEBODY CHOSE, not an absence", () => {
+  /*
+   * `budget_pennies` is `integer not null default 0 check (>= 0)`, so a
+   * recipient row always carries a valid amount. Reading £0 as "not set" would
+   * send a planner off to set a budget that is already exactly what they meant.
+   */
+  assert.equal(birthdayBudgetLabel({ isSelf: false, planning: setTo(0) }), "Budget £0");
+  assert.notEqual(birthdayBudgetLabel({ isSelf: false, planning: setTo(0) }), BUDGET_NOT_SET);
+});
+
+test("no planning, or no live recipient carrying one, reads as not set", () => {
+  // Nobody has started this year's planning at all.
+  assert.equal(birthdayBudgetLabel({ isSelf: false, planning: undefined }), BUDGET_NOT_SET);
+  // Planning exists, but its recipient is archived or was never added -- the
+  // summed pennies fall back to 0, which must NOT be shown as a chosen £0.
+  assert.equal(
+    birthdayBudgetLabel({ isSelf: false, planning: { budgetPennies: 0, budgetIsSet: false } }),
+    BUDGET_NOT_SET,
+  );
+  assert.equal(BUDGET_NOT_SET, "Budget not set");
+});
+
+test("THE CELEBRANT LEARNS NEITHER THE AMOUNT NOR WHETHER THERE IS ONE", () => {
+  /*
+   * The point of the whole function. "Budget not set" is a fact about somebody's
+   * presents just as surely as "Budget £40" is, so their own card says NOTHING
+   * -- and there must be no arrangement of planning that changes that, because
+   * the SHAPE of what renders would then carry the answer.
+   */
+  for (const planning of [
+    undefined,
+    setTo(0),
+    setTo(4000),
+    { budgetPennies: 0, budgetIsSet: false },
+    { budgetPennies: 999999, budgetIsSet: true },
+  ]) {
+    assert.equal(
+      birthdayBudgetLabel({ isSelf: true, planning }),
+      null,
+      "the reader's own birthday must render no budget line at all",
+    );
+  }
+});
+
+test("it refuses to reveal by shape: self is answered before planning is read", () => {
+  // Every self answer is identical to every other self answer.
+  const answers = new Set([
+    birthdayBudgetLabel({ isSelf: true, planning: undefined }),
+    birthdayBudgetLabel({ isSelf: true, planning: setTo(0) }),
+    birthdayBudgetLabel({ isSelf: true, planning: setTo(12345) }),
+  ]);
+  assert.equal(answers.size, 1, "a celebrant's card must be indistinguishable in every case");
+  assert.equal([...answers][0], null);
+});
+
+test("it is built on birthdayCardState, so the two screens cannot drift", () => {
+  const text = readFileSync(new URL("./birthdays.ts", import.meta.url), "utf8");
+  assert.match(text, /export function birthdayBudgetLabel/u);
+  assert.match(text, /birthdayCardState\(\{/u, "the privacy decision is delegated, not re-implemented");
+  assert.match(text, /formatPennies\(/u, "money goes through the app's one formatter");
+  assert.doesNotMatch(
+    text.slice(text.indexOf("export function birthdayBudgetLabel")),
+    /toFixed|\/\s*100/u,
+    "no second money formatting anywhere in it",
+  );
+});
+
+test("a non-integer budget is refused rather than rounded", () => {
+  // formatPennies throws on a non-safe-integer, and that throw is the feature.
+  assert.throws(
+    () => birthdayBudgetLabel({ isSelf: false, planning: setTo(12.5) }),
+    /integer number of pennies/u,
   );
 });

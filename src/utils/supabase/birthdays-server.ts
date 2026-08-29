@@ -83,6 +83,17 @@ export type BirthdayPlanning = {
   /** The occurrence year, which is the year of the person's NEXT birthday. */
   year: number;
   budgetPennies: number;
+  /**
+   * Does a budget EXIST, as distinct from being zero?
+   *
+   * `budgetPennies` alone cannot answer that: it is summed with `?? 0`, so an
+   * event whose recipient is archived -- or was never added -- reads as £0,
+   * which is also a perfectly good budget somebody chose. `budget_pennies` is
+   * `integer not null default 0 check (>= 0)`, so a live recipient row always
+   * carries a real amount; the presence of such a row is the honest test, and
+   * it is the one `birthdayBudgetLabel` asks.
+   */
+  budgetIsSet: boolean;
   spentPennies: number;
   giftCount: number;
   ideaCount: number;
@@ -244,6 +255,8 @@ export async function loadFamilyBirthdays(): Promise<FamilyBirthdays> {
         eventName: row.name as string,
         year: Number(String(row.event_date).slice(0, 4)),
         budgetPennies: budgetByEvent.get(id) ?? 0,
+        // Set by an ACTIVE recipient existing, not by the amount being > 0.
+        budgetIsSet: budgetByEvent.has(id),
         spentPennies: spentByEvent.get(id) ?? 0,
         giftCount: giftsByEvent.get(id) ?? 0,
         ideaCount: ideasByEvent.get(id) ?? 0,

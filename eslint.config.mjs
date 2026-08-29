@@ -27,6 +27,19 @@ const eslintConfig = defineConfig([
      * reported 1,389 errors and every single one was in `.open-next/`.
      */
     ".open-next/**",
+    /*
+     * AND WRANGLER'S SCRATCH DIRECTORY, for exactly the same reason.
+     *
+     * `wrangler dev` and `wrangler deploy --dry-run` each write a bundled
+     * `worker.js` and a middleware facade into `.wrangler/tmp/<random>/`. Git
+     * ignores `.wrangler/`; ESLint did not. So the gate passed on a clean
+     * checkout and failed the moment anybody previewed the Worker or ran
+     * `npm run check:worker-bundle` -- 21,456 lines of problems, every one of
+     * them in a generated bundle, and a real error in `src/` invisible among
+     * them. Found in Q9, when verifying a cache header against a local Worker
+     * turned the next lint run red.
+     */
+    ".wrangler/**",
   ]),
 ]);
 

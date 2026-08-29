@@ -35,6 +35,8 @@ export default async function BirthdaysPage() {
       <BirthdaysScreen
         people={[]}
         birthdayEventsByPersonYear={{}}
+        planningByPerson={{}}
+        viewerPersonId={null}
         canEditBirthdays={false}
         today={londonToday()}
         // Deliberately not the thrown message: a server-side failure can carry
@@ -48,6 +50,12 @@ export default async function BirthdaysPage() {
     <BirthdaysScreen
       people={data.people}
       birthdayEventsByPersonYear={data.birthdayEventsByPersonYear}
+      /* The budget an Upcoming card shows. `loadFamilyBirthdays` has already
+         removed the reader's own birthday from this map -- twice, by RLS and by
+         an explicit `continue` -- and `viewerPersonId` lets the card refuse a
+         third time rather than trusting that. */
+      planningByPerson={data.planningByPerson}
+      viewerPersonId={data.viewerPersonId}
       canEditBirthdays={data.canEditBirthdays}
       today={data.today}
     />

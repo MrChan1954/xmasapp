@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarDays, Cake, Pencil } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { birthdayWorkspacePath, describeDaysAway, describeTurningAge, formatBirthday, isValidBirthday, isValidBirthYear, peopleWithoutBirthdays, upcomingBirthdays, type PersonBirthday } from "@/lib/birthdays.ts";
+import { birthdayBudgetLabel, birthdayWorkspacePath, describeDaysAway, describeTurningAge, formatBirthday, isValidBirthday, isValidBirthYear, peopleWithoutBirthdays, upcomingBirthdays, type PersonBirthday } from "@/lib/birthdays.ts";
 import { describeSupabaseError, describeThrown } from "@/lib/supabase-error";
 import { createClient } from "@/utils/supabase/client";
 import { AppShell, PageHeader } from "../components/app-shell";
@@ -23,6 +23,14 @@ const MONTHS = [
 export type BirthdayEventLink = { id: string; name: string };
 
 /**
+ * The only part of `BirthdayPlanning` an Upcoming card reads.
+ *
+ * Narrowed on purpose: this screen has no business with the spend, the gift
+ * count or the event id, and a card that cannot see them cannot leak them.
+ */
+export type BirthdayBudget = { budgetPennies: number; budgetIsSet: boolean };
+
+/**
  * The family Birthday Calendar.
  *
  * This sits OUTSIDE any event, because a birthday belongs to a person and not
@@ -33,12 +41,24 @@ export type BirthdayEventLink = { id: string; name: string };
 export function BirthdaysScreen({
   people,
   birthdayEventsByPersonYear,
+  planningByPerson = {},
+  viewerPersonId = null,
   canEditBirthdays,
   today,
   loadError = null,
 }: {
   people: PersonBirthday[];
   birthdayEventsByPersonYear: Record<string, BirthdayEventLink>;
+  /**
+   * The budget for each person's NEXT birthday, where one exists.
+   *
+   * Absent is a normal state, not an error, and it is NOT the same as £0 --
+   * see `birthdayBudgetLabel`, which is where that distinction is decided for
+   * this screen and for the dashboard alike.
+   */
+  planningByPerson?: Record<string, BirthdayBudget>;
+  /** The reader's own person, so their own card can refuse to say anything. */
+  viewerPersonId?: string | null;
   /**
    * May this reader maintain birthday DATES?
    *
@@ -152,6 +172,27 @@ export function BirthdaysScreen({
                           {describeTurningAge(person.birthday, person.next.year)}
                         </p>
                       )}
+                      {/*
+                        THE MONEY, OR AN HONEST SILENCE.
+
+                        `birthdayBudgetLabel` answers `isSelf` first and
+                        unconditionally, so the reader's own card renders no
+                        budget line at all -- not the amount, and not the fact
+                        that there is or is not one. `break-words` because a
+                        budget sits beside a name that may already be long, and
+                        this column is `min-w-0` on a phone.
+                      */}
+                      {(() => {
+                        const label = birthdayBudgetLabel({
+                          isSelf: person.personId === viewerPersonId,
+                          planning: planningByPerson[person.personId],
+                        });
+                        return label && (
+                          <p className="mt-1 text-xs font-semibold break-words text-ink-600">
+                            {label}
+                          </p>
+                        );
+                      })()}
                     </div>
                     {person.next.isToday && <Badge tone="success">Today</Badge>}
                   </div>

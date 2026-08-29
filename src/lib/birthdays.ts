@@ -22,6 +22,8 @@
 
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { validateDateInput } from "./input-validation.ts";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { formatPennies } from "./currency.ts";
 
 export type Birthday = {
   /** 1-12. */
@@ -419,6 +421,56 @@ export function birthdayCardState(input: { isSelf: boolean; hasPlanning: boolean
  */
 export const SELF_PRIVATE_HEADLINE = "You can't view your own birthday gifts";
 export const SELF_PRIVATE_DETAIL = "Your family's plans stay hidden so your presents remain a surprise.";
+
+/** What an Upcoming card says when nobody has put a number to a birthday yet. */
+export const BUDGET_NOT_SET = "Budget not set";
+
+/**
+ * WHAT AN UPCOMING BIRTHDAY CARD SAYS ABOUT MONEY.
+ *
+ * Three answers, and the first one is the one that matters:
+ *
+ *   null              the reader's OWN birthday. No budget line at all.
+ *   "Budget not set"  nobody has recorded a budget for the next occurrence.
+ *   "Budget £12.34"   somebody has, and this reader may see it.
+ *
+ * ZERO IS A BUDGET. `budget_pennies` is `integer not null default 0 check (>= 0)`,
+ * so a recipient row always carries a valid amount and £0 is a number somebody
+ * chose, not an absence. "Not set" means there is no recipient row carrying a
+ * budget at all -- planning has not been started, or its recipient is archived.
+ * Reading £0 as "not set" would tell a planner to go and set a budget that is
+ * already exactly what they wanted.
+ *
+ * SELF IS ANSWERED FIRST AND UNCONDITIONALLY, through `birthdayCardState`,
+ * which is the whole reason that function exists. The celebrant must not learn
+ * the amount OR whether there is one -- and "Budget not set" is a fact about
+ * their presents just as much as "Budget £40" is. Row level security and
+ * `loadFamilyBirthdays` have both already removed their own planning, so the
+ * naive rendering would print "Budget not set" on their own card with complete
+ * confidence and be wrong every time the family had actually set one. That is
+ * the leak this function exists to make unreachable: there is no value of
+ * `planning` that produces a non-null answer when `isSelf` is true.
+ *
+ * Money goes through `formatPennies`, the app's one formatter, so this reads
+ * "£40" where the rest of the app reads "£40" and "£12.34" where it reads
+ * "£12.34". It throws on a non-integer, which is the behaviour we want.
+ */
+export function birthdayBudgetLabel(input: {
+  isSelf: boolean;
+  planning: { budgetPennies: number; budgetIsSet: boolean } | undefined;
+}): string | null {
+  const state = birthdayCardState({
+    isSelf: input.isSelf,
+    hasPlanning: input.planning !== undefined,
+  });
+  if (state === "self_private") return null;
+  if (state === "not_started") return BUDGET_NOT_SET;
+  // `planned` guarantees `planning` is present; the check keeps that true for
+  // a caller that reaches here from JavaScript rather than TypeScript.
+  const planning = input.planning;
+  if (!planning || !planning.budgetIsSet) return BUDGET_NOT_SET;
+  return `Budget ${formatPennies(planning.budgetPennies)}`;
+}
 
 export type UpcomingBirthday = PersonBirthday & {
   birthday: Birthday;
