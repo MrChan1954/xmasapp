@@ -682,16 +682,29 @@ export function Notice({
  * The hand-rolled dialog this replaced restored focus on unmount, so this is
  * that behaviour kept rather than a new idea.
  *
- * Two details are load-bearing:
+ * Three details are load-bearing:
  *
  * - the opener is captured in a `useState` initialiser, which runs during
  *   RENDER. An effect would be too late: child effects run before the parent's,
  *   so Radix's content has already moved focus into the panel by then and we
  *   would capture the panel itself;
- * - the restore is deferred a frame. Radix's own focus handling runs as the
- *   panel unmounts, and whatever it does to focus should land before this does,
- *   not after.
+ *
+ * - Radix is told to stand down, rather than raced. Its focus scope restores on
+ *   its own timer as the panel unmounts, and with no trigger to go back to it
+ *   restores to `document.body` — actively undoing this. Every panel below
+ *   therefore passes `onCloseAutoFocus={preventDefault}`, which is the event
+ *   Radix's `onUnmountAutoFocus` is wired to and the supported way to say
+ *   "focus is being handled here";
+ *
+ * - the restore is a `setTimeout`, NOT `requestAnimationFrame`. Chrome does
+ *   not run animation frames in a background tab, so a rAF-based restore
+ *   silently never happens there — which is exactly how this fix first appeared
+ *   to work in tests and not in the browser. Timers still fire when hidden.
+ *   The delay also puts it after the commit that removes the panel, so the
+ *   browser has already reset `activeElement` by the time this reads it.
  */
+const preventDefault = (event: Event) => event.preventDefault();
+
 function useReturnFocus() {
   const [opener] = useState(() =>
     typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null),
@@ -699,12 +712,12 @@ function useReturnFocus() {
 
   useEffect(() => () => {
     if (!opener) return;
-    requestAnimationFrame(() => {
+    setTimeout(() => {
       // Gone from the page — a dialog that saved and navigated, say. Focusing a
       // detached node would silently move focus to <body>, the very thing this
       // exists to prevent.
       if (opener.isConnected) opener.focus();
-    });
+    }, 0);
   }, [opener]);
 }
 
@@ -744,6 +757,7 @@ export function Modal({
           aria-modal="true"
           aria-labelledby={labelledBy}
           aria-describedby={undefined}
+          onCloseAutoFocus={preventDefault}
           onEscapeKeyDown={(event) => { if (!dismissible) event.preventDefault(); }}
           onPointerDownOutside={(event) => { if (!dismissible) event.preventDefault(); }}
           onInteractOutside={(event) => { if (!dismissible) event.preventDefault(); }}
@@ -869,6 +883,7 @@ export function ConfirmDialog({
     <AlertDialog open onOpenChange={(open) => { if (!open && !busy) onCancel(); }}>
       <AlertDialogContent
         aria-modal="true"
+        onCloseAutoFocus={preventDefault}
         onEscapeKeyDown={(event) => { if (busy) event.preventDefault(); }}
         className="max-w-[calc(100%-2rem)] gap-0 rounded-3xl border-line bg-surface p-5 shadow-modal sm:max-w-md sm:p-7"
       >
@@ -931,6 +946,7 @@ export function Sheet({
           aria-modal="true"
           aria-labelledby={labelledBy}
           aria-describedby={undefined}
+          onCloseAutoFocus={preventDefault}
           onEscapeKeyDown={(event) => { if (!dismissible) event.preventDefault(); }}
           onPointerDownOutside={(event) => { if (!dismissible) event.preventDefault(); }}
           onInteractOutside={(event) => { if (!dismissible) event.preventDefault(); }}

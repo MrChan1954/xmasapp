@@ -352,9 +352,15 @@ describe("Modal", () => {
  * exist so that guarantee cannot be dropped again silently.
  */
 describe("focus return", () => {
-  /** Radix and the restore both settle on a later frame. */
+  /**
+   * Radix's focus scope and the restore both run on timers as the panel
+   * unmounts, so two macrotasks is the shortest honest wait. NOT a frame:
+   * animation frames do not run in a background tab, which is the bug that
+   * made the first version of this fix pass here and fail in a real browser.
+   */
   const settle = () => act(async () => {
-    await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 
   async function opensAndCloses(dialogFor) {

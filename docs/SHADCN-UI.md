@@ -257,8 +257,16 @@ dropped focus on `<body>`: close "Add recipient" from the keyboard and you were
 returned to the top of the document. `useReturnFocus()` in `ui/index.tsx`
 captures the focused element during RENDER — an effect is too late, because
 child effects run first and Radix has already moved focus into the panel by
-then — and restores it a frame after unmount. `Modal`, `Sheet` and
-`ConfirmDialog` all call it.
+then — and restores it on a timer after unmount. `Modal`, `Sheet` and
+`ConfirmDialog` all call it, and all three pass
+`onCloseAutoFocus={preventDefault}`: Radix does not merely fail to restore
+focus, it actively restores it to `document.body`, so it has to be told to
+stand down rather than raced.
+
+> **Use a timer, never `requestAnimationFrame`, for this.** Chrome does not run
+> animation frames in a background tab. The first version of this fix used rAF,
+> passed every test, and did nothing whatsoever in the browser — the QA tab was
+> hidden, so the frame never came. Timers still fire when hidden.
 
 > This was **found in live browser QA, after every automated test passed**. It
 > is the reason the "focus is only provable in a real browser" line was wrong
