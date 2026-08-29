@@ -10,7 +10,7 @@ import { createClient } from "@/utils/supabase/client";
 import { resizeImage } from "@/lib/image-resize";
 import { photoIntake } from "@/lib/photo-limits";
 import { MAX_PHOTOS, uploadPhoto, type PhotoParent } from "./photo-storage";
-import { Notice } from "./ui";
+import { Button, Notice } from "./ui";
 
 type PendingPhoto = { id: string; blob: Blob; width: number; height: number; previewUrl: string };
 
@@ -178,24 +178,24 @@ export function PhotoPicker({
             className="sr-only"
             onChange={(event) => { onAdd(event.target.files); event.target.value = ""; }}
           />
-          <button
-            type="button"
+          <Button
+            variant="secondary"
             disabled={disabled || preparing}
             onClick={() => cameraInput.current?.click()}
-            className="flex h-11 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-ink-700 hover:border-line-strong disabled:opacity-50 sm:hidden"
+            className="border-line px-3 sm:hidden"
           >
             <Camera aria-hidden size={17} strokeWidth={1.8} />
             Camera
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="secondary"
             disabled={disabled || preparing}
             onClick={() => libraryInput.current?.click()}
-            className="flex h-11 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-ink-700 hover:border-line-strong disabled:opacity-50"
+            className="border-line px-3"
           >
             <ImagePlus aria-hidden size={17} strokeWidth={1.8} />
             {preparing ? "Adding..." : "Add photo"}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -208,14 +208,15 @@ export function PhotoPicker({
               <span className="block aspect-square overflow-hidden rounded-xl border border-line bg-surface-3">
                 <img src={photo.previewUrl} alt="" className="h-full w-full object-cover" />
               </span>
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="icon-sm"
                 onClick={() => onRemove(photo.id)}
                 aria-label="Remove this photo"
-                className="absolute -top-2 -right-2 flex h-7 w-7 items-center justify-center rounded-full border border-line bg-surface text-ink-700 shadow-card hover:border-line-strong hover:text-berry"
+                className="absolute -top-2 -right-2 size-7 rounded-full border-line hover:text-berry"
               >
                 <X aria-hidden size={15} strokeWidth={2.2} />
-              </button>
+              </Button>
             </li>
           ))}
         </ul>

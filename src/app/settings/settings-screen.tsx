@@ -9,7 +9,8 @@ import { useFestive } from "../components/festive/festive-context";
 import { IconBell, IconHome, IconPlus, IconSettings, IconUser } from "../components/icons";
 import { InstallCard } from "../components/install-card";
 import { SettingsGroup, SettingsRow } from "../components/settings-list";
-import { cx } from "../components/ui";
+import { Button } from "../components/ui";
+import { Switch } from "../components/ui/switch";
 import { useAreas } from "../components/use-areas";
 
 const ICONS: Record<string, React.ReactNode> = {
@@ -61,26 +62,12 @@ export function GlobalSettingsScreen({ areaName }: { areaName: string }) {
                   : "Decorative snow on the dashboard."}
               </p>
             </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={snow && !reducedMotion}
+            <Switch
+              checked={snow && !reducedMotion}
               disabled={reducedMotion}
-              onClick={() => setSnow(!snow)}
-              className={cx(
-                "relative h-7 w-12 shrink-0 rounded-full border transition disabled:opacity-50",
-                snow && !reducedMotion ? "border-accent bg-accent" : "border-line-strong bg-surface-3",
-              )}
-            >
-              <span className="sr-only">Falling snow</span>
-              <span
-                aria-hidden
-                className={cx(
-                  "absolute top-1/2 block h-5 w-5 -translate-y-1/2 rounded-full bg-surface shadow-card transition-[left]",
-                  snow && !reducedMotion ? "left-[calc(100%-1.375rem)]" : "left-0.5",
-                )}
-              />
-            </button>
+              onCheckedChange={setSnow}
+              aria-label="Falling snow"
+            />
           </div>
         </div>
       </SettingsGroup>
@@ -133,13 +120,14 @@ function YourFamilies() {
                   </span>
                 )
                 : canSwitch && (
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={() => void switchTo(choice.id)}
-                    className="min-h-9 rounded-xl border border-line px-3.5 text-xs font-semibold text-ink-700 hover:border-line-strong"
+                    className="border-line text-xs"
                   >
                     Switch
-                  </button>
+                  </Button>
                 )}
             </li>
           ))}

@@ -73,17 +73,23 @@
     "test:production-checks": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/production-checks.test.mjs",
     "test:notification-area-scope": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/notification-area-scope.test.mjs",
     "test:event-people-scope": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/event-people-scope.test.mjs",
-    "test:event-errors": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/event-errors.test.ts"
+    "test:event-errors": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/event-errors.test.ts",
+    "test:shadcn-ui": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/dom/tsx-hook-register.mjs --test scripts/shadcn-ui.test.mjs",
+    "test:all": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/dom/tsx-hook-register.mjs --test scripts/*.test.mjs scripts/qa/*.test.mjs src/lib/*.test.ts"
   },
   "dependencies": {
     "@opennextjs/cloudflare": "^1.20.2",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "lucide-react": "^1.31.0",
     "next": "16.3.0",
     "next-themes": "^0.4.6",
+    "radix-ui": "^1.6.7",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.7",
@@ -91,8 +97,10 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "esbuild": "^0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.0",
+    "jsdom": "^29.1.1",
     "sharp": "^0.35.3",
     "tailwindcss": "^4",
     "typescript": "^5",

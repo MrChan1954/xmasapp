@@ -23,7 +23,7 @@ import {
   uploadPhotoFile,
   type PhotoParent as Parent,
 } from "./photo-storage";
-import { Modal, Notice } from "./ui";
+import { Button, ConfirmDialog, Modal, ModalTitle, Notice } from "./ui";
 
 type Photo = { id: string; storage_path: string; width: number | null; height: number | null };
 type PhotoWithUrl = Photo & { url: string | null };
@@ -146,24 +146,24 @@ export function PhotoGallery({ parent, label }: { parent: Parent; label: string 
             className="sr-only"
             onChange={(event) => { void addFiles(event.target.files); event.target.value = ""; }}
           />
-          <button
-            type="button"
+          <Button
+            variant="secondary"
             disabled={busy}
             onClick={() => cameraInput.current?.click()}
-            className="flex h-11 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-ink-700 hover:border-line-strong disabled:opacity-50 sm:hidden"
+            className="border-line px-3 sm:hidden"
           >
             <Camera aria-hidden size={17} strokeWidth={1.8} />
             Camera
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="secondary"
             disabled={busy}
             onClick={() => libraryInput.current?.click()}
-            className="flex h-11 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-ink-700 hover:border-line-strong disabled:opacity-50"
+            className="border-line px-3"
           >
             <ImagePlus aria-hidden size={17} strokeWidth={1.8} />
             {busy ? "Adding..." : "Add photo"}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -182,10 +182,10 @@ export function PhotoGallery({ parent, label }: { parent: Parent; label: string 
         <ul className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
           {photos.map((photo) => (
             <li key={photo.id}>
-              <button
-                type="button"
+              <Button
+                variant="ghost"
                 onClick={() => setViewing(photo)}
-                className="group relative block w-full overflow-hidden rounded-xl border border-line bg-surface-3 outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                className="group relative block h-auto w-full overflow-hidden rounded-xl border border-line bg-surface-3 p-0"
                 aria-label={`View photo of ${label}`}
               >
                 {/* Fixed square tiles keep the grid tidy whatever shape the
@@ -201,7 +201,7 @@ export function PhotoGallery({ parent, label }: { parent: Parent; label: string 
                     />
                   )}
                 </span>
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
@@ -210,18 +210,18 @@ export function PhotoGallery({ parent, label }: { parent: Parent; label: string 
       {viewing && (
         <Modal labelledBy="photo-viewer-title" onClose={() => setViewing(null)} size="lg" surface="ground">
           <div className="flex items-center justify-between gap-4 px-5 pt-4 sm:px-7 sm:pt-6">
-            <h2 id="photo-viewer-title" className="font-display text-xl font-semibold text-ink-900">
+            <ModalTitle id="photo-viewer-title" className="font-display text-xl font-semibold text-ink-900">
               {label}
-            </h2>
-            <button
-              type="button"
+            </ModalTitle>
+            <Button
+              variant="dangerGhost"
               disabled={busy}
               onClick={() => setConfirmingDelete(viewing)}
-              className="flex h-11 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-sm font-semibold text-berry hover:border-line-strong disabled:opacity-50"
+              className="border border-line bg-surface px-3"
             >
               <Trash2 aria-hidden size={17} strokeWidth={1.8} />
               Remove
-            </button>
+            </Button>
           </div>
           <div className="px-5 pt-4 pb-6 sm:px-7">
             {viewing.url && (
@@ -241,34 +241,22 @@ export function PhotoGallery({ parent, label }: { parent: Parent; label: string 
         </Modal>
       )}
 
+      {/*
+        Deleting somebody's photo for the whole family is destructive and
+        irreversible, so it asks in an AlertDialog rather than a Dialog: it is
+        announced as an alert, and a stray click on the backdrop cannot be the
+        thing that deletes the photo.
+      */}
       {confirmingDelete && (
-        <Modal labelledBy="photo-remove-title" onClose={() => setConfirmingDelete(null)} size="sm" surface="ground">
-          <div className="px-5 pt-5 pb-6 sm:px-7">
-            <h2 id="photo-remove-title" className="font-display text-xl font-semibold text-ink-900">
-              Remove this photo?
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-ink-600">
-              It will be deleted for everyone. This appears in the activity log.
-            </p>
-            <div className="mt-6 grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setConfirmingDelete(null)}
-                className="h-11 rounded-xl border border-line bg-surface text-sm font-semibold text-ink-700 hover:border-line-strong"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void remove(confirmingDelete)}
-                className="h-11 rounded-xl bg-berry text-sm font-semibold text-white disabled:opacity-50"
-              >
-                Remove
-              </button>
-            </div>
-          </div>
-        </Modal>
+        <ConfirmDialog
+          title="Remove this photo?"
+          body="It will be deleted for everyone. This appears in the activity log."
+          confirmLabel="Remove"
+          busyLabel="Removing…"
+          busy={busy}
+          onCancel={() => setConfirmingDelete(null)}
+          onConfirm={() => void remove(confirmingDelete)}
+        />
       )}
     </section>
   );

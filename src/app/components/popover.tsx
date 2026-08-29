@@ -1,13 +1,46 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { type ReactNode } from "react";
 import { cx } from "./cx";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import {
+  Popover as ShadcnPopover,
+  PopoverContent,
+  PopoverTrigger,
+} from "./ui/popover";
 
-/**
- * Small anchored menu: click-outside and Esc close it, focus returns to the
- * trigger. `children` may be a function so a menu item can close the panel
- * after acting.
+/*
+ * This file used to export one hand-rolled anchored panel used for two
+ * different jobs, and the second job was the tell: the payment log's filter
+ * form was rendered inside something announcing `role="menu"`. A menu's
+ * contract is that arrow keys move between items and Tab leaves — which is
+ * exactly wrong for a panel of text fields and selects.
+ *
+ * So there are two primitives now, both from the registry:
+ *
+ *   Menu     a real menu (account menu). Radix gives it roving tabindex,
+ *            typeahead, Home/End, and the right ARIA.
+ *   Popover  an anchored panel of ARBITRARY content (the filter disclosure).
+ *            Focus moves into it normally and Tab walks its fields.
+ *
+ * Both are collision-aware, which the hand-rolled version was not: an
+ * end-aligned panel could previously run off the side of a phone screen.
  */
+
+const triggerClasses = "group/trigger flex items-center rounded-xl outline-none";
+
+/** An anchored panel of arbitrary content — forms, filters, rich detail. */
 export function Popover({
   trigger,
   label,
@@ -21,76 +54,79 @@ export function Popover({
   align?: "start" | "end";
   panelClassName?: string;
   className?: string;
-  children: ReactNode | ((close: () => void) => ReactNode);
+  children: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const panelId = useId();
-
-  useEffect(() => {
-    if (!open) return;
-
-    const onPointerDown = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
-
-  // Focus returns to the trigger whenever the panel closes, wherever the close
-  // came from. Doing it here rather than inside `close` keeps `close` free of
-  // ref reads, so it is safe to hand to `children` during render.
-  const wasOpen = useRef(false);
-  useEffect(() => {
-    if (wasOpen.current && !open) triggerRef.current?.focus();
-    wasOpen.current = open;
-  }, [open]);
-
-  const close = useCallback(() => setOpen(false), []);
-
   return (
-    <div ref={root} className={cx("relative", className)}>
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls={open ? panelId : undefined}
+    <ShadcnPopover>
+      <PopoverTrigger aria-label={label} className={cx(triggerClasses, className)}>
+        {/*
+          The trigger restyles itself while the panel is open. Radix writes
+          `data-state` onto the trigger, so that is read straight off the DOM
+          with `group-data-[state=open]/trigger:` rather than being mirrored in
+          React state. `open: false` is passed for the callback's shape only.
+        */}
+        {trigger({ open: false })}
+      </PopoverTrigger>
+      <PopoverContent
+        align={align}
+        sideOffset={8}
         aria-label={label}
-        onClick={() => setOpen((value) => !value)}
-        className="flex items-center rounded-xl outline-none"
+        className={cx(
+          "z-50 w-auto min-w-56 overflow-hidden rounded-2xl border-line bg-surface p-1.5 shadow-modal",
+          panelClassName,
+        )}
       >
-        {trigger({ open })}
-      </button>
-
-      {open && (
-        <div
-          id={panelId}
-          role="menu"
-          aria-label={label}
-          className={cx(
-            "absolute top-[calc(100%+0.5rem)] z-50 min-w-56 overflow-hidden rounded-2xl border border-line bg-surface p-1.5 shadow-modal",
-            align === "end" ? "right-0" : "left-0",
-            panelClassName,
-          )}
-        >
-          {typeof children === "function" ? children(close) : children}
-        </div>
-      )}
-    </div>
+        {children}
+      </PopoverContent>
+    </ShadcnPopover>
   );
 }
 
-export function PopoverItem({
+/** A real menu of commands. */
+export function Menu({
+  trigger,
+  label,
+  align = "end",
+  panelClassName = "",
+  className = "",
+  children,
+}: {
+  trigger: (props: { open: boolean }) => ReactNode;
+  label: string;
+  align?: "start" | "end";
+  panelClassName?: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger aria-label={label} className={cx(triggerClasses, className)}>
+        {trigger({ open: false })}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align={align}
+        sideOffset={8}
+        aria-label={label}
+        className={cx(
+          "min-w-56 overflow-hidden rounded-2xl border-line bg-surface p-1.5 shadow-modal",
+          panelClassName,
+        )}
+      >
+        {children}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+const itemClasses = (tone: "default" | "danger") =>
+  cx(
+    "flex w-full min-h-11 items-center gap-2.5 rounded-xl px-3 text-left text-sm font-semibold",
+    tone === "danger"
+      ? "text-berry focus:bg-berry-soft focus:text-berry data-[highlighted]:bg-berry-soft data-[highlighted]:text-berry"
+      : "text-ink-700 focus:bg-hover-veil focus:text-ink-900 data-[highlighted]:bg-hover-veil data-[highlighted]:text-ink-900",
+  );
+
+export function MenuItem({
   onClick,
   href,
   tone = "default",
@@ -103,33 +139,96 @@ export function PopoverItem({
   icon?: ReactNode;
   children: ReactNode;
 }) {
-  const className = cx(
-    "flex w-full min-h-11 items-center gap-2.5 rounded-xl px-3 text-left text-sm font-semibold",
-    tone === "danger" ? "text-berry hover:bg-berry-soft" : "text-ink-700 hover:bg-hover-veil hover:text-ink-900",
-  );
-
   if (href) {
+    // `asChild` keeps this a real anchor — right-clickable, middle-clickable,
+    // announced as a link — while Radix still treats it as a menu item.
     return (
-      <a role="menuitem" href={href} className={className}>
-        {icon}
-        {children}
-      </a>
+      <DropdownMenuItem asChild className={itemClasses(tone)}>
+        <Link href={href}>
+          {icon}
+          {children}
+        </Link>
+      </DropdownMenuItem>
     );
   }
 
   return (
-    <button role="menuitem" type="button" onClick={onClick} className={className}>
+    <DropdownMenuItem onSelect={() => onClick?.()} className={itemClasses(tone)}>
       {icon}
       {children}
-    </button>
+    </DropdownMenuItem>
   );
 }
 
-export function PopoverSection({ label, children }: { label?: string; children: ReactNode }) {
+/** One-of-many, e.g. which family is active. */
+export function MenuRadioGroup({ value, children }: { value: string; children: ReactNode }) {
+  return <DropdownMenuRadioGroup value={value}>{children}</DropdownMenuRadioGroup>;
+}
+
+export function MenuRadioItem({
+  value,
+  onSelect,
+  icon,
+  children,
+}: {
+  value: string;
+  onSelect: () => void;
+  icon?: ReactNode;
+  children: ReactNode;
+}) {
   return (
-    <div className="border-t border-line px-1.5 pt-2 pb-1 first:border-t-0 first:pt-1">
-      {label && <p className="px-1.5 pb-1.5 text-[11px] font-semibold tracking-eyebrow text-ink-400 uppercase">{label}</p>}
+    <DropdownMenuRadioItem
+      value={value}
+      onSelect={onSelect}
+      // This menu has always drawn its tick on the right, next to the family
+      // name; the primitive's own left-hand indicator slot is hidden so there
+      // is exactly one.
+      className={cx(itemClasses("default"), "pr-3 pl-3 [&>span:first-child]:hidden")}
+    >
+      {icon}
       {children}
-    </div>
+    </DropdownMenuRadioItem>
+  );
+}
+
+/** An on/off choice that keeps the menu open, e.g. falling snow. */
+export function MenuCheckboxItem({
+  checked,
+  disabled,
+  onCheckedChange,
+  icon,
+  children,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  icon?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <DropdownMenuCheckboxItem
+      checked={checked}
+      disabled={disabled}
+      onCheckedChange={onCheckedChange}
+      // Toggling appearance should not dismiss the menu it lives in.
+      onSelect={(event) => event.preventDefault()}
+      className={cx(itemClasses("default"), "pr-3 pl-3 [&>span:first-child]:hidden")}
+    >
+      {icon}
+      {children}
+    </DropdownMenuCheckboxItem>
+  );
+}
+
+export function MenuSection({ label, children }: { label?: string; children: ReactNode }) {
+  return (
+    <DropdownMenuGroup className="border-t border-line px-1.5 pt-2 pb-1 first:border-t-0 first:pt-1">
+      {label && (
+        <DropdownMenuLabel className="px-1.5 pb-1.5 text-[11px] font-semibold tracking-eyebrow text-ink-400 uppercase">
+          {label}
+        </DropdownMenuLabel>
+      )}
+      {children}
+    </DropdownMenuGroup>
   );
 }

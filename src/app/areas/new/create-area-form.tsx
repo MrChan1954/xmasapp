@@ -5,7 +5,7 @@ import { useState } from "react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { validateAreaName } from "@/lib/areas.ts";
 import { AppShell, PageHeader } from "../../components/app-shell";
-import { Notice } from "../../components/ui";
+import { Button, Input, Notice } from "../../components/ui";
 
 /**
  * The first screen of a brand new account, and the way an existing one starts a
@@ -57,7 +57,7 @@ export function CreateAreaForm({ first }: { first: boolean }) {
     }
   };
 
-  const field = "mt-2 w-full rounded-xl border border-line bg-surface-1 px-3.5 py-2.5 text-sm text-ink-900 outline-none focus:border-line-strong";
+  const field = "mt-2";
 
   return (
     <AppShell width="narrow">
@@ -74,7 +74,7 @@ export function CreateAreaForm({ first }: { first: boolean }) {
       <form onSubmit={submit} className="mt-6 max-w-lg">
         <label className="block text-sm font-semibold text-ink-700">
           Family name
-          <input
+          <Input
             className={field}
             value={name}
             onChange={(event) => setName(event.target.value)}
@@ -86,7 +86,7 @@ export function CreateAreaForm({ first }: { first: boolean }) {
 
         <label className="mt-5 block text-sm font-semibold text-ink-700">
           Your name
-          <input
+          <Input
             className={field}
             value={personName}
             onChange={(event) => setPersonName(event.target.value)}
@@ -101,22 +101,23 @@ export function CreateAreaForm({ first }: { first: boolean }) {
 
         {error && <Notice tone="warning" className="mt-5">{error}</Notice>}
 
-        <button
+        <Button
           type="submit"
+          variant="gold"
           disabled={saving}
-          className="mt-6 min-h-11 rounded-xl bg-gold px-5 text-sm font-semibold text-ink-900 disabled:opacity-60"
+          className="mt-6"
         >
           {saving ? "Creating…" : first ? "Create my family" : "Create family"}
-        </button>
+        </Button>
 
         {!first && (
-          <button
-            type="button"
+          <Button
+            variant="ghost"
             onClick={() => router.back()}
-            className="ml-3 min-h-11 rounded-xl px-4 text-sm font-semibold text-ink-600 hover:text-ink-900"
+            className="ml-3"
           >
             Cancel
-          </button>
+          </Button>
         )}
       </form>
     </AppShell>

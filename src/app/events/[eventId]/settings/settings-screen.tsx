@@ -13,7 +13,8 @@ import { createClient } from "@/utils/supabase/client";
 import { AppShell, PageHeader } from "../../../components/app-shell";
 import { GarlandRule } from "../../../components/festive/garland";
 import {
-  Badge, Button, ConfirmDialog, Field, Input, Notice, Textarea, cx,
+  Badge, Button, ConfirmDialog, Field, Input, Notice, Textarea,
+  ToggleChip,
 } from "../../../components/ui";
 
 export type SettingsPerson = {
@@ -322,19 +323,14 @@ export function EventSettingsScreen({
           {recipientChoices.map((person) => {
             const on = recipientPersonIds.includes(person.personId);
             return (
-              <button
+              <ToggleChip
                 key={person.personId}
-                type="button"
+                on={on}
                 disabled={busy || on || isAboutOnePerson}
-                aria-pressed={on}
                 onClick={() => addRecipient(person.personId)}
-                className={cx(
-                  "min-h-11 rounded-xl border px-3.5 text-sm font-semibold",
-                  on ? "border-accent/40 bg-accent-soft text-accent" : "border-line text-ink-600 hover:bg-hover-veil",
-                )}
               >
                 {person.name}{on ? " ✓" : ""}
-              </button>
+              </ToggleChip>
             );
           })}
         </div>
@@ -352,19 +348,14 @@ export function EventSettingsScreen({
             const on = contributorPersonIds.includes(person.personId);
             const isCelebrant = person.personId === event.celebrantPersonId;
             return (
-              <button
+              <ToggleChip
                 key={person.personId}
-                type="button"
+                on={on}
                 disabled={busy}
-                aria-pressed={on}
                 onClick={() => setContributor(person.personId, !on)}
-                className={cx(
-                  "min-h-11 rounded-xl border px-3.5 text-sm font-semibold",
-                  on ? "border-accent/40 bg-accent-soft text-accent" : "border-line text-ink-600 hover:bg-hover-veil",
-                )}
               >
                 {person.name}{isCelebrant ? " 🎂" : ""}
-              </button>
+              </ToggleChip>
             );
           })}
         </div>

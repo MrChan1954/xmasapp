@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Bell, Check, Gift, Lightbulb, PoundSterling, Sparkles, Wallet } from "lucide-react";
 import { cx } from "./cx";
+import { Button } from "./ui";
 import { useMounted } from "./use-mounted";
 import { relativeTime, useNotificationInbox, type InboxNotification } from "./use-notification-inbox";
 
@@ -116,16 +117,17 @@ export function NotificationBell() {
 
   return (
     <div ref={root} className="relative">
-      <button
+      <Button
         ref={triggerRef}
-        type="button"
+        variant="secondary"
+        size="icon"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : "Notifications"}
         onClick={() => setOpen((value) => !value)}
         className={cx(
-          "relative flex h-11 w-11 items-center justify-center rounded-full border transition",
-          open ? "border-accent bg-accent-soft text-accent" : "border-line bg-surface-2 text-ink-700 hover:border-line-strong",
+          "relative rounded-full",
+          open ? "border-accent bg-accent-soft text-accent" : "border-line bg-surface-2 text-ink-700",
         )}
       >
         <Bell aria-hidden size={18} strokeWidth={1.9} />
@@ -140,7 +142,7 @@ export function NotificationBell() {
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>
         )}
-      </button>
+      </Button>
 
       {open && (
         <>
@@ -158,9 +160,12 @@ export function NotificationBell() {
           {/* Phone: portalled to <body> so `fixed` means the viewport. */}
           {mounted && createPortal(
             <div className="sm:hidden">
-              {/* A scrim behind the sheet, so the page behind reads as inert and
-                  a tap anywhere dismisses it. Now genuinely full-screen. */}
-              <div aria-hidden className="fixed inset-0 z-40 bg-scrim" onClick={() => setOpen(false)} />
+              {/* A scrim behind the sheet, so the page behind reads as inert.
+                  It carries no handler of its own: the document-level
+                  pointerdown above already treats a tap here as outside the
+                  panel, and a div that listens for clicks but cannot be
+                  reached by a keyboard is exactly the pattern to avoid. */}
+              <div aria-hidden className="fixed inset-0 z-40 bg-scrim" />
 
               <div
                 ref={sheet}
@@ -211,14 +216,15 @@ function InboxPanel({
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-3">
         <h2 className="font-display text-base font-semibold text-ink-900">Notifications</h2>
         {unreadCount > 0 && (
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={onMarkAllRead}
-            className="flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-accent hover:bg-accent-soft"
+            className="px-2 text-xs text-accent hover:bg-accent-soft hover:text-accent"
           >
             <Check aria-hidden size={14} strokeWidth={2.2} />
             Mark all read
-          </button>
+          </Button>
         )}
       </div>
 
@@ -246,12 +252,12 @@ function InboxPanel({
           const body = notification.body?.trim();
 
           return (
-            <button
+            <Button
               key={notification.id}
-              type="button"
+              variant="ghost"
               onClick={() => onOpen(notification)}
               className={cx(
-                "flex w-full items-start gap-3 border-b border-line px-4 py-3 text-left transition last:border-b-0",
+                "flex h-auto w-full items-start justify-start gap-3 rounded-none border-b border-line px-4 py-3 text-left whitespace-normal last:border-b-0",
                 unread ? "bg-accent-soft/40 hover:bg-accent-soft/70" : "hover:bg-hover-veil",
               )}
             >
@@ -279,7 +285,7 @@ function InboxPanel({
                   own: the tinted background above is easy to miss in bright sun,
                   and a dot is unambiguous. */}
               {unread && <span aria-hidden className="mt-2 h-2 w-2 shrink-0 rounded-full bg-accent" />}
-            </button>
+            </Button>
           );
         })}
       </div>

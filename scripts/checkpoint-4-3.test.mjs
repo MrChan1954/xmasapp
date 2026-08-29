@@ -451,7 +451,16 @@ test("the Global Admin edits the pool from Family access", () => {
   assert.match(client, /rpc\("set_family_contributor", \{/);
   assert.match(client, /p_person_id: member\.personId/);
   assert.match(client, /p_eligible: !member\.isFamilyContributor/);
-  assert.match(client, /aria-pressed=\{on\}/, "a toggle must announce its state");
+  /*
+   * A toggle must announce its state. Five screens had each grown their own
+   * copy of this chip; they share ToggleChip now, so the guarantee is
+   * asserted in both places — that this screen uses the shared control, and
+   * that the shared control is the thing that carries aria-pressed.
+   */
+  assert.match(client, /<ToggleChip[\s\S]*?on=\{on\}/, "the contributor toggle uses the shared chip");
+  const ui = read(...APP, "components", "ui", "index.tsx");
+  assert.match(ui, /export function ToggleChip\(/);
+  assert.match(ui, /aria-pressed=\{on\}/, "a toggle must announce its state");
 
   // The API has to carry the flag, or every chip renders off.
   const route = read(...APP, "api", "admin", "family-access", "route.ts");

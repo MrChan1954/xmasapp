@@ -9,18 +9,18 @@ import { eventPath } from "@/lib/events.ts";
 import { useFamily } from "../family-context";
 import { cx } from "./cx";
 import { navItemsFor } from "./nav-items";
-import { Modal } from "./ui";
+import { Button, Modal, ModalTitle } from "./ui";
 
 type Result = { key: string; label: string; hint?: string; href: string; group: "People" | "Go to" };
 
 /** Compact affordance in the top bar. Widens to a full field where there is room. */
 export function SearchTrigger({ className = "", onOpen }: { className?: string; onOpen: () => void }) {
   return (
-    <button
-      type="button"
+    <Button
+      variant="secondary"
       onClick={onOpen}
       className={cx(
-        "flex h-11 items-center gap-2 rounded-xl border border-line bg-surface-2 px-3 text-sm text-ink-400 hover:border-line-strong hover:text-ink-600",
+        "border-line bg-surface-2 px-3 font-normal text-ink-400 shadow-none hover:text-ink-600",
         className,
       )}
     >
@@ -29,7 +29,7 @@ export function SearchTrigger({ className = "", onOpen }: { className?: string; 
       <kbd className="ml-6 hidden rounded-md border border-line px-1.5 py-0.5 font-sans text-[11px] font-semibold text-ink-400 lg:inline">
         Ctrl K
       </kbd>
-    </button>
+    </Button>
   );
 }
 
@@ -78,7 +78,7 @@ function CommandPalettePanel({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal labelledBy="command-palette-title" onClose={onClose} size="md" surface="surface" className="sm:mt-0">
-      <h2 id="command-palette-title" className="sr-only">Search</h2>
+      <ModalTitle id="command-palette-title" className="sr-only">Search</ModalTitle>
       <div className="flex items-center gap-3 border-b border-line px-5 py-4">
         <Search aria-hidden size={18} strokeWidth={1.8} className="shrink-0 text-ink-400" />
         <input
@@ -105,15 +105,15 @@ function CommandPalettePanel({ onClose }: { onClose: () => void }) {
             <div key={group} className="pb-1">
               <p className="px-3 pt-2 pb-1 text-[11px] font-semibold tracking-eyebrow text-ink-400 uppercase">{group}</p>
               {items.map((result) => (
-                <button
+                <Button
                   key={result.key}
-                  type="button"
+                  variant="ghost"
                   onClick={() => go(result.href)}
-                  className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl px-3 text-left text-sm font-semibold text-ink-700 hover:bg-hover-veil hover:text-ink-900"
+                  className="flex w-full items-center justify-between gap-3 px-3 text-left text-ink-700 hover:text-ink-900"
                 >
                   <span className="truncate">{result.label}</span>
                   {result.hint && <span className="shrink-0 text-xs font-medium tabular-nums text-ink-400">{result.hint}</span>}
-                </button>
+                </Button>
               ))}
             </div>
           );

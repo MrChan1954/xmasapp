@@ -5,6 +5,7 @@ import { getCurrentMemberClient } from "@/utils/supabase/current-member-client";
 import { createClient } from "@/utils/supabase/client";
 import { AppShell, PageHeader } from "../../components/app-shell";
 import { Button, Notice, Skeleton, cx } from "../../components/ui";
+import { Switch } from "../../components/ui/switch";
 import { useIsIosSafari, usePwaInstall } from "../../components/use-pwa-install";
 import { usePushNotifications } from "../../components/use-push-notifications";
 import type { NotificationPreferences } from "@/lib/notification-audience";
@@ -179,9 +180,9 @@ export default function NotificationsPage() {
                   <p className="mt-0.5 text-sm leading-5 text-ink-600">{category.description}</p>
                 </div>
                 <Switch
-                  label={category.title}
+                  aria-label={category.title}
                   checked={preferences[category.key]}
-                  onChange={(value) => void toggle(category.key, value)}
+                  onCheckedChange={(value) => void toggle(category.key, value)}
                 />
               </div>
             ))}
@@ -329,38 +330,5 @@ function TestNotificationButton() {
         {busy ? "Sending…" : "Send test"}
       </Button>
     </div>
-  );
-}
-
-/** The same switch the More page uses for falling snow, so nothing new is invented. */
-function Switch({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (value: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className={cx(
-        "relative h-7 w-12 shrink-0 rounded-full border transition",
-        checked ? "border-accent bg-accent" : "border-line-strong bg-surface-3",
-      )}
-    >
-      <span className="sr-only">{label}</span>
-      <span
-        aria-hidden
-        className={cx(
-          "absolute top-1/2 block h-5 w-5 -translate-y-1/2 rounded-full bg-surface shadow-card transition-[left]",
-          checked ? "left-[calc(100%-1.375rem)]" : "left-0.5",
-        )}
-      />
-    </button>
   );
 }

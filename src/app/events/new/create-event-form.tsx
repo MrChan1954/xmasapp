@@ -17,6 +17,7 @@ import { AppShell, PageHeader } from "../../components/app-shell";
 import { GarlandRule } from "../../components/festive/garland";
 import {
   Button, Field, Input, Notice, Textarea, cx,
+  ToggleChip,
 } from "../../components/ui";
 
 export type CreatablePerson = {
@@ -269,21 +270,18 @@ export function CreateEventForm({
           </p>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {TEMPLATE_CHOICES.map((choice) => (
-              <button
+              <Button
                 key={choice.template}
-                type="button"
+                variant="secondary"
                 onClick={() => { chooseTemplate(choice.template); setStep("details"); }}
-                className={cx(
-                  "flex min-h-16 flex-col gap-1 rounded-2xl border border-line bg-surface px-4 py-3.5 text-left",
-                  "hover:border-accent/40 hover:shadow-lift focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-                )}
+                className="flex h-auto min-h-16 flex-col items-start gap-1 rounded-2xl border-line px-4 py-3.5 text-left whitespace-normal hover:shadow-lift"
               >
                 <span className="flex items-center gap-3">
                   <span aria-hidden className="text-2xl leading-none">{choice.icon}</span>
                   <span className="font-display text-base font-semibold text-ink-900">{choice.label}</span>
                 </span>
                 <span className="text-xs leading-5 text-ink-600">{choice.blurb}</span>
-              </button>
+              </Button>
             ))}
           </div>
         </section>
@@ -306,18 +304,15 @@ export function CreateEventForm({
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {EVENT_PRESETS.map((preset) => (
-                  <button
+                  <Button
                     key={preset.occasion}
-                    type="button"
+                    variant="secondary"
                     onClick={() => applyPreset(preset)}
-                    className={cx(
-                      "inline-flex min-h-11 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-ink-900",
-                      "hover:border-accent/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-                    )}
+                    className="rounded-full border-line px-4 text-ink-900"
                   >
                     <span aria-hidden>{preset.icon}</span>
                     {preset.title}
-                  </button>
+                  </Button>
                 ))}
               </div>
               <p className="mt-2 text-xs leading-5 text-ink-600">
@@ -475,18 +470,13 @@ function PeoplePicker({
         {people.map((person) => {
           const on = selected.includes(person.personId);
           return (
-            <button
+            <ToggleChip
               key={person.personId}
-              type="button"
-              aria-pressed={on}
+              on={on}
               onClick={() => toggle(person.personId)}
-              className={cx(
-                "min-h-11 rounded-xl border px-3.5 text-sm font-semibold",
-                on ? "border-accent/40 bg-accent-soft text-accent" : "border-line text-ink-600 hover:bg-hover-veil",
-              )}
             >
               {person.name}
-            </button>
+            </ToggleChip>
           );
         })}
       </div>

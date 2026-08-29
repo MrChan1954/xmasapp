@@ -191,6 +191,11 @@
    ========================================================================== */
 
 @theme {
+  /* shadcn convention: a few registry components read var(--radius) directly
+     rather than a rounded-* utility. Defined so a newly-added one lands on this
+     app's corner scale instead of falling back to stock. Nothing reads it today. */
+  --radius: 0.625rem;
+
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: var(--font-fraunces), ui-serif, Georgia, "Times New Roman", serif;
 
@@ -274,6 +279,48 @@
   --shadow-card: var(--shadow-card-raw);
   --shadow-lift: var(--shadow-lift-raw);
   --shadow-modal: var(--shadow-modal-raw);
+
+  /* ------------------------------------------------------------------ *
+   * shadcn/ui bridge.
+   *
+   * Every component under `src/app/components/ui/` is real shadcn registry
+   * source and speaks shadcn's semantic vocabulary (`bg-background`,
+   * `text-muted-foreground`, `border-input`, ...). Rather than restyle 25
+   * vendored files, those names are POINTED AT THE PALETTE ABOVE. shadcn is
+   * the primitive foundation; the warm-editorial identity stays the source
+   * of truth for colour.
+   *
+   * One rename was unavoidable. shadcn's `--accent` means "the surface a
+   * menu item takes on hover"; this app's `--accent` is the brand green, and
+   * both would compile to the same `bg-accent` utility. The registry files
+   * were rewritten to say `elevated` instead, so `bg-accent` keeps meaning
+   * the brand and nothing silently turns green on hover.
+   * ------------------------------------------------------------------ */
+  --color-background: var(--ground);
+  --color-foreground: var(--ink-900);
+
+  --color-card: var(--surface);
+  --color-card-foreground: var(--ink-900);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--ink-900);
+
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-contrast);
+
+  --color-secondary: var(--surface-2);
+  --color-secondary-foreground: var(--ink-900);
+
+  --color-muted: var(--surface-2);
+  --color-muted-foreground: var(--ink-600);
+
+  /* shadcn's "accent", renamed to avoid colliding with the brand accent. */
+  --color-elevated: var(--surface-2);
+  --color-elevated-foreground: var(--ink-900);
+
+  --color-destructive: var(--berry-strong);
+
+  --color-border: var(--line);
+  --color-input: var(--line-strong);
 }
 
 /* ==========================================================================

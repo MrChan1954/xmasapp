@@ -107,7 +107,13 @@ describe("a person can always tell which family is on screen", () => {
 
   test("the switcher lists every family, marking the current one", () => {
     assert.match(menu, /choices\.map/);
-    assert.match(menu, /aria-checked=\{choice\.active\}/);
+    // Marking the current one is now the radio group's job: the item whose
+    // value matches the group's value is the checked one, and Radix writes
+    // aria-checked from that.
+    assert.match(menu, /<MenuRadioGroup value=\{active\?\.id \?\? ""\}>/);
+    assert.match(menu, /value=\{choice\.id\}/);
+    const popover = read("src/app/components/popover.tsx");
+    assert.match(popover, /<DropdownMenuRadioItem/);
   });
 
   test("but the LIST is not offered when there is nowhere to switch to", () => {
@@ -122,7 +128,7 @@ describe("a person can always tell which family is on screen", () => {
      * never started a second family were the only ones who could not find out
      * how. The two questions are separate now, and this one is unchanged.
      */
-    assert.match(menu, /\{canSwitch && choices\.map/);
+    assert.match(menu, /\{canSwitch && \([\s\S]{0,200}?choices\.map/);
   });
 
   test("and the SECTION appears whenever either question has an answer", () => {

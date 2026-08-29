@@ -7,7 +7,7 @@ import { CREATE_AREA_LABEL, CREATE_AREA_PATH } from "@/lib/areas";
 import { createClient } from "@/utils/supabase/client";
 import { useFamily } from "../family-context";
 import { useFestive } from "./festive/festive-context";
-import { Popover, PopoverItem, PopoverSection } from "./popover";
+import { Menu, MenuCheckboxItem, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSection } from "./popover";
 import { useAreas } from "./use-areas";
 
 export function AccountMenu() {
@@ -31,22 +31,17 @@ export function AccountMenu() {
   const initials = (email.split("@")[0] || "?").slice(0, 2).toUpperCase();
 
   return (
-    <Popover
+    <Menu
       label="Account menu"
-      trigger={({ open }) => (
+      trigger={() => (
         <span
-          className={
-            "flex h-11 w-11 items-center justify-center rounded-full border border-line bg-surface-2 text-xs font-semibold text-ink-700 " +
-            (open ? "ring-2 ring-accent/30" : "hover:border-line-strong")
-          }
+          className="flex h-11 w-11 items-center justify-center rounded-full border border-line bg-surface-2 text-xs font-semibold text-ink-700 hover:border-line-strong group-data-[state=open]/trigger:ring-2 group-data-[state=open]/trigger:ring-accent/30"
         >
           {initials}
         </span>
       )}
     >
-      {(close) => (
-        <>
-          <PopoverSection>
+          <MenuSection>
             <div className="px-3 py-2">
               <p className="truncate text-sm font-semibold text-ink-900">{email || "Signed in"}</p>
               {active && <p className="mt-0.5 truncate text-xs font-semibold text-ink-500">{active.name}</p>}
@@ -57,7 +52,7 @@ export function AccountMenu() {
                 </p>
               )}
             </div>
-          </PopoverSection>
+          </MenuSection>
 
           {/*
             THE FAMILY SECTION IS NOT ONLY A SWITCHER.
@@ -76,22 +71,23 @@ export function AccountMenu() {
             the same door as the desktop without a second implementation.
           */}
           {(canSwitch || canCreate) && (
-            <PopoverSection label="Family">
-              {canSwitch && choices.map((choice) => (
-                <button
-                  key={choice.id}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={choice.active}
-                  onClick={() => { if (!choice.active) void switchTo(choice.id); }}
-                  className="flex min-h-11 w-full items-center gap-2.5 rounded-xl px-3 text-left text-sm font-semibold text-ink-700 hover:bg-hover-veil hover:text-ink-900"
-                >
-                  <Home aria-hidden size={16} strokeWidth={1.8} />
-                  <span className="flex-1 truncate">{choice.name}</span>
-                  {choice.archivedAt && <span className="text-xs font-semibold text-ink-400">Archived</span>}
-                  {choice.active && <Check aria-hidden size={15} strokeWidth={2.2} className="text-gold" />}
-                </button>
-              ))}
+            <MenuSection label="Family">
+              {canSwitch && (
+                <MenuRadioGroup value={active?.id ?? ""}>
+                  {choices.map((choice) => (
+                    <MenuRadioItem
+                      key={choice.id}
+                      value={choice.id}
+                      onSelect={() => { if (!choice.active) void switchTo(choice.id); }}
+                      icon={<Home aria-hidden size={16} strokeWidth={1.8} />}
+                    >
+                      <span className="flex-1 truncate">{choice.name}</span>
+                      {choice.archivedAt && <span className="text-xs font-semibold text-ink-400">Archived</span>}
+                      {choice.active && <Check aria-hidden size={15} strokeWidth={2.2} className="text-gold" />}
+                    </MenuRadioItem>
+                  ))}
+                </MenuRadioGroup>
+              )}
 
               {canCreate && (
                 /*
@@ -104,55 +100,50 @@ export function AccountMenu() {
                  * action rather than as one more family to switch into.
                  */
                 <div className={canSwitch ? "mt-1.5 border-t border-line pt-1.5" : ""}>
-                  <PopoverItem
+                  <MenuItem
                     href={CREATE_AREA_PATH}
                     icon={<Plus aria-hidden size={16} strokeWidth={2} />}
                   >
                     {CREATE_AREA_LABEL}
-                  </PopoverItem>
+                  </MenuItem>
                 </div>
               )}
-            </PopoverSection>
+            </MenuSection>
           )}
 
-          <PopoverSection label="Appearance">
-            <button
-              type="button"
-              role="menuitemcheckbox"
-              aria-checked={snow}
+          <MenuSection label="Appearance">
+            <MenuCheckboxItem
+              checked={snow}
               disabled={reducedMotion}
-              onClick={() => setSnow(!snow)}
-              className="flex min-h-11 w-full items-center gap-2.5 rounded-xl px-3 text-left text-sm font-semibold text-ink-700 hover:bg-hover-veil hover:text-ink-900 disabled:opacity-50"
+              onCheckedChange={setSnow}
+              icon={<Snowflake aria-hidden size={16} strokeWidth={1.8} />}
             >
-              <Snowflake aria-hidden size={16} strokeWidth={1.8} />
               <span className="flex-1">Falling snow</span>
               <span className="text-xs font-semibold text-ink-400">
                 {reducedMotion ? "Off (reduced motion)" : snow ? "On" : "Off"}
               </span>
-            </button>
-          </PopoverSection>
+            </MenuCheckboxItem>
+          </MenuSection>
 
-          <PopoverSection>
-            <PopoverItem href="/account" icon={<User aria-hidden size={16} strokeWidth={1.8} />}>
+          <MenuSection>
+            <MenuItem href="/account" icon={<User aria-hidden size={16} strokeWidth={1.8} />}>
               Account &amp; security
-            </PopoverItem>
+            </MenuItem>
             {/* THE GLOBAL scope. What follows this person into every family
                 they belong to. A family's own settings, and an event's, are
                 reached from inside the family they belong to -- see
                 src/lib/settings-scopes.ts. */}
-            <PopoverItem href="/settings" icon={<Settings aria-hidden size={16} strokeWidth={1.8} />}>
+            <MenuItem href="/settings" icon={<Settings aria-hidden size={16} strokeWidth={1.8} />}>
               Settings
-            </PopoverItem>
-            <PopoverItem
+            </MenuItem>
+            <MenuItem
               tone="danger"
               icon={<LogOut aria-hidden size={16} strokeWidth={1.8} />}
-              onClick={() => { close(); void signOut(); }}
+              onClick={() => { void signOut(); }}
             >
               Sign out
-            </PopoverItem>
-          </PopoverSection>
-        </>
-      )}
-    </Popover>
+            </MenuItem>
+          </MenuSection>
+    </Menu>
   );
 }

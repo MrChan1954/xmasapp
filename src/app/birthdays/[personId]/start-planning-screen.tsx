@@ -15,7 +15,7 @@ import { createClient } from "@/utils/supabase/client";
 import { AppShell, PageHeader } from "../../components/app-shell";
 import { WishlistPanel } from "../../components/wishlist-panel";
 import { GarlandRule } from "../../components/festive/garland";
-import { Button, ButtonLink, EmptyState, Field, MoneyInput, Notice, cx } from "../../components/ui";
+import { Button, ButtonLink, EmptyState, Field, MoneyInput, Notice, ToggleChip, cx } from "../../components/ui";
 
 export type EligibleContributor = { personId: string; name: string };
 
@@ -257,18 +257,13 @@ export function StartPlanningScreen({
               {contributors.map((person) => {
                 const on = chosen.includes(person.personId);
                 return (
-                  <button
+                  <ToggleChip
                     key={person.personId}
-                    type="button"
-                    aria-pressed={on}
+                    on={on}
                     onClick={() => toggle(person.personId)}
-                    className={cx(
-                      "min-h-11 rounded-xl border px-3.5 text-sm font-semibold",
-                      on ? "border-accent/40 bg-accent-soft text-accent" : "border-line text-ink-600 hover:bg-hover-veil",
-                    )}
                   >
                     {person.name}{on ? " ✓" : ""}
-                  </button>
+                  </ToggleChip>
                 );
               })}
             </div>

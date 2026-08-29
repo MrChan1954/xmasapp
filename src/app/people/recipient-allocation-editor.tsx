@@ -11,7 +11,8 @@ import {
   splitPenniesEqually,
   type RecipientAllocation,
 } from "@/lib/recipient-allocations";
-import { Button, cx } from "../components/ui";
+import { Button, Input, cx } from "../components/ui";
+import { Checkbox } from "../components/ui/checkbox";
 
 export type RecipientAllocationDraftRow = {
   contributorId: string;
@@ -131,11 +132,10 @@ export function RecipientAllocationEditor({
             <div key={row.contributorId} className={cx("rounded-xl border bg-surface p-4", row.selected ? "border-accent-soft-border" : "border-line")}>
               <label htmlFor={checkboxId} className="flex cursor-pointer items-center justify-between gap-3">
                 <span className="flex min-w-0 items-center gap-3">
-                  <input
+                  <Checkbox
                     id={checkboxId}
-                    type="checkbox"
                     checked={row.selected}
-                    onChange={() => {
+                    onCheckedChange={() => {
                       onChange(rows.map((item) => item.contributorId === row.contributorId
                         ? {
                             ...item,
@@ -145,7 +145,7 @@ export function RecipientAllocationEditor({
                         : item));
                       setActionError(null);
                     }}
-                    className="h-5 w-5 shrink-0 rounded accent-mint"
+                    className="size-5 shrink-0"
                   />
                   <strong className="truncate font-semibold">{row.name}</strong>
                 </span>
@@ -161,7 +161,7 @@ export function RecipientAllocationEditor({
               {adjusting && row.selected && (
                 <label className="mt-3 block text-xs font-semibold text-ink-600">
                   Planned amount
-                  <input
+                  <Input
                     aria-label={`${row.name} planned amount in pounds`}
                     maxLength={INPUT_LIMITS.money}
                     value={row.amountInput}

@@ -8,7 +8,7 @@ import { scopeReminder, settingsFor } from "@/lib/settings-scopes.ts";
 import { AppShell, PageHeader } from "../../components/app-shell";
 import { IconCake, IconHistory, IconPeople, IconSettings } from "../../components/icons";
 import { SettingsGroup, SettingsRow } from "../../components/settings-list";
-import { Notice } from "../../components/ui";
+import { Button, Input, Notice, Select } from "../../components/ui";
 
 const ICONS: Record<string, React.ReactNode> = {
   "family-access": <IconPeople size={20} />,
@@ -128,8 +128,8 @@ function RenameFamily({ areaId, current }: { areaId: string; current: string }) 
       <form onSubmit={save} className="mt-3 rounded-2xl border border-line bg-surface p-5 shadow-card">
         <label className="block text-sm font-semibold text-ink-700">
           Family name
-          <input
-            className="mt-2 w-full rounded-xl border border-line bg-surface-1 px-3.5 py-2.5 text-sm text-ink-900 outline-none focus:border-line-strong"
+          <Input
+            className="mt-2"
             value={name}
             onChange={(event) => { setName(event.target.value); setState("idle"); }}
             maxLength={80}
@@ -144,13 +144,13 @@ function RenameFamily({ areaId, current }: { areaId: string; current: string }) 
         {error && <Notice tone="warning" className="mt-4">{error}</Notice>}
 
         <div className="mt-4 flex items-center gap-3">
-          <button
+          <Button
             type="submit"
+            variant="gold"
             disabled={state === "saving" || name.trim() === current}
-            className="min-h-11 rounded-xl bg-gold px-5 text-sm font-semibold text-ink-900 disabled:opacity-60"
           >
             {state === "saving" ? "Saving…" : "Save name"}
-          </button>
+          </Button>
           {state === "saved" && <span className="text-sm font-semibold text-ink-600">Saved.</span>}
         </div>
       </form>
@@ -258,47 +258,44 @@ function Administration({
                   back.
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
+                  <Button
+                    variant="gold"
                     disabled={busy}
                     onClick={() => void act("transfer-admin", { memberId: successor })}
-                    className="min-h-11 rounded-xl bg-gold px-5 text-sm font-semibold text-ink-900 disabled:opacity-60"
                   >
                     {busy ? "Handing over…" : "Yes, hand it over"}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="secondary"
                     disabled={busy}
                     onClick={() => setConfirming(null)}
-                    className="min-h-11 rounded-xl border border-line px-5 text-sm font-semibold text-ink-700"
                   >
                     Keep it
-                  </button>
+                  </Button>
                 </div>
               </div>
             )
             : (
               <div className="mt-4 flex flex-wrap items-center gap-3">
                 <label className="sr-only" htmlFor="successor">Who takes over</label>
-                <select
+                <Select
                   id="successor"
                   value={successor}
                   onChange={(event) => setSuccessor(event.target.value)}
-                  className="min-h-11 rounded-xl border border-line bg-surface-1 px-3 text-sm text-ink-900"
+                  className="w-auto min-w-56"
                 >
                   <option value="">Choose somebody…</option>
                   {successors.map((entry) => (
                     <option key={entry.memberId} value={entry.memberId}>{entry.name}</option>
                   ))}
-                </select>
-                <button
-                  type="button"
+                </Select>
+                <Button
+                  variant="secondary"
                   disabled={!successor || busy}
                   onClick={() => setConfirming("handover")}
-                  className="min-h-11 rounded-xl border border-line px-5 text-sm font-semibold text-ink-700 disabled:opacity-60"
                 >
                   Hand over…
-                </button>
+                </Button>
               </div>
             )}
         </div>
@@ -315,14 +312,13 @@ function Administration({
               : "Archiving hides a family you are finished with. Nothing is deleted — the people, the years, the gifts and the money all stay, and you can bring it back whenever you like."}
           </p>
           <div className="mt-4">
-            <button
-              type="button"
+            <Button
+              variant="secondary"
               disabled={busy}
               onClick={() => void act(archived ? "unarchive" : "archive")}
-              className="min-h-11 rounded-xl border border-line px-5 text-sm font-semibold text-ink-700 disabled:opacity-60"
             >
               {archived ? "Bring it back" : "Archive this family"}
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -349,34 +345,32 @@ function Administration({
               {confirming === "leave"
                 ? (
                   <div className="mt-4 flex flex-wrap gap-2">
-                    <button
-                      type="button"
+                    <Button
+                      variant="dangerGhost"
+                      className="border border-berry-soft-border bg-berry-soft"
                       disabled={busy || !canLeave}
                       onClick={() => void act("leave")}
-                      className="min-h-11 rounded-xl border border-berry-soft-border bg-berry-soft px-5 text-sm font-semibold text-berry disabled:opacity-60"
                     >
                       {busy ? "Leaving…" : `Yes, leave ${areaName}`}
-                    </button>
-                    <button
-                      type="button"
+                    </Button>
+                    <Button
+                      variant="secondary"
                       disabled={busy}
                       onClick={() => setConfirming(null)}
-                      className="min-h-11 rounded-xl border border-line px-5 text-sm font-semibold text-ink-700"
                     >
                       Stay
-                    </button>
+                    </Button>
                   </div>
                 )
                 : (
                   <div className="mt-4">
-                    <button
-                      type="button"
+                    <Button
+                      variant="secondary"
                       disabled={busy || !canLeave}
                       onClick={() => setConfirming("leave")}
-                      className="min-h-11 rounded-xl border border-line px-5 text-sm font-semibold text-ink-700 disabled:opacity-60"
                     >
                       Leave this family…
-                    </button>
+                    </Button>
                   </div>
                 )}
             </>

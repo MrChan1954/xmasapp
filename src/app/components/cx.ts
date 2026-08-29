@@ -3,7 +3,7 @@
  *
  * Lives in its own module (no "use client") so server components can call it —
  * a plain function exported from a client module becomes a client reference and
- * cannot be invoked during server render. `ui.tsx` re-exports it, so the
+ * cannot be invoked during server render. `ui/index.tsx` re-exports it, so the
  * existing `import { cx } from "./ui"` call sites are unaffected.
  *
  * Note this does NOT resolve Tailwind conflicts: later classes do not reliably

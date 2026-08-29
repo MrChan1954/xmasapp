@@ -228,10 +228,13 @@ export function PaymentLogScreen({ eventId, eventName }: { eventId: string; even
                 align="start"
                 className="hidden lg:block"
                 panelClassName="w-[46rem] p-4"
-                trigger={({ open }) => (
+                trigger={() => (
                   <span className={cx(
                     "flex min-h-11 items-center gap-2 rounded-xl border px-3.5 text-sm font-semibold",
-                    open || filterCount ? "border-accent-soft-border bg-accent-soft text-accent" : "border-line bg-surface text-ink-600 hover:border-line-strong",
+                    // Radix marks the trigger open, so that half is read off
+                    // the DOM; the count keeps it lit once filters are applied.
+                    "group-data-[state=open]/trigger:border-accent-soft-border group-data-[state=open]/trigger:bg-accent-soft group-data-[state=open]/trigger:text-accent",
+                    filterCount ? "border-accent-soft-border bg-accent-soft text-accent" : "border-line bg-surface text-ink-600 hover:border-line-strong",
                   )}>
                     <IconFilter size={17} />
                     Filters{filterCount ? ` (${filterCount})` : ""}
@@ -370,11 +373,11 @@ function ActiveFilterChips({ filters, data, onChange }: { filters: PaymentLogFil
     <div className="mt-4 flex flex-wrap items-center gap-2">
       <span className="text-xs font-semibold text-ink-600">Active filters:</span>
       {chips.map((chip) => (
-        <button key={chip.key} type="button" onClick={() => onChange({ ...filters, [chip.key]: chip.key === "status" || chip.key === "quick" ? "all" : "" })} className="min-h-11 rounded-full border border-accent-soft-border bg-accent-soft px-3 text-xs font-semibold text-accent hover:border-accent/40">
+        <Button key={chip.key} variant="tonal" size="sm" onClick={() => onChange({ ...filters, [chip.key]: chip.key === "status" || chip.key === "quick" ? "all" : "" })} className="rounded-full border border-accent-soft-border px-3 text-xs">
           {chip.label} <span aria-hidden>×</span><span className="sr-only"> remove</span>
-        </button>
+        </Button>
       ))}
-      <button type="button" onClick={() => onChange(emptyPaymentFilters)} className="min-h-11 px-2 text-xs font-semibold text-berry">Clear all</button>
+      <Button variant="dangerGhost" size="sm" onClick={() => onChange(emptyPaymentFilters)} className="px-2 text-xs">Clear all</Button>
     </div>
   );
 }

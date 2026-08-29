@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "./ui";
 import { useIsIosSafari, usePwaInstall } from "./use-pwa-install";
 
 /**
@@ -35,13 +36,12 @@ export function InstallCard() {
           </p>
         </div>
         {canPrompt && (
-          <button
-            type="button"
+          <Button
             onClick={() => void promptInstall()}
-            className="shrink-0 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-accent-contrast shadow-card transition hover:brightness-110 active:scale-95"
+            className="shrink-0 rounded-full px-5"
           >
             Install
-          </button>
+          </Button>
         )}
         </div>
       </div>

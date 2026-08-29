@@ -6,7 +6,7 @@ import type { BirthdayOccurrence } from "@/utils/supabase/birthdays-server";
 import { AppShell, PageHeader } from "../../../components/app-shell";
 import { GarlandRule } from "../../../components/festive/garland";
 import { ButtonLink, EmptyState } from "../../../components/ui";
-// NOT from "./ui": this is a Server Component, and `ui.tsx` is "use client".
+// NOT from "./ui": this is a Server Component, and `ui/index.tsx` is "use client".
 // A plain function exported from a client module becomes a client reference,
 // and calling one during a server render throws.
 import { cx } from "../../../components/cx";

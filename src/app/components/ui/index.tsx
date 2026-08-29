@@ -1,55 +1,63 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronDown } from "lucide-react";
-import { useRef, type ReactNode } from "react";
-import { cx } from "./cx";
-import { Ornament, type OrnamentName } from "./festive/ornaments";
-import { IconClose } from "./icons";
-import { useDialogBehaviour } from "./use-dialog";
+import { type ReactNode } from "react";
+import { cx } from "../cx";
+import { cn } from "@/lib/cn";
+import { Button as ShadcnButton, buttonVariants } from "./button";
+import { Badge as ShadcnBadge } from "./badge";
+import { Input as ShadcnInput, fieldClasses } from "./input";
+import { Label } from "./label";
+import { NativeSelect } from "./native-select";
+import { Textarea as ShadcnTextarea } from "./textarea";
+import { Skeleton as ShadcnSkeleton } from "./skeleton";
+import { Card as ShadcnCard } from "./card";
+import { Alert as ShadcnAlert } from "./alert";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./table";
+import { Dialog, DialogOverlay, DialogPortal, DialogPrimitive, DialogTitle } from "./dialog";
+import { Sheet as SheetRoot, SheetOverlay, SheetPortal, SheetPrimitive } from "./sheet";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./alert-dialog";
+import { Ornament, type OrnamentName } from "../festive/ornaments";
+import { IconClose } from "../icons";
 
-export { cx } from "./cx";
+export { cx } from "../cx";
 
 /* ---------------------------------- Buttons --------------------------------- */
 
+/**
+ * The product's button vocabulary, which now lives in the cva inside
+ * ./button.tsx. These re-exports keep the ~50 existing call sites — and the
+ * `variant="tonal"` / `size="md"` language they speak — working unchanged.
+ */
 export type ButtonVariant = "primary" | "secondary" | "tonal" | "ghost" | "danger" | "dangerGhost" | "gold";
-export type ButtonSize = "sm" | "md" | "lg";
-
-const buttonVariants: Record<ButtonVariant, string> = {
-  primary: "bg-accent text-accent-contrast shadow-card hover:bg-accent-hover active:bg-accent-active",
-  secondary: "border border-line-strong bg-surface text-ink-900 shadow-card hover:border-accent/40 hover:bg-surface-2",
-  tonal: "bg-accent-soft text-accent hover:brightness-95 dark:hover:brightness-125",
-  ghost: "text-ink-600 hover:bg-hover-veil hover:text-ink-900",
-  danger: "bg-berry-strong text-white shadow-card hover:brightness-110 active:brightness-95",
-  dangerGhost: "text-berry hover:bg-berry-soft",
-  gold: "bg-gold-fill text-gold-fill-contrast shadow-card hover:brightness-105 active:brightness-95",
-};
-
-const buttonSizes: Record<ButtonSize, string> = {
-  sm: "min-h-11 rounded-lg px-3.5 text-sm",
-  md: "min-h-11 rounded-xl px-4 text-sm",
-  lg: "min-h-12 rounded-xl px-5 text-sm sm:text-base",
-};
+export type ButtonSize = "sm" | "md" | "lg" | "icon" | "icon-sm" | "icon-lg";
 
 export function buttonClasses(variant: ButtonVariant = "primary", size: ButtonSize = "md", className = "") {
-  return cx(
-    "inline-flex items-center justify-center gap-2 font-semibold transition active:scale-[0.99] disabled:pointer-events-none disabled:opacity-50",
-    buttonVariants[variant],
-    buttonSizes[size],
-    className,
-  );
+  return buttonVariants({ variant, size, className });
 }
 
 export function Button({
   variant = "primary",
   size = "md",
-  className = "",
   type = "button",
   ...rest
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: ButtonSize }) {
-  return <button type={type} className={buttonClasses(variant, size, className)} {...rest} />;
+}: React.ComponentProps<"button"> & { variant?: ButtonVariant; size?: ButtonSize }) {
+  return <ShadcnButton type={type} variant={variant} size={size} {...rest} />;
 }
 
+/**
+ * A link that looks like a button. `asChild` hands the button's classes to the
+ * Next `Link` rather than nesting an <a> inside a <button>, so it stays a real
+ * anchor — right-clickable, middle-clickable, and announced as a link.
+ */
 export function ButtonLink({
   variant = "primary",
   size = "md",
@@ -58,13 +66,34 @@ export function ButtonLink({
   children,
   ...rest
 }: { variant?: ButtonVariant; size?: ButtonSize; className?: string; href: string; children: ReactNode } & Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, "href">) {
-  return <Link href={href} className={buttonClasses(variant, size, className)} {...rest}>{children}</Link>;
+  return (
+    <ShadcnButton asChild variant={variant} size={size} className={className}>
+      <Link href={href} {...rest}>{children}</Link>
+    </ShadcnButton>
+  );
 }
 
 /* ----------------------------------- Forms ----------------------------------- */
 
-export const inputClasses = "h-12 w-full rounded-xl border border-line-strong bg-surface px-3.5 text-base text-ink-900 shadow-card outline-none placeholder:text-ink-400 focus:border-accent/60 focus:ring-4 focus:ring-accent/20 disabled:bg-surface-3 disabled:text-ink-600";
+/**
+ * The field look now lives in ./input.tsx as `fieldClasses` and is worn by the
+ * shadcn Input, Textarea and NativeSelect alike. Re-exported under its old
+ * name for the handful of places that compose a bespoke control.
+ */
+export const inputClasses = fieldClasses;
 
+/**
+ * A labelled form row.
+ *
+ * The <label> WRAPS its control, which associates the two implicitly — no
+ * id/htmlFor bookkeeping, and impossible to leave dangling when a field is
+ * copied. That is the reason ordinary "pick one" fields use the native
+ * <select> rather than the Radix one: a Radix trigger is a <button>, and a
+ * button inside a label is not a labelled control.
+ *
+ * `error` renders with role="alert" so a validation failure is announced
+ * rather than only turning something red, and sets aria-invalid on the field.
+ */
 export function Field({
   label,
   hint,
@@ -82,10 +111,12 @@ export function Field({
 }) {
   return (
     <label className={cx("block", className)}>
-      <span className="text-sm font-semibold text-ink-900">
-        {label}
-        {required && <span aria-hidden className="text-berry"> *</span>}
-      </span>
+      <Label asChild>
+        <span className="text-sm font-semibold text-ink-900">
+          {label}
+          {required && <span aria-hidden className="text-berry"> *</span>}
+        </span>
+      </Label>
       <span className="mt-2 block">{children}</span>
       {hint && <span className="mt-1.5 block text-xs leading-5 text-ink-600">{hint}</span>}
       {error && <span role="alert" className="mt-1.5 block text-xs font-semibold text-berry">{error}</span>}
@@ -94,36 +125,18 @@ export function Field({
 }
 
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  const { className = "", ...rest } = props;
-  return <input className={cx(inputClasses, className)} {...rest} />;
+  return <ShadcnInput {...props} />;
 }
 
-/**
- * The chevron is a real element rather than a background-image data-URI so it
- * can inherit a themed colour — `background-image` cannot reference currentColor.
- * The wrapper adds no box of its own, so a caller's margin/height classes on the
- * select still behave as before.
- */
 export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  const { className = "", ...rest } = props;
-  return (
-    <span className="relative block">
-      <select className={cx(inputClasses, "appearance-none pr-10", className)} {...rest} />
-      <ChevronDown
-        aria-hidden
-        size={16}
-        strokeWidth={2}
-        className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-ink-600"
-      />
-    </span>
-  );
+  const { size: _size, ...rest } = props;
+  void _size;
+  return <NativeSelect {...rest} />;
 }
 
 export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  const { className = "", ...rest } = props;
-  return <textarea className={cx(inputClasses, "h-auto min-h-24 resize-y py-3 leading-6", className)} {...rest} />;
+  return <ShadcnTextarea {...props} />;
 }
-
 export function MoneyInput({
   value,
   onValueChange,
@@ -177,9 +190,11 @@ export function Segmented<Value extends string>({
       {options.map((option) => {
         const active = option.value === value;
         return (
-          <button
+          <ShadcnButton
             key={option.value}
             type="button"
+            variant="ghost"
+            size="sm"
             aria-pressed={active}
             disabled={disabled || (lockActive && active)}
             onClick={() => onChange(option.value)}
@@ -193,7 +208,7 @@ export function Segmented<Value extends string>({
             )}
           >
             {option.label}
-          </button>
+          </ShadcnButton>
         );
       })}
     </div>
@@ -202,16 +217,13 @@ export function Segmented<Value extends string>({
 
 /* ---------------------------------- Badges ----------------------------------- */
 
+/**
+ * A status pill. The tones are domain semantics — on track, over budget,
+ * settled — and live in the cva in ./badge.tsx alongside shadcn's own
+ * variants. The dot is what makes the state readable without relying on
+ * colour alone.
+ */
 export type BadgeTone = "neutral" | "success" | "warning" | "danger" | "gold" | "pine";
-
-const badgeTones: Record<BadgeTone, string> = {
-  neutral: "border-line bg-surface-3 text-ink-600",
-  success: "border-success-border bg-success-soft text-success",
-  warning: "border-warning-border bg-warning-soft text-warning",
-  danger: "border-berry-soft-border bg-berry-soft text-berry",
-  gold: "border-warning-border bg-gold-soft text-gold",
-  pine: "border-pine-700 bg-pine-800 text-pine-100",
-};
 
 const badgeDots: Record<BadgeTone, string> = {
   neutral: "bg-ink-400",
@@ -224,23 +236,18 @@ const badgeDots: Record<BadgeTone, string> = {
 
 export function Badge({ tone = "neutral", dot = true, className = "", children }: { tone?: BadgeTone; dot?: boolean; className?: string; children: ReactNode }) {
   return (
-    <span className={cx("inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-semibold", badgeTones[tone], className)}>
-      {dot && <span aria-hidden className={cx("h-1.5 w-1.5 rounded-full", badgeDots[tone])} />}
+    <ShadcnBadge variant={tone} className={className}>
+      {dot && <span aria-hidden className={cx("h-1.5 w-1.5 shrink-0 rounded-full", badgeDots[tone])} />}
       {children}
-    </span>
+    </ShadcnBadge>
   );
 }
-
 /* ----------------------------------- Cards ------------------------------------ */
 
-const cardTones = {
-  surface: "border-line bg-surface shadow-card",
-  sunken: "border-line bg-ground-sunken",
-  // `dark` turns the plate into a theme island so everything nested inside it
-  // resolves against the evergreen ground rather than the page ground.
-  ink: "dark border-pine-700 bg-linear-to-br from-pine-900 to-pine-800 text-white shadow-card",
-};
-
+/**
+ * The app's card. Tones live in the cva in ./card.tsx; `as` keeps the element
+ * semantic (a section that opens with a heading should not be a div).
+ */
 export function Card({
   as: Tag = "div",
   tone = "surface",
@@ -249,15 +256,15 @@ export function Card({
   children,
 }: {
   as?: "div" | "section" | "article";
-  tone?: keyof typeof cardTones;
+  tone?: "surface" | "sunken" | "ink";
   padded?: boolean;
   className?: string;
   children: ReactNode;
 }) {
   return (
-    <Tag className={cx("rounded-2xl border", cardTones[tone], padded && "p-5 sm:p-6", className)}>
-      {children}
-    </Tag>
+    <ShadcnCard asChild tone={tone} className={cx(padded && "p-5 sm:p-6", className)}>
+      <Tag>{children}</Tag>
+    </ShadcnCard>
   );
 }
 
@@ -277,7 +284,8 @@ export function SectionCard({
   children?: ReactNode;
 }) {
   return (
-    <section className={cx("rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6", className)}>
+    <ShadcnCard asChild tone="surface" className={cx("p-5 sm:p-6", className)}>
+    <section>
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
         <div className="min-w-0">
           {eyebrow && <p className="text-xs font-semibold tracking-eyebrow text-gold uppercase">{eyebrow}</p>}
@@ -288,6 +296,7 @@ export function SectionCard({
       </div>
       {children}
     </section>
+    </ShadcnCard>
   );
 }
 
@@ -329,8 +338,10 @@ export function FilterChip({
   children: ReactNode;
 }) {
   return (
-    <button
+    <ShadcnButton
       type="button"
+      variant="ghost"
+      size="sm"
       onClick={onClick}
       aria-pressed={active}
       className={cx(
@@ -345,7 +356,48 @@ export function FilterChip({
       {count !== undefined && (
         <span className={cx("text-xs font-semibold tabular-nums", active ? "text-accent/70" : "text-ink-400")}>{count}</span>
       )}
-    </button>
+    </ShadcnButton>
+  );
+}
+
+/**
+ * A person you can switch on or off — a recipient on an event, a contributor,
+ * somebody granted access. Five screens had each grown their own copy of this
+ * control; they now share one, so "selected" looks and reads the same
+ * everywhere.
+ *
+ * It is a toggle, not a link or a checkbox, so it carries `aria-pressed`:
+ * a screen reader announces the name AND whether it is currently on.
+ */
+export function ToggleChip({
+  on,
+  onClick,
+  disabled = false,
+  className = "",
+  children,
+}: {
+  on: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <ShadcnButton
+      type="button"
+      variant="ghost"
+      size="md"
+      aria-pressed={on}
+      disabled={disabled}
+      onClick={onClick}
+      className={cx(
+        "border",
+        on ? "border-accent/40 bg-accent-soft text-accent" : "border-line text-ink-600 hover:bg-hover-veil",
+        className,
+      )}
+    >
+      {children}
+    </ShadcnButton>
   );
 }
 
@@ -392,11 +444,11 @@ export function DataTable<Row>({
       className={cx("hidden overflow-auto rounded-2xl border border-line bg-surface shadow-card lg:block", className)}
       style={{ maxHeight }}
     >
-      <table className="w-full border-collapse text-sm">
-        <thead className="sticky top-0 z-10 bg-surface">
-          <tr className="border-b border-line">
+      <Table className="border-collapse text-sm">
+        <TableHeader className="sticky top-0 z-10 bg-surface">
+          <TableRow className="border-b border-line hover:bg-transparent">
             {columns.map((column) => (
-              <th
+              <TableHead
                 key={column.key}
                 scope="col"
                 style={column.width ? { width: column.width } : undefined}
@@ -409,27 +461,32 @@ export function DataTable<Row>({
                 }
               >
                 {column.sortable && onSort ? (
-                  <button
+                  <ShadcnButton
                     type="button"
+                    variant="ghost"
+                    size="sm"
                     onClick={() => onSort(column.key)}
-                    className="inline-flex items-center gap-1 hover:text-ink-900"
+                    className="-mx-2 inline-flex min-h-0 items-center gap-1 px-2 py-1 text-xs font-semibold tracking-eyebrow uppercase hover:text-ink-900"
                   >
                     {column.header}
                     <span aria-hidden className="text-ink-400">
                       {sort?.key === column.key ? (sort.direction === "asc" ? "↑" : "↓") : "↕"}
                     </span>
-                  </button>
+                  </ShadcnButton>
                 ) : (
                   column.header
                 )}
-              </th>
+              </TableHead>
             ))}
-          </tr>
-        </thead>
-        <tbody>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {rows.map((row) => (
-            <tr
+            <TableRow
               key={rowKey(row)}
+              // An activatable row is announced as the button it behaves like,
+              // and is reachable and operable from the keyboard.
+              role={onRowActivate ? "button" : undefined}
               tabIndex={onRowActivate ? 0 : undefined}
               onClick={(event) => onRowActivate?.(row, event.currentTarget)}
               onKeyDown={(event) => {
@@ -443,17 +500,17 @@ export function DataTable<Row>({
               )}
             >
               {columns.map((column) => (
-                <td
+                <TableCell
                   key={column.key}
                   className={cx("px-4 py-3.5 align-middle", column.align === "right" && "text-right tabular-nums")}
                 >
                   {column.cell(row)}
-                </td>
+                </TableCell>
               ))}
-            </tr>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -478,14 +535,16 @@ export function DataCards<Row>({
   return (
     <div className={cx("space-y-3 lg:hidden", className)}>
       {rows.map((row) => (
-        <button
+        <ShadcnButton
           key={rowKey(row)}
           type="button"
+          variant="secondary"
+          size="md"
           onClick={(event) => onRowActivate?.(row, event.currentTarget)}
-          className="block w-full rounded-2xl border border-line bg-surface p-4 text-left shadow-card active:scale-[0.995]"
+          className="block h-auto w-full rounded-2xl border-line bg-surface p-4 text-left whitespace-normal shadow-card"
         >
           {renderCard(row)}
-        </button>
+        </ShadcnButton>
       ))}
     </div>
   );
@@ -572,11 +631,8 @@ export function EmptyState({
 }
 
 export function Skeleton({ className = "" }: { className?: string }) {
-  return <div aria-hidden className={cx("animate-pulse rounded-xl bg-surface-3/70", className)} />;
+  return <ShadcnSkeleton className={cn("bg-surface-3", className)} />;
 }
-
-/* ------------------------------- Notices / alerts ------------------------------ */
-
 export function Notice({
   tone = "info",
   onDismiss,
@@ -588,25 +644,30 @@ export function Notice({
   className?: string;
   children: ReactNode;
 }) {
-  const tones = {
-    info: "border-accent-soft-border bg-accent-soft text-accent",
-    success: "border-success-border bg-success-soft text-success",
-    warning: "border-warning-border bg-warning-soft text-warning",
-    danger: "border-berry-soft-border bg-berry-soft text-berry",
-  };
   return (
-    <div role={tone === "danger" ? "alert" : "status"} className={cx("flex items-start justify-between gap-4 rounded-xl border p-4 text-sm font-medium leading-6", tones[tone], className)}>
+    <ShadcnAlert
+      variant={tone}
+      // A failure interrupts; anything else is announced politely when the
+      // reader next pauses.
+      role={tone === "danger" ? "alert" : "status"}
+      className={cx("flex items-start justify-between gap-4", className)}
+    >
       <div className="min-w-0">{children}</div>
       {onDismiss && (
-        <button type="button" onClick={onDismiss} aria-label="Dismiss message" className="shrink-0 rounded-md p-1 hover:bg-hover-veil">
+        <ShadcnButton
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={onDismiss}
+          aria-label="Dismiss message"
+          className="shrink-0 rounded-md"
+        >
           <IconClose size={16} />
-        </button>
+        </ShadcnButton>
       )}
-    </div>
+    </ShadcnAlert>
   );
 }
-
-/* ----------------------------------- Modal ------------------------------------ */
 
 export function Modal({
   labelledBy,
@@ -626,9 +687,6 @@ export function Modal({
   className?: string;
   children: ReactNode;
 }) {
-  const panel = useRef<HTMLDivElement>(null);
-  useDialogBehaviour(panel, { onClose, dismissible });
-
   const sizes = {
     sm: "sm:max-w-md",
     md: "sm:max-w-lg",
@@ -637,43 +695,47 @@ export function Modal({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-scrim backdrop-blur-[3px] sm:items-center sm:p-6"
-      onMouseDown={(event) => { if (event.target === event.currentTarget && dismissible) onClose(); }}
-    >
-      <div
-        ref={panel}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={labelledBy}
-        tabIndex={-1}
-        // The radius and the scrolling live on different elements on purpose.
-        // With both on one element the native scrollbar is painted inside the
-        // corner radius, squaring off the rounded corner and running past the
-        // panel edge. Clipping here and scrolling on the child makes the bar
-        // follow the curve.
-        // The bottom inset lives on the panel, not on `ModalFooter`, because
-        // most modals have no footer (command search, family access, owed,
-        // payment log) and would otherwise put their last row under the home
-        // indicator. A sticky `bottom-0` footer honours this padding, so
-        // footered modals do not end up double-padded.
-        // Mobile only: the panel is flush to the bottom edge there
-        // (`items-end`), while on `sm:` the backdrop's own padding floats it.
-        className={cx(
-          "relative flex w-full max-h-[94dvh] flex-col overflow-hidden rounded-t-3xl pb-[env(safe-area-inset-bottom)] shadow-modal outline-none sm:rounded-3xl sm:pb-0",
-          surface === "cream" || surface === "ground" ? "bg-ground" : "bg-surface",
-          sizes[size],
-          className,
-        )}
-      >
-        <div className="dialog-scroll relative min-h-0 overflow-y-auto overscroll-contain">
-          <span aria-hidden className="garland-hairline sticky top-0 z-30 block h-px w-full" />
-          <div aria-hidden className="mx-auto mt-2 h-1 w-10 rounded-full bg-line-strong sm:hidden" />
-          {children}
-        </div>
-      </div>
-    </div>
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogPortal>
+        <DialogOverlay />
+        <DialogPrimitive.Content
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={labelledBy}
+          aria-describedby={undefined}
+          onEscapeKeyDown={(event) => { if (!dismissible) event.preventDefault(); }}
+          onPointerDownOutside={(event) => { if (!dismissible) event.preventDefault(); }}
+          onInteractOutside={(event) => { if (!dismissible) event.preventDefault(); }}
+          className={cn(
+            "fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[94dvh] w-full flex-col overflow-hidden rounded-t-3xl pb-[env(safe-area-inset-bottom)] shadow-modal outline-none",
+            "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+            "sm:inset-0 sm:m-auto sm:h-fit sm:rounded-3xl sm:pb-0",
+            surface === "cream" || surface === "ground" ? "bg-ground" : "bg-surface",
+            sizes[size],
+            className,
+          )}
+        >
+          <div className="dialog-scroll relative min-h-0 overflow-y-auto overscroll-contain">
+            <span aria-hidden className="garland-hairline sticky top-0 z-30 block h-px w-full" />
+            <div aria-hidden className="mx-auto mt-2 h-1 w-10 rounded-full bg-line-strong sm:hidden" />
+            {children}
+          </div>
+        </DialogPrimitive.Content>
+      </DialogPortal>
+    </Dialog>
   );
+}
+
+/**
+ * The dialog's accessible name.
+ *
+ * Radix insists a dialog has a Title, and screen readers announce it on open.
+ * Modals that use `ModalHeader` get one for free; the few that draw their own
+ * heading (command search, the photo viewer) wrap it in this, so the heading
+ * they already render becomes the real title rather than a second one.
+ */
+export function ModalTitle({ id, className = "", children }: { id: string; className?: string; children: ReactNode }) {
+  return <DialogTitle asChild><h2 id={id} className={className}>{children}</h2></DialogTitle>;
 }
 
 export function ModalHeader({
@@ -704,17 +766,18 @@ export function ModalHeader({
     )}>
       <div className="min-w-0">
         {eyebrow && <p className="text-xs font-semibold tracking-eyebrow text-gold uppercase">{eyebrow}</p>}
-        <h2 id={id} className={cx("break-words font-display text-2xl font-semibold text-ink-900 sm:text-3xl", eyebrow && "mt-1")}>{title}</h2>
+        <ModalTitle id={id} className={cx("break-words font-display text-2xl font-semibold text-ink-900 sm:text-3xl", eyebrow && "mt-1")}>{title}</ModalTitle>
         {description && <p className="mt-1.5 text-sm leading-6 text-ink-600">{description}</p>}
       </div>
-      <button
-        type="button"
+      <Button
+        variant="secondary"
+        size="icon"
         onClick={onClose}
         aria-label={closeLabel}
-        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-ink-600 shadow-sm hover:border-line-strong hover:text-ink-900"
+        className="shrink-0 rounded-full border-line bg-surface text-ink-600 shadow-sm hover:border-line-strong hover:text-ink-900"
       >
         <IconClose size={18} />
-      </button>
+      </Button>
     </header>
   );
 }
@@ -732,6 +795,14 @@ export function ModalFooter({ className = "", children }: { className?: string; 
   );
 }
 
+/**
+ * A destructive confirmation.
+ *
+ * This is an AlertDialog rather than a Dialog: it is announced as
+ * role="alertdialog", and — the reason it matters here — it cannot be dismissed
+ * by clicking the backdrop, so a stray click outside can never be the thing
+ * that deletes an event. Escape still cancels, unless work is already in flight.
+ */
 export function ConfirmDialog({
   title,
   body,
@@ -752,18 +823,31 @@ export function ConfirmDialog({
   onConfirm: () => void;
 }) {
   return (
-    <Modal labelledBy="confirm-dialog-title" onClose={onCancel} size="sm" surface="white" dismissible={!busy}>
-      <div className="p-5 sm:p-7">
-        <h2 id="confirm-dialog-title" className="font-display text-xl font-semibold text-ink-900">{title}</h2>
-        <div className="mt-2 text-sm leading-6 text-ink-600">{body}</div>
+    <AlertDialog open onOpenChange={(open) => { if (!open && !busy) onCancel(); }}>
+      <AlertDialogContent
+        aria-modal="true"
+        onEscapeKeyDown={(event) => { if (busy) event.preventDefault(); }}
+        className="max-w-[calc(100%-2rem)] gap-0 rounded-3xl border-line bg-surface p-5 shadow-modal sm:max-w-md sm:p-7"
+      >
+        <AlertDialogHeader className="gap-0 text-left sm:text-left">
+          <AlertDialogTitle className="font-display text-xl font-semibold text-ink-900">{title}</AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="mt-2 text-sm leading-6 text-ink-600">{body}</div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
         <div className="mt-6 grid grid-cols-2 gap-3">
-          <Button variant="secondary" size="lg" disabled={busy} onClick={onCancel}>Cancel</Button>
-          <Button variant={danger ? "danger" : "primary"} size="lg" disabled={busy} onClick={onConfirm}>
+          <AlertDialogCancel variant="secondary" size="lg" disabled={busy}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant={danger ? "danger" : "primary"}
+            size="lg"
+            disabled={busy}
+            onClick={(event) => { event.preventDefault(); onConfirm(); }}
+          >
             {busy ? (busyLabel ?? "Working...") : confirmLabel}
-          </Button>
+          </AlertDialogAction>
         </div>
-      </div>
-    </Modal>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -773,8 +857,8 @@ const sheetSizes = { sm: "sm:max-w-sm", md: "sm:max-w-md", lg: "sm:max-w-lg" };
 
 /**
  * Edge-anchored panel for secondary controls — filters, pickers — that would
- * over-weight a centred `Modal`. Shares `Modal`'s focus trap, Esc handling and
- * scroll lock via `useDialogBehaviour`.
+ * over-weight a centred `Modal`. Same Radix behaviour as `Modal`; the geometry
+ * differs, and the same radius/scroll split applies.
  */
 export function Sheet({
   labelledBy,
@@ -793,50 +877,42 @@ export function Sheet({
   className?: string;
   children: ReactNode;
 }) {
-  const panel = useRef<HTMLDivElement>(null);
-  useDialogBehaviour(panel, { onClose, dismissible });
-
   return (
-    <div
-      className={cx(
-        "fixed inset-0 z-50 flex bg-scrim backdrop-blur-[3px]",
-        side === "bottom" ? "items-end justify-center" : "items-stretch justify-end",
-      )}
-      onMouseDown={(event) => { if (event.target === event.currentTarget && dismissible) onClose(); }}
-    >
-      <div
-        ref={panel}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={labelledBy}
-        tabIndex={-1}
-        // Same split as `Modal`: this element owns the radius and clips, the
-        // child scrolls, so the scrollbar cannot square off a rounded corner.
-        // Bottom inset for the same reason as `Modal`. A bottom sheet is flush
-        // to the screen edge until `sm:` lifts it with `mb-6`; a right-side
-        // sheet is full height, so it always needs the inset.
-        className={cx(
-          "relative flex w-full flex-col overflow-hidden bg-ground shadow-modal outline-none",
-          side === "bottom"
-            ? cx("max-h-[88dvh] rounded-t-3xl pb-[env(safe-area-inset-bottom)] sm:mb-6 sm:rounded-3xl sm:pb-0", sheetSizes[size])
-            : cx("h-full max-w-[92vw] pb-[env(safe-area-inset-bottom)]", sheetSizes[size]),
-          className,
-        )}
-      >
-        {side === "bottom" && (
-          <span aria-hidden className="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-line-strong sm:hidden" />
-        )}
-        {/* Stays a flex column so `SheetFooter`'s `mt-auto` still pins to the
-            bottom; `flex-1` only on the full-height side panel, so a bottom
-            sheet still sizes to its content. */}
-        <div className={cx(
-          "dialog-scroll flex min-h-0 flex-col overflow-y-auto overscroll-contain",
-          side === "right" && "flex-1",
-        )}>
-          {children}
-        </div>
-      </div>
-    </div>
+    <SheetRoot open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <SheetPortal>
+        <SheetOverlay />
+        <SheetPrimitive.Content
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={labelledBy}
+          aria-describedby={undefined}
+          onEscapeKeyDown={(event) => { if (!dismissible) event.preventDefault(); }}
+          onPointerDownOutside={(event) => { if (!dismissible) event.preventDefault(); }}
+          onInteractOutside={(event) => { if (!dismissible) event.preventDefault(); }}
+          className={cn(
+            "fixed z-50 flex flex-col overflow-hidden bg-ground shadow-modal outline-none",
+            "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+            side === "bottom"
+              ? cx("inset-x-0 bottom-0 mx-auto max-h-[88dvh] w-full rounded-t-3xl pb-[env(safe-area-inset-bottom)] sm:bottom-6 sm:rounded-3xl sm:pb-0", sheetSizes[size])
+              : cx("inset-y-0 right-0 h-full w-full max-w-[92vw] pb-[env(safe-area-inset-bottom)]", sheetSizes[size]),
+            className,
+          )}
+        >
+          {side === "bottom" && (
+            <span aria-hidden className="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-line-strong sm:hidden" />
+          )}
+          {/* Stays a flex column so `SheetFooter`'s `mt-auto` still pins to the
+              bottom; `flex-1` only on the full-height side panel, so a bottom
+              sheet still sizes to its content. */}
+          <div className={cx(
+            "dialog-scroll flex min-h-0 flex-col overflow-y-auto overscroll-contain",
+            side === "right" && "flex-1",
+          )}>
+            {children}
+          </div>
+        </SheetPrimitive.Content>
+      </SheetPortal>
+    </SheetRoot>
   );
 }
 
@@ -854,17 +930,18 @@ export function SheetHeader({
   return (
     <header className="flex items-start justify-between gap-4 px-5 pt-4 pb-4 sm:px-6">
       <div className="min-w-0">
-        <h2 id={id} className="font-display text-xl font-semibold text-ink-900">{title}</h2>
+        <ModalTitle id={id} className="font-display text-xl font-semibold text-ink-900">{title}</ModalTitle>
         {description && <p className="mt-1 text-sm leading-6 text-ink-600">{description}</p>}
       </div>
-      <button
-        type="button"
+      <Button
+        variant="secondary"
+        size="icon"
         onClick={onClose}
         aria-label="Close"
-        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-ink-600 hover:border-line-strong hover:text-ink-900"
+        className="shrink-0 rounded-full border-line bg-surface text-ink-600 hover:border-line-strong hover:text-ink-900"
       >
         <IconClose size={18} />
-      </button>
+      </Button>
     </header>
   );
 }

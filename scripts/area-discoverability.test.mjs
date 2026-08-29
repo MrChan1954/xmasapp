@@ -36,6 +36,11 @@ const { NEVER_IN_EVENT_SCOPE } = await import("../src/lib/settings-scopes.ts");
 
 const APP = ["src", "app"];
 const MENU = read(...APP, "components", "account-menu.tsx");
+// The menu primitives the account menu is built from. The switcher's
+// semantics (menuitemradio, checked state, keyboard operation) live here
+// now, so the guarantees are asserted where they are actually implemented
+// rather than where they happen to be spelled out.
+const POPOVER = read(...APP, "components", "popover.tsx");
 const SETTINGS = read(...APP, "settings", "settings-screen.tsx");
 
 // ===========================================================================
@@ -47,8 +52,26 @@ describe("the family switcher offers a way to start another family", () => {
 
   test("it still lists the families somebody belongs to", () => {
     assert.match(menu, /choices\.map\(\(choice\) =>/u, "the existing entries stay");
-    assert.match(menu, /aria-checked=\{choice\.active\}/u);
-    assert.match(menu, /role="menuitemradio"/u);
+
+    /*
+     * Each family is a one-of-many choice, and the group is told which one is
+     * current. `MenuRadioGroup value=` is what makes the checked state real:
+     * the item whose value matches is the checked one.
+     */
+    assert.match(menu, /<MenuRadioGroup value=\{active\?\.id \?\? ""\}>/u,
+      "the group must know which family is current");
+    assert.match(menu, /<MenuRadioItem[\s\S]*?value=\{choice\.id\}/u,
+      "each family must be a radio item carrying its own id");
+
+    /*
+     * ...and the item really is a menuitemradio. Radix's DropdownMenuRadioItem
+     * renders role="menuitemradio" and manages aria-checked from the group's
+     * value, which is strictly more than the hand-written attribute this used
+     * to assert: it also gets arrow-key navigation and typeahead.
+     */
+    assert.match(POPOVER, /function MenuRadioItem\(/u);
+    assert.match(POPOVER, /<DropdownMenuRadioItem/u,
+      "the radio item must be the registry primitive, not a bare button");
   });
 
   test("and the current one is still ticked", () => {
@@ -75,7 +98,7 @@ describe("the family switcher offers a way to start another family", () => {
      */
     assert.match(menu, /\{\(canSwitch \|\| canCreate\) && \(/u,
       "the section must render when EITHER question says so");
-    assert.match(menu, /\{canSwitch && choices\.map/u,
+    assert.match(menu, /\{canSwitch && \([\s\S]{0,200}?choices\.map/u,
       "the list is still gated on there being something to switch to");
     assert.match(menu, /\{canCreate && \(/u,
       "and the action on there being a family already");

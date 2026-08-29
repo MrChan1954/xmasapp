@@ -10,12 +10,14 @@ import {
   ConfirmDialog,
   EmptyState,
   Field,
+  FilterChip,
   Input,
   Modal,
   ModalHeader,
   Notice,
   Select,
   Skeleton,
+  ToggleChip,
   cx,
   type BadgeTone,
 } from "../../components/ui";
@@ -306,20 +308,15 @@ export function FamilyAccessClient() {
 
         <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:px-0" aria-label="Filter accounts">
           {filters.map((item) => (
-            <button
+            <FilterChip
               key={item.value}
-              type="button"
+              active={filter === item.value}
+              count={counts[item.value]}
               onClick={() => setFilter(item.value)}
-              aria-pressed={filter === item.value}
-              className={cx(
-                "min-h-11 shrink-0 rounded-full border px-4 text-xs font-semibold transition",
-                filter === item.value
-                  ? "border-accent-soft-border bg-accent-soft text-accent"
-                  : "border-line bg-surface text-ink-600 hover:border-accent/40",
-              )}
+              className="px-4 text-xs"
             >
-              {item.label} <span className={filter === item.value ? "text-accent/70" : "text-ink-400"}>{counts[item.value]}</span>
-            </button>
+              {item.label}
+            </FilterChip>
           ))}
         </div>
       </div>
@@ -451,21 +448,14 @@ function ContributorPool({
           {members.map((member) => {
             const on = member.isFamilyContributor;
             return (
-              <button
+              <ToggleChip
                 key={member.personId}
-                type="button"
-                aria-pressed={on}
+                on={on}
                 disabled={busy || saving !== null}
                 onClick={() => void toggle(member)}
-                className={cx(
-                  "min-h-11 rounded-xl border px-3.5 text-sm font-semibold transition disabled:opacity-50",
-                  on
-                    ? "border-accent/40 bg-accent-soft text-accent"
-                    : "border-line text-ink-600 hover:bg-hover-veil",
-                )}
               >
                 {member.name}{on ? " ✓" : ""}
-              </button>
+              </ToggleChip>
             );
           })}
         </div>
@@ -728,21 +718,22 @@ function StatusBadge({ status }: { status: AccountStatus }) {
 
 function ActionButton({ children, disabled, onClick, primary = false, danger = false }: { children: React.ReactNode; disabled: boolean; onClick: () => void; primary?: boolean; danger?: boolean }) {
   return (
-    <button
-      type="button"
+    <Button
+      variant={primary ? "tonal" : danger ? "dangerGhost" : "secondary"}
+      size="md"
       disabled={disabled}
       onClick={onClick}
       className={cx(
-        "min-h-11 rounded-xl border px-2 text-xs font-semibold leading-4 transition disabled:cursor-wait disabled:opacity-50",
+        "border px-2 text-xs leading-4 disabled:cursor-wait",
         primary
-          ? "border-accent-soft-border bg-accent-soft text-accent"
+          ? "border-accent-soft-border"
           : danger
-            ? "border-berry-soft-border bg-surface text-berry hover:bg-berry-soft"
-            : "border-line bg-surface text-ink-600 hover:bg-hover-veil",
+            ? "border-berry-soft-border bg-surface"
+            : "",
       )}
     >
       {children}
-    </button>
+    </Button>
   );
 }
 

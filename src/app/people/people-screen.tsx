@@ -369,11 +369,11 @@ function PersonCard({ person, onClick }: { person: Person; onClick: () => void }
   const complete = status === "budget_reached";
 
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
       onClick={onClick}
       className={cx(
-        "group relative overflow-hidden rounded-2xl border bg-surface p-5 text-left shadow-card transition hover:-translate-y-0.5 hover:shadow-lift active:scale-[0.99] sm:p-6",
+        "group relative block h-auto overflow-hidden rounded-2xl border bg-surface p-5 text-left whitespace-normal shadow-card hover:-translate-y-0.5 hover:shadow-lift sm:p-6",
         status === "over_budget" ? "border-berry-soft-border" : complete ? "border-accent-soft-border" : "border-line",
       )}
     >
@@ -410,7 +410,7 @@ function PersonCard({ person, onClick }: { person: Person; onClick: () => void }
           {person.ideaCount === null ? "Ideas unavailable" : `${person.ideaCount} ${person.ideaCount === 1 ? "idea" : "ideas"}`}
         </span>
       </div>
-    </button>
+    </Button>
   );
 }
 
