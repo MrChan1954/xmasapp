@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { cx } from "../cx";
 import { cn } from "@/lib/cn";
 import { Button as ShadcnButton, buttonVariants } from "./button";
@@ -669,6 +669,45 @@ export function Notice({
   );
 }
 
+/**
+ * Return focus to whatever opened the dialog.
+ *
+ * Radix does this itself — but it learns what to go back to from its own
+ * `DialogTrigger`, and this app has none: every dialog is rendered
+ * CONDITIONALLY (`{open && <Modal … />}`) and opened by an ordinary button
+ * somewhere else on the page. With no trigger to remember, Radix drops focus on
+ * <body> when the panel unmounts, which live QA caught on the Add recipient
+ * dialog — close it and the keyboard is back at the top of the document.
+ *
+ * The hand-rolled dialog this replaced restored focus on unmount, so this is
+ * that behaviour kept rather than a new idea.
+ *
+ * Two details are load-bearing:
+ *
+ * - the opener is captured in a `useState` initialiser, which runs during
+ *   RENDER. An effect would be too late: child effects run before the parent's,
+ *   so Radix's content has already moved focus into the panel by then and we
+ *   would capture the panel itself;
+ * - the restore is deferred a frame. Radix's own focus handling runs as the
+ *   panel unmounts, and whatever it does to focus should land before this does,
+ *   not after.
+ */
+function useReturnFocus() {
+  const [opener] = useState(() =>
+    typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null),
+  );
+
+  useEffect(() => () => {
+    if (!opener) return;
+    requestAnimationFrame(() => {
+      // Gone from the page — a dialog that saved and navigated, say. Focusing a
+      // detached node would silently move focus to <body>, the very thing this
+      // exists to prevent.
+      if (opener.isConnected) opener.focus();
+    });
+  }, [opener]);
+}
+
 export function Modal({
   labelledBy,
   onClose,
@@ -687,6 +726,8 @@ export function Modal({
   className?: string;
   children: ReactNode;
 }) {
+  useReturnFocus();
+
   const sizes = {
     sm: "sm:max-w-md",
     md: "sm:max-w-lg",
@@ -822,6 +863,8 @@ export function ConfirmDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  useReturnFocus();
+
   return (
     <AlertDialog open onOpenChange={(open) => { if (!open && !busy) onCancel(); }}>
       <AlertDialogContent
@@ -877,6 +920,8 @@ export function Sheet({
   className?: string;
   children: ReactNode;
 }) {
+  useReturnFocus();
+
   return (
     <SheetRoot open onOpenChange={(open) => { if (!open) onClose(); }}>
       <SheetPortal>

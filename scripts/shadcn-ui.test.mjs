@@ -13,10 +13,15 @@
  * it PRESSED, is it DISABLED. Those questions survive a change of markup, which
  * is precisely the change that just happened underneath them.
  *
- * What is deliberately NOT here: anything that depends on real browser focus or
- * layout. jsdom has no viewport and no focus ring, so "focus returns to the
- * trigger" and "the sheet does not overflow at 390px" are proven in live
- * browser QA instead, not faked here.
+ * What is deliberately NOT here: anything that depends on LAYOUT. jsdom has no
+ * viewport, so "the sheet does not overflow at 390px" is proven in live browser
+ * QA instead, not faked here.
+ *
+ * Focus used to be on that list too, and it should not have been. jsdom has no
+ * focus RING, but it has `document.activeElement` and it honours `focus()` —
+ * and the one dialog regression this migration actually shipped was a focus
+ * one, found by a person in a browser after every test in this file had passed.
+ * The cost of asking the question here is six lines. See "focus return", below.
  */
 import assert from "node:assert/strict";
 import test, { describe, after } from "node:test";
@@ -24,6 +29,7 @@ import test, { describe, after } from "node:test";
 import {
   React,
   accessibleName,
+  act,
   allByRole,
   byRole,
   changeValue,
@@ -326,6 +332,96 @@ describe("Modal", () => {
     await click(byRole(document.body, "button", "Close"));
     assert.equal(closed, 1);
     await view.unmount();
+  });
+});
+
+// ===========================================================================
+// 5b. Focus return — the regression that live QA caught
+// ===========================================================================
+
+/*
+ * WHERE THE KEYBOARD ENDS UP WHEN A DIALOG CLOSES.
+ *
+ * Radix returns focus to its own `DialogTrigger`. This app has none: dialogs
+ * are rendered conditionally and opened by an ordinary button elsewhere on the
+ * page, so there was nothing for Radix to go back to and focus landed on
+ * <body> — a keyboard user closing "Add recipient" was returned to the top of
+ * the document, and a screen reader lost its place entirely.
+ *
+ * The dialog this migration replaced restored focus on unmount. These tests
+ * exist so that guarantee cannot be dropped again silently.
+ */
+describe("focus return", () => {
+  /** Radix and the restore both settle on a later frame. */
+  const settle = () => act(async () => {
+    await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+  });
+
+  async function opensAndCloses(dialogFor) {
+    const opener = document.createElement("button");
+    opener.textContent = "Add recipient";
+    document.body.appendChild(opener);
+    opener.focus();
+    assert.equal(document.activeElement, opener, "precondition: the opener has focus");
+
+    const view = await show(dialogFor());
+    assert.notEqual(document.activeElement, opener, "the dialog must take focus while it is open");
+
+    await view.unmount();
+    await settle();
+    return opener;
+  }
+
+  test("CLOSING A MODAL PUTS THE KEYBOARD BACK ON WHAT OPENED IT", async () => {
+    const opener = await opensAndCloses(() =>
+      h(ui.Modal, { labelledBy: "t", onClose: () => {} },
+        h(ui.ModalHeader, { id: "t", title: "Add recipient", onClose: () => {} }),
+      ),
+    );
+    assert.equal(document.activeElement, opener,
+      "focus fell to <body>: a keyboard user is back at the top of the page");
+  });
+
+  test("so does closing a Sheet", async () => {
+    const opener = await opensAndCloses(() =>
+      h(ui.Sheet, { labelledBy: "s", onClose: () => {} },
+        h(ui.SheetHeader, { id: "s", title: "Filters", onClose: () => {} }),
+      ),
+    );
+    assert.equal(document.activeElement, opener);
+  });
+
+  test("and so does dismissing a ConfirmDialog", async () => {
+    const opener = await opensAndCloses(() =>
+      h(ui.ConfirmDialog, {
+        title: "Delete this event?",
+        body: "Everything in it goes too.",
+        confirmLabel: "Delete",
+        onCancel: () => {},
+        onConfirm: () => {},
+      }),
+    );
+    assert.equal(document.activeElement, opener);
+  });
+
+  test("but an opener that has left the page is not chased", async () => {
+    const opener = document.createElement("button");
+    document.body.appendChild(opener);
+    opener.focus();
+
+    const view = await show(
+      h(ui.Modal, { labelledBy: "t", onClose: () => {} },
+        h(ui.ModalHeader, { id: "t", title: "Gone", onClose: () => {} }),
+      ),
+    );
+    // The shape of a dialog that saved and navigated: the screen behind it is
+    // replaced while the panel is closing.
+    opener.remove();
+    await view.unmount();
+    await settle();
+    // Nothing to assert about WHERE focus is — only that restoring did not
+    // throw on a detached node.
+    assert.ok(true);
   });
 });
 

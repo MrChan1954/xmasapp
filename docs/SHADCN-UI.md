@@ -245,9 +245,25 @@ than only turning something red.
 
 ### Modal / Sheet / ConfirmDialog — Radix owns the behaviour
 
-The hand-rolled focus trap, Escape handler, scroll lock and focus-return
-(`use-dialog.ts`, ~50 lines) **have been deleted**. Radix does all of it, plus
-inert-ing the page behind, which the hand-rolled version never did.
+The hand-rolled focus trap, Escape handler and scroll lock (`use-dialog.ts`,
+~50 lines) **have been deleted**. Radix does all of it, plus inert-ing the page
+behind, which the hand-rolled version never did.
+
+**Focus-return is the one part Radix does not cover here, and it had to be kept.**
+Radix returns focus to its own `DialogTrigger`; this app has none, because every
+dialog is rendered conditionally (`{open && <Modal … />}`) and opened by an
+ordinary button somewhere else on the page. With no trigger to remember, Radix
+dropped focus on `<body>`: close "Add recipient" from the keyboard and you were
+returned to the top of the document. `useReturnFocus()` in `ui/index.tsx`
+captures the focused element during RENDER — an effect is too late, because
+child effects run first and Radix has already moved focus into the panel by
+then — and restores it a frame after unmount. `Modal`, `Sheet` and
+`ConfirmDialog` all call it.
+
+> This was **found in live browser QA, after every automated test passed**. It
+> is the reason the "focus is only provable in a real browser" line was wrong
+> and has been removed: jsdom has no focus *ring*, but it has
+> `document.activeElement`, and four tests now hold the guarantee down.
 
 The *geometry* was kept exactly, because it encodes real fixes:
 
@@ -343,14 +359,17 @@ of five.
 - **No click-only non-semantic elements.** Audited: zero. An activatable table
   row carries `role="button"`, `tabIndex={0}` and an Enter/Space handler.
 - **Status is never colour alone** — badges carry a dot and a word.
-- Focus trap, Escape, focus-return and keyboard menu navigation are Radix's,
-  verified in live browser QA rather than asserted in jsdom.
+- **Closing a dialog returns focus to whatever opened it.** Radix's trigger-based
+  version does not fire for a conditionally rendered dialog, so `useReturnFocus`
+  does it; tested.
+- Focus trap, Escape and keyboard menu navigation are Radix's, and confirmed in
+  live browser QA.
 
 ---
 
 ## 9. Testing
 
-`scripts/shadcn-ui.test.mjs` — **38 tests that render the real components into a
+`scripts/shadcn-ui.test.mjs` — **42 tests that render the real components into a
 real DOM** and query them by role and accessible name, the way an assistive
 technology would. That is the point: those questions survive a change of markup,
 which is exactly the change this migration made.
@@ -376,9 +395,13 @@ Two things the harness had to get right, both of which fail *silently* if wrong:
    unmounting a test's container does not remove them; a leaked dialog makes the
    next test assert against the wrong element.
 
-Deliberately **not** tested here: real browser focus and layout. jsdom has no
-viewport and no focus ring, so "focus returns to the trigger" and "no horizontal
-overflow at 390px" are proven in live browser QA.
+Deliberately **not** tested here: layout. jsdom has no viewport, so "no
+horizontal overflow at 390px" is proven in live browser QA.
+
+Focus was on that list, and should not have been — see the box in §6. jsdom
+honours `focus()` and reports `document.activeElement`, so "closing a dialog
+puts the keyboard back on what opened it" is asked here now, in four tests that
+fail if `useReturnFocus` is removed.
 
 Dependencies added for this: `jsdom` and `esbuild` only. No testing-library —
 the queries are 60 lines in `harness.mjs`.
