@@ -49,7 +49,10 @@ export function PersonProfileScreen({
   const gifts = totalGiftCount(history);
 
   return (
-    <AppShell width="default">
+    /* The sticky bar names the person and leads back to the directory they were
+       opened from. Without both it read "Family Gift Planner" with no way up,
+       which is the app's name rather than an answer to "where am I". */
+    <AppShell width="default" title={person.name} parent={{ href: "/people", label: "People" }}>
       <PageHeader
         eyebrow="People"
         title={person.name}

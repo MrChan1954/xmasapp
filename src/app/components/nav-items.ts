@@ -1,8 +1,8 @@
 import { CalendarDays, Contact, Gift, House, MoreHorizontal, Scale, Settings, Sparkles, UserPlus, Users, type LucideIcon } from "lucide-react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { eventIdFromPath, eventNavMode, eventPath, eventSectionFromPath, type EventNavMode, type EventSection } from "@/lib/events.ts";
+import { eventNavMode, eventPath, eventSectionFromPath, type EventNavMode, type EventSection } from "@/lib/events.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { activeGlobalSection, type GlobalNavSection } from "@/lib/navigation.ts";
+import { DEFAULT_PAGE_TITLE, EVENTS_HOME, FAMILY_SETTINGS_HOME, SETTINGS_HOME, activeGlobalSection, pageTitleFor, type Crumb, type GlobalNavSection, type PageTitle } from "@/lib/navigation.ts";
 
 export type NavItem = {
   href: string;
@@ -168,50 +168,24 @@ export function isAuthRoute(pathname: string) {
   return AUTH_ROUTES.has(pathname);
 }
 
-/** The dashboard, and the breadcrumb target from anywhere inside an event. */
-export const EVENTS_HOME = { href: "/", label: "Events" } as const;
-
-const EVENT_SECTION_TITLES: Record<EventSection, string> = {
-  home: "Overview",
-  people: "People",
-  "add-purchase": "Add purchase",
-  owed: "Owed",
-  more: "More",
-  "payment-log": "Payment log",
-  settings: "Event settings",
-};
-
-const TITLES: Array<{ test: RegExp; title: string; parent?: { href: string; label: string } }> = [
-  { test: /^\/$/u, title: "Events" },
-  // Family Access, Activity, Notifications and Account belong to the family
-  // rather than to any one event, so they lead back to the dashboard. Sending
-  // them to "/more" would bounce through the legacy redirect and land the
-  // reader in Christmas even if they arrived from a birthday.
-  { test: /^\/more\/family-access/u, title: "Family access", parent: EVENTS_HOME },
-  { test: /^\/more\/activity/u, title: "Activity", parent: EVENTS_HOME },
-  { test: /^\/more\/notifications/u, title: "Notifications", parent: EVENTS_HOME },
-  { test: /^\/account$/u, title: "Account", parent: EVENTS_HOME },
-  { test: /^\/events\/new$/u, title: "Create event", parent: EVENTS_HOME },
-];
-
-/**
- * The top bar's title and breadcrumb.
+/*
+ * TITLES AND BREADCRUMBS MOVED TO `src/lib/navigation.ts` IN Q9, and are
+ * re-exported here so every component keeps its single import.
  *
- * Inside an event the breadcrumb is the event itself -- Payment Log sits under
- * More, everything else sits under Events -- so there is always a one-tap way
- * back out to the dashboard without reaching for the browser's Back button.
+ * THE MOVE IS THE FIX, not tidying. While the table lived in this file it could
+ * only ever be checked by matching a regular expression against the source --
+ * this module imports lucide's icon components, which the plain test runner
+ * cannot load -- and a regex can only confirm the entries that are ALREADY
+ * there. It cannot notice five routes that were never added, or two parents
+ * pointing at a screen the reader did not come from, and those were exactly the
+ * faults. Next door the same function is a plain call a test can make.
  */
-export function pageTitleFor(pathname: string): { title: string; parent?: { href: string; label: string } } {
-  const eventId = eventIdFromPath(pathname);
-  const section = eventSectionFromPath(pathname);
-  if (eventId && section) {
-    if (section === "home") return { title: EVENT_SECTION_TITLES.home, parent: EVENTS_HOME };
-    const parent = section === "payment-log"
-      ? { href: eventPath(eventId, "more") ?? "/", label: "More" }
-      : EVENTS_HOME;
-    return { title: EVENT_SECTION_TITLES[section], parent };
-  }
-
-  const match = TITLES.find((entry) => entry.test.test(pathname));
-  return match ? { title: match.title, parent: match.parent } : { title: "Family Gift Planner" };
-}
+export {
+  DEFAULT_PAGE_TITLE,
+  EVENTS_HOME,
+  FAMILY_SETTINGS_HOME,
+  SETTINGS_HOME,
+  pageTitleFor,
+  type Crumb,
+  type PageTitle,
+};

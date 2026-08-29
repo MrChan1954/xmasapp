@@ -27,6 +27,9 @@ const exists = (...parts) => existsSync(join(root, ...parts));
 
 const { EVENT_SECTIONS, eventIdFromPath, eventPath, eventSectionFromPath, partitionEvents } =
   await import("../src/lib/events.ts");
+// `pageTitleFor` moved here from `nav-items.ts` in Q9 so it could be CALLED
+// rather than matched with a regular expression. See the file's own header.
+const { EVENTS_HOME, pageTitleFor } = await import("../src/lib/navigation.ts");
 
 const CHRISTMAS = "11111111-1111-4111-8111-111111111111";
 const APP = ["src", "app"];
@@ -277,10 +280,21 @@ function navItemsFor(eventId) {
 
 test("there is always an obvious way back out to Events", () => {
   const navItems = read(...APP, "components", "nav-items.ts");
-  // The top bar breadcrumb inside an event points at the dashboard, so leaving
-  // never depends on the browser's Back button.
-  assert.match(navItems, /export const EVENTS_HOME = \{ href: "\/", label: "Events" \}/);
-  assert.match(navItems, /if \(section === "home"\) return \{ title: EVENT_SECTION_TITLES\.home, parent: EVENTS_HOME \};/);
+  /*
+   * The top bar breadcrumb inside an event points at the dashboard, so leaving
+   * never depends on the browser's Back button.
+   *
+   * ASKED OF THE FUNCTION, not of the source text. These two lines used to be
+   * regular expressions against `nav-items.ts`, which could confirm that the
+   * entries already written there were still written there and nothing else.
+   * Q9 moved the table into `src/lib/navigation.ts` for exactly that reason.
+   */
+  assert.deepEqual(EVENTS_HOME, { href: "/", label: "Events" });
+  for (const section of ["home", "people", "add-purchase", "owed", "more"]) {
+    const crumb = pageTitleFor(eventPath(CHRISTMAS, section)).parent;
+    assert.deepEqual(crumb, EVENTS_HOME, `${section} must lead back out to the dashboard`);
+  }
+  assert.equal(pageTitleFor(eventPath(CHRISTMAS, "home")).title, "Overview");
   // The desktop rail carries it as a permanent first entry -- now from the
   // shared family list rather than hard-coded, so Events and People are built
   // the same way and neither can be dropped without the other noticing.

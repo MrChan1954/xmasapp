@@ -240,3 +240,198 @@ describe("the three scopes have three screens, and do not duplicate each other",
     }
   });
 });
+
+// ===========================================================================
+// 4. Q9 -- the shell says where you are, and asks before it hides a family
+// ===========================================================================
+
+const { DEFAULT_PAGE_TITLE, FAMILY_SETTINGS_HOME, SETTINGS_HOME, pageTitleFor } =
+  await import("../src/lib/navigation.ts");
+
+/**
+ * WHAT THE STICKY BAR CALLS EACH SCREEN.
+ *
+ * Run rather than read. `pageTitleFor` lived in `nav-items.ts` until Q9, where
+ * the only thing a test could do was match a regular expression against the
+ * source -- and a regex can confirm the entries that are already written and
+ * nothing about the ones that are missing. Five routes were missing. Measured
+ * on the deployed site before the fix: `/settings`, `/settings/family`,
+ * `/people`, `/birthdays` and `/areas/new` all had a top bar reading "Family
+ * Gift Planner", the application's own name, where the screen's name belongs.
+ */
+describe("every screen outside an event says what it is", () => {
+  const NAMED = [
+    ["/", "Events"],
+    ["/people", "People"],
+    ["/people/new", "Add person"],
+    ["/settings", "Settings"],
+    ["/settings/family", "Family settings"],
+    ["/birthdays", "Birthdays"],
+    ["/account", "Account"],
+    ["/more/notifications", "Notifications"],
+    ["/more/activity", "Activity"],
+    ["/more/family-access", "Family access"],
+    ["/areas/new", "Create new family"],
+    ["/events/new", "Create event"],
+  ];
+
+  test("NOT ONE OF THEM FALLS BACK TO THE APP'S OWN NAME", () => {
+    for (const [path, title] of NAMED) {
+      assert.equal(pageTitleFor(path).title, title, path + " must name itself");
+      assert.notEqual(pageTitleFor(path).title, DEFAULT_PAGE_TITLE, path + " still reads as the app");
+    }
+  });
+
+  test("the fallback is still there for a route nobody has claimed", () => {
+    // Proves the assertion above is testing the table rather than a function
+    // that can only ever return a name.
+    assert.equal(pageTitleFor("/nothing-here").title, DEFAULT_PAGE_TITLE);
+  });
+
+  test("the family's settings beat the person's, because first match wins", () => {
+    assert.equal(pageTitleFor("/settings/family").title, "Family settings");
+    assert.deepEqual(pageTitleFor("/settings/family").parent, SETTINGS_HOME);
+  });
+});
+
+/**
+ * WHERE THE BACK-CHEVRON GOES.
+ *
+ * A breadcrumb is a claim about where the reader came from. Family access and
+ * Activity are Area-scoped settings catalogued on the family's own settings
+ * screen, and both pointed at "Events" and "/" -- the dashboard, which is
+ * neither where they came from nor a screen containing what they were looking
+ * at. Account and Notifications had already been patched one at a time on their
+ * own pages, which is the drift a single table exists to prevent.
+ */
+describe("a breadcrumb leads to the screen that lists it", () => {
+  test("the family's own settings lead back to the family's settings", () => {
+    for (const path of ["/more/family-access", "/more/activity"]) {
+      assert.deepEqual(pageTitleFor(path).parent, FAMILY_SETTINGS_HOME,
+        path + " is an Area setting and belongs under the family's own");
+    }
+  });
+
+  test("what follows the person leads back to their own settings", () => {
+    for (const path of ["/account", "/more/notifications", "/settings/family", "/areas/new"]) {
+      assert.deepEqual(pageTitleFor(path).parent, SETTINGS_HOME, path + " belongs under Your settings");
+    }
+  });
+
+  test("NO FAMILY-LEVEL SETTING IS SENT TO THE DASHBOARD ANY MORE", () => {
+    for (const path of ["/account", "/more/notifications", "/more/activity", "/more/family-access"]) {
+      assert.notEqual(pageTitleFor(path).parent?.href, "/",
+        path + " must not drop the reader on the events list");
+    }
+  });
+
+  test("the three primary destinations have nothing above them", () => {
+    // They are what the rail and the tab bar point AT, so a parent would be a
+    // rung on a ladder that does not exist.
+    for (const path of ["/", "/people", "/settings"]) {
+      assert.equal(pageTitleFor(path).parent, undefined, path + " is a primary destination");
+    }
+    // Birthdays is bare for the other reason: it is reached from the dashboard
+    // AND from the family's settings, so any fixed parent lies half the time.
+    assert.equal(pageTitleFor("/birthdays").parent, undefined);
+  });
+});
+
+/**
+ * ARCHIVING A WHOLE FAMILY ASKS FIRST.
+ *
+ * Handing over asks, leaving asks, and deleting a single event asks. Putting
+ * away the entire family -- the widest of the four, and the one felt by every
+ * other member at once -- called the API straight from the click. The
+ * `confirming` state already had "archive" in its union with nothing setting
+ * it, which is what half-finished looks like.
+ */
+describe("the family's destructive controls confirm", () => {
+  const familySettings = () =>
+    read(...APP, "settings", "family", "family-settings-screen.tsx");
+
+  test("archive goes through a confirmation, not straight to the server", () => {
+    const source = withoutComments(familySettings());
+    assert.match(source, /setConfirming\("archive"\)/u, "the archive button must open the question");
+    assert.doesNotMatch(source, /onClick=\{\(\) => void act\("archive"\)\}/u,
+      "archiving must not fire from the click");
+    assert.match(source, /confirming === "archive" && \(\s*<ConfirmDialog/u,
+      "and the question must be the shared ConfirmDialog");
+  });
+
+  test("the confirmation says who else it affects, and that nothing is deleted", () => {
+    const source = familySettings();
+    assert.match(source, /leaves the switcher for everybody in it/u);
+    assert.match(source, /Nothing is deleted/u);
+  });
+
+  test("bringing a family back does NOT ask -- it undoes rather than hides", () => {
+    assert.match(withoutComments(familySettings()), /void act\("unarchive"\)/u);
+  });
+
+  test("handing over and leaving still ask, so all three read alike", () => {
+    const source = withoutComments(familySettings());
+    for (const state of ["handover", "leave"]) {
+      assert.ok(source.includes('confirming === "' + state + '"'), state + " must still confirm");
+    }
+  });
+});
+
+/**
+ * A SWITCH IS 32x18. A THUMB IS NOT.
+ *
+ * Stock shadcn draws the track at `h-[1.15rem]` -- 18 CSS pixels, measured on
+ * the deployed site -- which is below the 24x24 minimum in WCAG 2.2 Target Size
+ * and well under the 44px a finger needs. Both places it is used are places a
+ * phone goes. jsdom has no layout, so what is checked here is that the
+ * component DECLARES the expanded hit area; that it measures 44px is confirmed
+ * in live browser QA.
+ */
+describe("the switch is bigger than it looks", () => {
+  test("it carries a 44px hit area that does not change its size", () => {
+    const source = read(...APP, "components", "ui", "switch.tsx");
+    assert.match(source, /before:h-11/u, "the hit area must be 44px tall");
+    assert.match(source, /before:w-11/u, "and 44px wide");
+    // Absolute and centred, so it is out of flow: nothing around it moves and
+    // the track keeps its 32x18 appearance.
+    assert.match(source, /before:absolute/u);
+    assert.match(source, /before:-translate-x-1\/2/u);
+    assert.match(source, /before:-translate-y-1\/2/u);
+    assert.match(source, /"relative /u, "an absolute child needs a positioned parent");
+    // The visible track is untouched.
+    assert.match(source, /data-\[size=default\]:h-\[1\.15rem\]/u);
+  });
+});
+
+/**
+ * AN AREA-SCOPED DOCUMENT IS NEVER STORED.
+ *
+ * Found in live browser QA: standing in one family, open one of its events,
+ * switch family, press Back -- and the event came back on screen, named and
+ * dated, while the reader was somewhere else. Asking the server for that URL at
+ * that moment returned 404, because `requireEvent` scopes to the acting Area
+ * and had already refused. The browser never asked: the response had been
+ * stored under `Cache-Control: no-cache` with no `ETag`, no `Last-Modified` and
+ * a `Vary` that did not list `Cookie`, so a history navigation reused it.
+ */
+describe("documents are not storable", () => {
+  test("the document rule says no-store, not no-cache", () => {
+    const config = read("next.config.ts");
+    assert.match(
+      config,
+      /source: "\/\(\(\?!_next\/static\|_next\/image\|api\/\)\.\*\)",\n\s*headers: \[\{ key: "Cache-Control", value: "no-store" \}\],/u,
+      "every rendered document must be no-store",
+    );
+  });
+
+  test("hashed build output keeps its immutable lifetime", () => {
+    // The exclusions are what stop no-store reaching the bundle. Without them
+    // every navigation would refetch it.
+    const config = read("next.config.ts");
+    assert.match(config, /\(\?!_next\/static\|_next\/image\|api\/\)/u);
+    assert.match(
+      read("public", "_headers"),
+      /\/_next\/static\/\*\n\s*Cache-Control: public,max-age=31536000,immutable/u,
+    );
+  });
+});

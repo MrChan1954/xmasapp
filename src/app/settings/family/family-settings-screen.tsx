@@ -8,7 +8,7 @@ import { scopeReminder, settingsFor } from "@/lib/settings-scopes.ts";
 import { AppShell, PageHeader } from "../../components/app-shell";
 import { IconCake, IconHistory, IconPeople, IconSettings } from "../../components/icons";
 import { SettingsGroup, SettingsRow } from "../../components/settings-list";
-import { Button, Input, Notice, Select } from "../../components/ui";
+import { Button, ConfirmDialog, Input, Notice, Select } from "../../components/ui";
 
 const ICONS: Record<string, React.ReactNode> = {
   "family-access": <IconPeople size={20} />,
@@ -311,15 +311,46 @@ function Administration({
               ? "It will show up in the switcher again."
               : "Archiving hides a family you are finished with. Nothing is deleted — the people, the years, the gifts and the money all stay, and you can bring it back whenever you like."}
           </p>
+          {/*
+            IT ASKS FIRST, like every other thing on this screen that changes
+            who sees what.
+
+            THE BUG THIS CLOSES. This button called `act("archive")` straight
+            from the click. Handing over asks, leaving asks, and archiving a
+            single occasion asks -- the same shared `ConfirmDialog` -- but
+            putting away the WHOLE FAMILY, which is the widest of the four, was
+            one tap. The `confirming` state above already had "archive" in its
+            union and nothing ever set it, which is what half-finished looks
+            like.
+
+            Archiving is reversible, and that is an argument for the wording,
+            not for skipping the question: it takes the family out of the
+            switcher for EVERY member at once, and `resolveActiveArea` never
+            picks an archived family for anybody again. A mis-tap is felt by
+            people who were not the one tapping.
+          */}
           <div className="mt-4">
             <Button
               variant="secondary"
               disabled={busy}
-              onClick={() => void act(archived ? "unarchive" : "archive")}
+              onClick={() => (archived ? void act("unarchive") : setConfirming("archive"))}
             >
               {archived ? "Bring it back" : "Archive this family"}
             </Button>
           </div>
+
+          {confirming === "archive" && (
+            <ConfirmDialog
+              title={`Put ${areaName} away?`}
+              body={`It leaves the switcher for everybody in it, not just for you. Nothing is deleted — the people, the events, the gifts and the money all stay — and you can bring it back from this screen whenever you like.`}
+              confirmLabel="Archive this family"
+              busyLabel="Archiving…"
+              busy={busy}
+              danger={false}
+              onConfirm={() => void act("archive")}
+              onCancel={() => setConfirming(null)}
+            />
+          )}
         </div>
       )}
 

@@ -82,17 +82,41 @@ const nextConfig: NextConfig = {
       },
       {
         /**
-         * Documents must always be revalidated before they are reused.
+         * Documents are NEVER STORED.
          *
-         * Without this the platform's own `s-maxage=31536000` is the only
-         * freshness signal on an HTML response, and a private cache that
-         * chooses to apply a heuristic lifetime can pin a document for a long
-         * time. In a browser tab that is survivable — the user can pull to
-         * refresh. An installed PWA has no address bar, no reload button and
-         * no pull-to-refresh, so a pinned document leaves that user on an old
-         * build with no way out. `no-cache` still allows the copy to be
-         * stored; it just forces the conditional request, which the ETag
-         * answers with a 304, so the cost is one small round trip.
+         * Every page this worker renders is `force-dynamic`, personalised, and
+         * scoped to the Area the reader is currently standing in. A stored copy
+         * of one is a picture of a family, taken at a moment, that outlives the
+         * moment.
+         *
+         * WHY THIS SAYS `no-store` AND USED TO SAY `no-cache`.
+         *
+         * `no-cache` still permits storage; it only asks for revalidation
+         * before reuse, and the reasoning it was chosen under was that "the
+         * ETag answers with a 304, so the cost is one small round trip". THERE
+         * IS NO ETAG. Measured against the deployed worker: `/`, `/settings`,
+         * `/people` and every event route come back with `Cache-Control:
+         * no-cache` and no `ETag`, no `Last-Modified`, and a `Vary` that lists
+         * the RSC headers but NOT `Cookie`. With no validator there is nothing
+         * to revalidate with, so a history navigation reuses the stored copy
+         * outright — and the copy is not even keyed on the Area cookie.
+         *
+         * WHAT THAT COST, FOUND IN LIVE BROWSER QA. Standing in QA Charlie,
+         * open one of its events; switch to QA Alpha; press Back. The event
+         * page came back rendered — its name, its type, its date — while the
+         * reader was in a different family. Asking the server for that exact
+         * URL at that exact moment returned 404, as it should: `requireEvent`
+         * scopes to the acting Area and had already refused. The browser never
+         * asked. Nobody saw another account's data — it was this reader's own
+         * earlier, authorised render — but the app must never put a family on
+         * screen that the reader is not standing in, and every control on that
+         * resurrected page pointed into an Area the cookie no longer named.
+         *
+         * `no-store` also keeps these documents out of the back/forward cache,
+         * which is the same defect wearing a different hat. The PWA worry the
+         * old comment was written for — an installed app with no reload button
+         * pinned on an old build — is better served by this, not worse: a
+         * document that cannot be stored cannot be pinned.
          *
          * `_next/static` and `_next/image` are excluded: those URLs are
          * content-hashed (verified — changing a stylesheet changes its chunk
@@ -102,7 +126,7 @@ const nextConfig: NextConfig = {
          * own caching for authenticated data.
          */
         source: "/((?!_next/static|_next/image|api/).*)",
-        headers: [{ key: "Cache-Control", value: "no-cache" }],
+        headers: [{ key: "Cache-Control", value: "no-store" }],
       },
       {
         // Parity only. In production Cloudflare serves `public/` directly and
