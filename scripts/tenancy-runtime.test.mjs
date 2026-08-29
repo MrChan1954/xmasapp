@@ -251,13 +251,34 @@ describe("a birthday is edited by that Area's admin or that Area's contributors"
     assert.equal(result.ok, false);
   });
 
-  test("and the answer does not depend on the pre-request hook having run", async () => {
-    // No header at all. `is_app_admin()` would refuse a login in three Areas --
-    // 039 derives the Area from the PERSON instead, so this still works.
+  test("WITHOUT A CLAIM, A LOGIN IN SEVERAL FAMILIES IS ASKED WHICH ONE", async () => {
+    /*
+     * CHANGED BY MIGRATION 047, DELIBERATELY.
+     *
+     * 039 derived the Area from the PERSON so this worked with no acting-Area
+     * header at all, and until 047 it did. 047 additionally requires the caller
+     * to be STANDING in that Area, and `is_acting_area` answers the same way
+     * `require_acting_area` has answered for the sixteen routines 045 hardened:
+     * with no claim and more than one membership, there is no way to know which
+     * family is meant, so the answer is no.
+     *
+     * In the browser this changes nothing -- the pre-request hook sets the
+     * claim from the `gp_area` cookie on every request. What it closes is the
+     * direct API call that carries no claim at all.
+     */
     const result = await setBirthday(f.users.dual, undefined, f.people.mo, 8, 9);
-    assert.equal(result.ok, true, `deriving the Area must not need a claim: ${result.error ?? ""}`);
+    assert.equal(result.ok, false,
+      "a login in two families, naming none, must not be guessed for");
+  });
+
+  test("but a login in exactly ONE family still needs no claim", async () => {
+    // The other half of `is_acting_area`'s fallback, and the reason 047 does
+    // not simply demand a header: where there is only one family it cannot be
+    // ambiguous, and asking would be pedantry.
+    const result = await setBirthday(f.users.bravoadmin, undefined, f.people.jo, 8, 9);
+    assert.equal(result.ok, true, `one membership is not ambiguous: ${result.error ?? ""}`);
     await asOwner(db);
-    assert.equal(await value(db, "select birthday_month from public.people where id = $1", [f.people.mo]), 8);
+    assert.equal(await value(db, "select birthday_month from public.people where id = $1", [f.people.jo]), 8);
   });
 });
 
@@ -1358,5 +1379,258 @@ describe("Q5: contributor changes do not rewrite an existing purchase", () => {
       [recipientForBuying, jade,
         JSON.stringify([{ contributor_id: jade, responsibility_pennies: 999.5 }])]);
     assert.equal(fractional.ok, false, "a fractional penny was accepted");
+  });
+});
+
+// ===========================================================================
+// Q6. The person routines: entitled there, AND standing there
+// ===========================================================================
+
+/*
+ * MIGRATION 047, AND WHY 044 WAS NOT ENOUGH.
+ *
+ * 044 hardened these routines by deriving the Area FROM THE PERSON and asking
+ * `is_area_admin(target_area)`. That is the right question about permission
+ * and the wrong question about place:
+ *
+ *     "Am I an administrator of this person's family?"  -> of Alpha, yes.
+ *     "...and is Alpha the family I am STANDING IN?"    -> never asked.
+ *
+ * 045 closed exactly this gap for sixteen routines and did not revisit these,
+ * because 044 had already made them Area-aware -- and Area-aware is not the
+ * same as acting-Area-aware. Measured on 001-046, the account that administers
+ * Alpha and merely belongs to Bravo renamed an Alpha person, made them a
+ * contributor, archived them and changed their birthday, all from Bravo.
+ *
+ * These are direct RPC calls, which is the shape a browser makes against
+ * PostgREST. Not privilege escalation -- that account really does administer
+ * Alpha -- but a breach of the rule the whole application rests on.
+ */
+describe("Q6: a person is edited from the family you are standing in", () => {
+  /** The four routines, each as the browser would call it. */
+  const ROUTINES = [
+    ["set_family_contributor", "select public.set_family_contributor($1, true)"],
+    ["set_person_name", "select public.set_person_name($1, 'Renamed From Bravo')"],
+    ["set_person_archived", "select public.set_person_archived($1, true)"],
+    ["set_person_birthday", "select public.set_person_birthday($1, 3::smallint, 14::smallint, 1990::smallint)"],
+  ];
+
+  /** Undo anything a passing test leaves behind, so order cannot matter. */
+  const restore = async () => {
+    await asOwner(db);
+    await db.query(
+      "update public.people set name = 'Mo', is_family_contributor = false, archived_at = null,"
+      + " birthday_month = null, birthday_day = null, birthday_year = null where id = $1",
+      [f.people.mo]);
+  };
+
+  /*
+   * TWO WRONG PLACES TO STAND, AND CHARLIE IS THE ONE THAT MATTERS.
+   *
+   * In BRAVO this login is an ordinary member, so a refusal there could be the
+   * ADMIN check doing the work and prove nothing about place. In CHARLIE the
+   * same login is a genuine ADMINISTRATOR -- `is_area_admin` is not what stops
+   * it, because the caller is not asking about Charlie's rights at all. Only
+   * the acting-Area question can refuse that one, which is why it is first.
+   */
+  const WRONG_PLACES = [
+    ["CHARLIE, where this login is a real ADMINISTRATOR", () => f.areas.charlie],
+    ["BRAVO, where it is only a member", () => f.areas.bravo],
+  ];
+
+  for (const [name, sql] of ROUTINES) {
+    for (const [where, area] of WRONG_PLACES) {
+      test(`${name.toUpperCase()} IS REFUSED FROM ${where}`, async () => {
+        await restore();
+
+        const attack = await probe(db, who(f.users.dual, area()), sql, [f.people.mo]);
+        assert.equal(attack.ok, false,
+          `${name} wrote to Alpha while the caller was standing in ${where}`);
+        assert.match(attack.error, /administrator|contributors/u,
+          "and it must come back as the routine own refusal, not a new sentence");
+        assert.doesNotMatch(attack.error, /another family/u,
+          "a distinct message would turn any uuid into a question about other families");
+
+        await asOwner(db);
+        const person = await value(db,
+          "select json_build_object('name', name, 'contributor', is_family_contributor,"
+          + " 'archived', archived_at is not null, 'month', birthday_month)::text"
+          + " from public.people where id = $1", [f.people.mo]);
+        assert.equal(person,
+          '{"name" : "Mo", "contributor" : false, "archived" : false, "month" : null}',
+          "the Alpha person changed");
+      });
+    }
+  }
+
+  test("A REFUSED CROSS-AREA CALL WRITES NOTHING TO THE AUDIT LOG", async () => {
+    // A refusal that logged would itself be a way to write into another
+    // family's log from outside it.
+    await restore();
+    await asOwner(db);
+    const before = await value(db, "select count(*)::int from public.audit_log");
+    await probe(db, who(f.users.dual, f.areas.charlie),
+      "select public.set_person_birthday($1, 7::smallint, 7::smallint, null)", [f.people.mo]);
+    await asOwner(db);
+    assert.equal(await value(db, "select count(*)::int from public.audit_log"), before,
+      "a refused cross-Area call left a row in the audit log");
+  });
+
+  test("and a legitimate birthday change is still audited exactly as before", async () => {
+    // 026's `audit_people_birthday` fires on update of the birthday columns.
+    // 047 must not have moved the guard somewhere that suppresses it.
+    await restore();
+    await asOwner(db);
+    const before = await value(db, "select count(*)::int from public.audit_log");
+    const ok = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select public.set_person_birthday($1, 4::smallint, 2::smallint, null)", [f.people.mo]);
+    assert.equal(ok.ok, true, ok.error);
+    await asOwner(db);
+    assert.equal(await value(db, "select count(*)::int from public.audit_log"), before + 1,
+      "the birthday audit row stopped being written");
+    await restore();
+  });
+
+  test("BUT ALL FOUR STILL WORK FROM THE FAMILY THE PERSON IS IN", async () => {
+    await restore();
+    for (const [name, sql] of ROUTINES) {
+      const allowed = await probe(db, who(f.users.dual, f.areas.alpha), sql, [f.people.mo]);
+      assert.equal(allowed.ok, true, `${name} refused a legitimate call: ${allowed.error}`);
+    }
+    await restore();
+  });
+
+  test("BELONGING TO BOTH FAMILIES DOES NOT WEAKEN IT", async () => {
+    /*
+     * The difficulty of this defect in one test. This login is an ADMINISTRATOR
+     * of Alpha -- `is_area_admin(alpha)` is true for them, legitimately, and
+     * that is exactly what 044 was asking. Being entitled in Alpha is not
+     * permission to act on Alpha while standing in Bravo.
+     */
+    await restore();
+    await asOwner(db);
+    const adminsAlpha = await value(db,
+      "select count(*)::int from public.app_members where user_id = $1 and area_id = $2 and role = 'admin' and active",
+      [f.users.dual, f.areas.alpha]);
+    assert.equal(adminsAlpha, 1, "precondition: this login really does administer Alpha");
+
+    const attack = await probe(db, who(f.users.dual, f.areas.bravo),
+      "select public.set_family_contributor($1, true)", [f.people.mo]);
+    assert.equal(attack.ok, false);
+    await restore();
+  });
+
+  test("and an ordinary member is still refused the administrator's routines", async () => {
+    // 047 adds a place check above the role check; it must not have replaced it.
+    await restore();
+    for (const [name, sql] of ROUTINES.filter(([n]) => n !== "set_person_birthday")) {
+      const asMember = await probe(db, who(f.users.mo, f.areas.alpha), sql, [f.people.mo]);
+      assert.equal(asMember.ok, false, `${name} let a plain member through`);
+      assert.match(asMember.error, /administrator/u);
+    }
+    await restore();
+  });
+
+  test("validation and the returned row are unchanged", async () => {
+    await restore();
+    const emptyName = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select public.set_person_name($1, '   ')", [f.people.mo]);
+    assert.equal(emptyName.ok, false);
+    assert.match(emptyName.error, /Enter a valid name/u);
+
+    const badMonth = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select public.set_person_birthday($1, 13::smallint, 1::smallint, null)", [f.people.mo]);
+    assert.equal(badMonth.ok, false);
+    assert.match(badMonth.error, /between January and December/u);
+
+    const nullFlag = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select public.set_family_contributor($1, null)", [f.people.mo]);
+    assert.equal(nullFlag.ok, false);
+    assert.match(nullFlag.error, /Choose whether this person may contribute/u);
+
+    const shape = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select (public.set_person_name($1, 'Mo')).name as n", [f.people.mo]);
+    assert.equal(shape.ok, true, shape.error);
+    assert.equal(shape.rows[0].n, "Mo", "the routine still returns the people row");
+    await restore();
+  });
+
+  test("a person who does not exist gets the same answer as one you may not touch", async () => {
+    /*
+     * `is_acting_area(null)` returns TRUE, deliberately -- mirroring
+     * `require_acting_area`, which returns rather than raising on a null Area.
+     * So "no such person" falls through to the routine's own conflated refusal
+     * instead of gaining a sentence of its own. Distinguishing the two would
+     * let somebody enumerate other families by id.
+     */
+    const missing = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select public.set_person_name($1, 'Ghost')", ["00000000-0000-4000-8000-000000000000"]);
+    assert.equal(missing.ok, false);
+    assert.match(missing.error, /administrator/u);
+    assert.doesNotMatch(missing.error, /another family/u,
+      "a missing person must not be reported as belonging elsewhere");
+  });
+});
+
+describe("Q6: the routines deliberately left unguarded", () => {
+  /*
+   * Recorded so the classification is executable rather than a claim in a
+   * migration header. Each of these lacks `require_acting_area` on purpose.
+   */
+  test("start_birthday_planning refuses a cross-Area celebrant in its own words", async () => {
+    const r = await probe(db, who(f.users.dual, f.areas.bravo),
+      "select public.start_birthday_planning($1, 'X', '2028-03-14', 1000, $2::jsonb)",
+      [f.people.jade, JSON.stringify([{ person_id: f.people.jade, pennies: 1000 }])]);
+    assert.equal(r.ok, false);
+    assert.match(r.error, /different Area/u);
+  });
+
+  test("the creators are gated by the ACTING Area's admin question", async () => {
+    // `is_app_admin()` has answered about the acting Area since 038, so a
+    // creator needs no target guard: there is no existing object to target.
+    for (const sql of [
+      "select public.create_person('Probe', null, null, null)",
+      "select public.create_event('Probe','other','2029-01-01',null,null,'{}'::uuid[],'{}'::uuid[])",
+    ]) {
+      const r = await probe(db, who(f.users.dual, f.areas.bravo), sql, []);
+      assert.equal(r.ok, false, `${sql.slice(0, 40)} was allowed in a family the caller does not administer`);
+      assert.match(r.error, /Global Admin access required/u);
+    }
+  });
+
+  test("and a creator cannot NAME another family's people either", async () => {
+    /*
+     * The sharp version of the question. Standing in CHARLIE, where this login
+     * really is an administrator, `is_app_admin()` says yes -- so if anything
+     * refuses an event built out of ALPHA people, it is 035's
+     * `refuse_cross_area_person` trigger and not the role check. That is why
+     * the creators need no acting-Area guard of their own: the integrity
+     * trigger already refuses to let a created row reach across.
+     */
+    for (const [what, sql, params] of [
+      ["recipient", "select public.create_event('Probe','other','2029-01-01',null,null,$1::uuid[],'{}'::uuid[])", [[f.people.mo]]],
+      ["contributor", "select public.create_event('Probe','other','2029-01-01',null,null,'{}'::uuid[],$1::uuid[])", [[f.people.jade]]],
+      ["celebrant", "select public.create_event('Probe','birthday','2029-01-01',null,$1,'{}'::uuid[],'{}'::uuid[])", [f.people.taylor]],
+    ]) {
+      const r = await probe(db, who(f.users.dual, f.areas.charlie), sql, params);
+      assert.equal(r.ok, false, `create_event pulled an Alpha ${what} into a Charlie event`);
+      assert.match(r.error, /different Area/u);
+    }
+
+    // The control: the same call with Charlie's own person must still work, or
+    // the assertions above would pass for the wrong reason.
+    const ownFamily = await probe(db, who(f.users.dual, f.areas.charlie),
+      "select public.create_event('Probe','other','2029-01-01',null,null,$1::uuid[],'{}'::uuid[])", [[f.people.cass]]);
+    assert.equal(ownFamily.ok, true, `a legitimate Charlie event was refused: ${ownFamily.error}`);
+  });
+
+  test("claim_app_member takes no id, and must stay reachable from anywhere", async () => {
+    /*
+     * It matches only the caller's OWN email on an unclaimed row. Guarding it
+     * by acting Area would break the thing it exists for: claiming an
+     * invitation to a family you are not yet standing in.
+     */
+    const r = await probe(db, who(f.users.dual, f.areas.bravo), "select public.claim_app_member()", []);
+    assert.equal(r.ok, true, "claiming an invitation must not depend on where you are standing");
   });
 });

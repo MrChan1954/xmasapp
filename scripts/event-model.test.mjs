@@ -73,7 +73,7 @@ const financialTables = [
 // The migration history is append-only
 // ---------------------------------------------------------------------------
 
-test("migration 046 is the newest migration, and nothing else has been added", () => {
+test("migration 047 is the newest migration, and nothing else has been added", () => {
   // Pinned deliberately. Adding a migration fails this test on purpose, so a
   // schema change cannot land without this file being reviewed and its checks
   // extended to whatever the new migration introduced.
@@ -83,17 +83,18 @@ test("migration 046 is the newest migration, and nothing else has been added", (
   // `scripts/event-administration.test.mjs` and
   // `scripts/birthday-reminders.test.mjs`; what THIS file still owns is that
   // 025 remains the Event layer and that 026 did not disturb it.
-  assert.equal(migrationFiles.at(-1), "202608100046_area_scoped_gift_idea_removal.sql");
-  assert.equal(migrationFiles.at(-2), "202608100045_area_scoped_mutation_hardening.sql");
-  assert.equal(migrationFiles.at(-3), "202608100044_area_scoped_person_administration.sql");
-  assert.equal(migrationFiles.at(-4), "202608100043_birthday_planning_eligibility.sql");
-  assert.equal(migrationFiles.at(-5), "202608100042_area_membership_lifecycle.sql");
-  assert.equal(migrationFiles.at(-6), "202608100041_area_admin_handover.sql");
-  assert.equal(migrationFiles.at(-7), "202608100040_own_birthday_wishlist.sql");
-  assert.equal(migrationFiles.at(-8), "202608100039_area_aware_contributor_permissions.sql");
-  assert.equal(migrationFiles.at(-9), "202608100038_acting_area.sql", "038 is still present, unedited");
+  assert.equal(migrationFiles.at(-1), "202608100047_area_scoped_person_routines.sql");
+  assert.equal(migrationFiles.at(-2), "202608100046_area_scoped_gift_idea_removal.sql");
+  assert.equal(migrationFiles.at(-3), "202608100045_area_scoped_mutation_hardening.sql");
+  assert.equal(migrationFiles.at(-4), "202608100044_area_scoped_person_administration.sql");
+  assert.equal(migrationFiles.at(-5), "202608100043_birthday_planning_eligibility.sql");
+  assert.equal(migrationFiles.at(-6), "202608100042_area_membership_lifecycle.sql");
+  assert.equal(migrationFiles.at(-7), "202608100041_area_admin_handover.sql");
+  assert.equal(migrationFiles.at(-8), "202608100040_own_birthday_wishlist.sql");
+  assert.equal(migrationFiles.at(-9), "202608100039_area_aware_contributor_permissions.sql");
+  assert.equal(migrationFiles.at(-10), "202608100038_acting_area.sql", "038 is still present, unedited");
   assert.ok(migrationFiles.includes(membershipMigrationName), "033 is still present, unedited");
-  assert.equal(migrationFiles.length, 46);
+  assert.equal(migrationFiles.length, 47);
 
   /*
    * 039 ONWARDS REWRITE NO ROW.

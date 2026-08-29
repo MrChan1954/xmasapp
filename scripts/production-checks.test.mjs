@@ -505,3 +505,168 @@ describe("the Q3 check file actually runs, against a 044+045 database", () => {
     }
   });
 });
+
+/* ===========================================================================
+ * Q6 -- docs/Q6-POST-APPLY-CHECKS.sql
+ *
+ * A FOURTH FILE, for the same reason there is a third. Q6 adds migration 047,
+ * which folds an acting-Area question into four person routines. The state it
+ * describes did not exist before it, and the earlier files are not edited to
+ * keep up: each one is the record of what was true when it was written.
+ *
+ * The block below is deliberately the same shape as Q3's. The one test that is
+ * new is the negative: a check file that reports PASS on a database WITHOUT
+ * the migration is worse than no check file, because it is trusted.
+ * =========================================================================== */
+
+const Q6_CHECKS = join(ROOT, "docs", "Q6-POST-APPLY-CHECKS.sql");
+const q6Sql = readFileSync(Q6_CHECKS, "utf8").replace(/\r\n/gu, "\n");
+const q6Executable = stripCommentsAndLiterals(q6Sql);
+
+describe("the Q6 check file cannot change anything either", () => {
+  test("it contains no statement that writes, and none that changes an object", () => {
+    const FORBIDDEN = [
+      "insert", "update", "delete", "upsert", "merge",
+      "alter", "create", "drop", "truncate",
+      "grant", "revoke", "comment on", "call", "do",
+      "vacuum", "analyze", "reindex", "cluster", "refresh",
+      "copy", "lock", "set ", "reset", "begin", "commit", "rollback",
+      "security definer", "perform", "notify",
+    ];
+
+    const found = FORBIDDEN.filter((word) =>
+      new RegExp(String.raw`(?<![\w.])${word.trim()}(?![\w])`, "iu").test(q6Executable));
+
+    assert.deepEqual(found, [],
+      `these words appear as executable SQL, not just in comments: ${found.join(", ")}`);
+  });
+
+  test("every statement in it is a SELECT", () => {
+    const statements = q6Executable.split(";").map((s) => s.trim()).filter(Boolean);
+    assert.equal(statements.length, 1, "one statement, so the SQL Editor shows its result");
+    assert.match(statements[0], /^with\b/iu);
+  });
+
+  test("and it reads no money", () => {
+    for (const column of [
+      "budget_pennies", "actual_price_pennies", "estimated_price_pennies",
+      "planned_amount_pennies", "responsibility_pennies", "amount_pennies",
+    ]) {
+      assert.ok(!q6Executable.includes(column), `the check file must not read ${column}`);
+    }
+  });
+
+  test("and it names no person, no family and no gift", () => {
+    for (const column of ["p.name", "a.name", "people.name", "areas.name", "description", "title"]) {
+      assert.ok(!q6Executable.includes(column), `the check file must not read ${column}`);
+    }
+  });
+
+  test("it says how to read its own output", () => {
+    for (const phrase of ["PASS", "FAIL", "INFO", "REVIEW", "HOW TO RUN IT", "HOW TO READ THE RESULT"]) {
+      assert.ok(q6Sql.includes(phrase), `the header must explain ${phrase}`);
+    }
+  });
+
+  test("IT CHECKS EVERY THING 047 WAS ASKED TO PRESERVE", () => {
+    /*
+     * Signature, definer, search_path, grants, the guard itself, and the fact
+     * that the Area is derived from the person rather than taken from the
+     * request. A file that checked only "the routine exists" would report PASS
+     * on a routine that had lost its hardening.
+     */
+    for (const needle of [
+      "is_acting_area(target_area)", "area_of_person(p_person_id)",
+      "prosecdef", "search_path", "has_function_privilege",
+      "is_area_admin(target_area)", "is_area_contributor_member(target_area)",
+      "set_person_birthday(uuid,smallint,smallint,smallint)",
+      "no unguarded definer writer beyond the five known-safe ones",
+    ]) {
+      assert.ok(q6Sql.includes(needle), `the file must check ${needle}`);
+    }
+  });
+
+  test("and it explains what 047 was for, including why Charlie is the sharp case", () => {
+    // Whoever runs this months from now was not in the conversation.
+    assert.match(q6Sql, /044/u);
+    assert.match(q6Sql, /045/u);
+    assert.match(q6Sql, /CHARLIE/u);
+    assert.match(q6Sql, /genuine administrator/iu);
+    assert.match(q6Sql, /require_acting_area/u);
+  });
+});
+
+describe("the Q6 check file actually runs, against a 047 database", () => {
+  let db;
+  let result;
+
+  before(async () => {
+    db = await buildRehearsal({});
+    await asOwner(db);
+    result = await db.query(readFileSync(Q6_CHECKS, "utf8"));
+  });
+  after(async () => { await db?.close(); });
+
+  test("it returns one table with the four columns a reader needs", () => {
+    assert.ok(result.rows.length > 10, "it should cover the routines, the grants and the guards");
+    assert.deepEqual(
+      Object.keys(result.rows[0]).sort(),
+      ["check_name", "detail", "section", "verdict"],
+    );
+  });
+
+  test("the first row is the summary", () => {
+    assert.equal(result.rows[0].section, "SUMMARY");
+    assert.match(result.rows[0].detail, /passed, .* failed, .* to review/u);
+  });
+
+  test("and against a correctly migrated database, nothing fails", () => {
+    const bad = result.rows.filter((row) => row.verdict === "FAIL" || row.verdict === "REVIEW");
+    assert.deepEqual(bad.map((row) => `${row.section} :: ${row.check_name}`), []);
+  });
+
+  test("every verdict is one of the four the header explains", () => {
+    for (const kind of new Set(result.rows.map((row) => row.verdict))) {
+      assert.ok(["PASS", "FAIL", "INFO", "REVIEW"].includes(kind), `unexpected verdict: ${kind}`);
+    }
+  });
+});
+
+describe("THE Q6 CHECK FILE FAILS ON A DATABASE THAT HAS NOT HAD 047", () => {
+  /*
+   * The test that gives the file its value. Everything above proves it says
+   * PASS when it should; this proves it says FAIL when it should. Without it a
+   * check file that had quietly stopped checking would still look healthy.
+   */
+  let db;
+  let result;
+
+  before(async () => {
+    db = await buildRehearsal({ through: "202608100046_area_scoped_gift_idea_removal.sql" });
+    await asOwner(db);
+    result = await db.query(readFileSync(Q6_CHECKS, "utf8"));
+  });
+  after(async () => { await db?.close(); });
+
+  test("the summary says FAIL", () => {
+    assert.equal(result.rows[0].section, "SUMMARY");
+    assert.equal(result.rows[0].verdict, "FAIL");
+  });
+
+  test("and it names the missing guard on all four routines", () => {
+    const guard = result.rows.find((row) => row.check_name.includes("is_acting_area(target_area)"));
+    assert.ok(guard, "the guard check should be present");
+    assert.equal(guard.verdict, "FAIL");
+    for (const name of [
+      "set_family_contributor", "set_person_name", "set_person_archived", "set_person_birthday",
+    ]) {
+      assert.match(guard.detail, new RegExp(name, "u"), `${name} should be reported as unguarded`);
+    }
+  });
+
+  test("and the drift check notices the routines that are Area-blind", () => {
+    const drift = result.rows.find((row) => row.check_name.includes("five known-safe"));
+    assert.ok(drift, "the drift check should be present");
+    assert.equal(drift.verdict, "REVIEW");
+  });
+});

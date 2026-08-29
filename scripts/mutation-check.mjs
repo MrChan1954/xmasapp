@@ -437,8 +437,14 @@ create or replace function public.is_area_admin(p_area_id uuid)`,
     suites: ["scripts/people-and-access.test.mjs"],
   },
   {
+    // RETARGETED BY Q6. This mutation was written against 044, which is where
+    // `set_person_archived` lived at the time. Migration 047 does
+    // `create or replace` on the same routine, so 044's body is no longer the
+    // one the database runs: mutating it changed nothing a runtime test could
+    // see, and the mutation quietly survived. A mutation has to target the
+    // LIVE definition or it proves nothing -- so it follows the routine to 047.
     name: "Q3-6. archiving a person deletes them instead of keeping their history",
-    file: "supabase/migrations/202608100044_area_scoped_person_administration.sql",
+    file: "supabase/migrations/202608100047_area_scoped_person_routines.sql",
     from: `  update public.people
   set archived_at = case when p_archived then coalesce(archived_at, now()) else null end,`,
     to: `  delete from public.people where id = p_person_id and p_archived;
@@ -1169,6 +1175,67 @@ export function EventSettingsScreen(`,
     from: `          label={overPlan ? "Over plan" : "Remaining"}`,
     to: `          label="Remaining"`,
     suites: ["scripts/financial-planning.test.mjs"],
+  },
+
+  // -------------------------------------------------------------------------
+  // Q6 / migration 047: entitled there is not the same as standing there.
+  // One per routine, each removing only the acting-Area half of the condition.
+  // -------------------------------------------------------------------------
+  {
+    name: "Q6-6. set_family_contributor stops asking which family you are standing in",
+    file: "supabase/migrations/202608100047_area_scoped_person_routines.sql",
+    from: `  if target_area is null
+     or not public.is_acting_area(target_area)
+     or not public.is_area_admin(target_area) then
+    -- One refusal for "no such person" and for "not your family", so the
+    -- message cannot be used to discover who exists elsewhere.
+    raise exception 'Only this family''s administrator can change who contributes'`,
+    to: `  if target_area is null
+     or not public.is_area_admin(target_area) then
+    -- One refusal for "no such person" and for "not your family", so the
+    -- message cannot be used to discover who exists elsewhere.
+    raise exception 'Only this family''s administrator can change who contributes'`,
+    suites: DB_SUITES,
+  },
+  {
+    name: "Q6-7. set_person_name stops asking which family you are standing in",
+    file: "supabase/migrations/202608100047_area_scoped_person_routines.sql",
+    from: `  if target_area is null
+     or not public.is_acting_area(target_area)
+     or not public.is_area_admin(target_area) then
+    raise exception 'Only this family''s administrator can rename one of its people'`,
+    to: `  if target_area is null
+     or not public.is_area_admin(target_area) then
+    raise exception 'Only this family''s administrator can rename one of its people'`,
+    suites: DB_SUITES,
+  },
+  {
+    name: "Q6-8. set_person_archived stops asking which family you are standing in",
+    file: "supabase/migrations/202608100047_area_scoped_person_routines.sql",
+    from: `  if target_area is null
+     or not public.is_acting_area(target_area)
+     or not public.is_area_admin(target_area) then
+    raise exception 'Only this family''s administrator can archive one of its people'`,
+    to: `  if target_area is null
+     or not public.is_area_admin(target_area) then
+    raise exception 'Only this family''s administrator can archive one of its people'`,
+    suites: DB_SUITES,
+  },
+  {
+    name: "Q6-9. set_person_birthday stops asking which family you are standing in",
+    file: "supabase/migrations/202608100047_area_scoped_person_routines.sql",
+    from: `  if target_area is null
+    or not public.is_acting_area(target_area)
+    or not (
+      public.is_area_admin(target_area)
+      or public.is_area_contributor_member(target_area)
+    ) then`,
+    to: `  if target_area is null
+    or not (
+      public.is_area_admin(target_area)
+      or public.is_area_contributor_member(target_area)
+    ) then`,
+    suites: DB_SUITES,
   },
 ];
 

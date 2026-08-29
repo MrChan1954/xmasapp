@@ -98,23 +98,26 @@ test("026 to 033 are still in order, with Phase 5's Areas on top", () => {
   // 026-033 keep their order relative to each other; everything newer sits
   // above them, so every offset moves together and nothing about 026-033
   // changes.
-  assert.equal(files.at(-21), MIGRATION, "026 must come first of these");
-  assert.equal(files.at(-20), REMINDER_MIGRATION, "then 027");
-  assert.equal(files.at(-19), OCCASION_MIGRATION, "then 028");
-  assert.equal(files.at(-18), BUDGET_MIGRATION, "then 029");
-  assert.equal(files.at(-17), CONTRIBUTOR_MIGRATION, "then 030");
-  assert.equal(files.at(-16), PRIVACY_MIGRATION, "then 031");
-  assert.equal(files.at(-15), PEOPLE_MIGRATION, "then 032");
-  assert.equal(files.at(-14), MEMBERSHIP_MIGRATION, "then 033");
-  assert.deepEqual(files.slice(-13, -8), AREA_MIGRATIONS, "then Phase 5's five, in order");
-  assert.deepEqual(files.slice(-8, -6), HARDENING_MIGRATIONS, "then the Q1 hardening");
-  assert.deepEqual(files.slice(-6, -3), LIFECYCLE_MIGRATIONS, "and Q2's Area lifecycle on top of that");
+  assert.equal(files.at(-22), MIGRATION, "026 must come first of these");
+  assert.equal(files.at(-21), REMINDER_MIGRATION, "then 027");
+  assert.equal(files.at(-20), OCCASION_MIGRATION, "then 028");
+  assert.equal(files.at(-19), BUDGET_MIGRATION, "then 029");
+  assert.equal(files.at(-18), CONTRIBUTOR_MIGRATION, "then 030");
+  assert.equal(files.at(-17), PRIVACY_MIGRATION, "then 031");
+  assert.equal(files.at(-16), PEOPLE_MIGRATION, "then 032");
+  assert.equal(files.at(-15), MEMBERSHIP_MIGRATION, "then 033");
+  assert.deepEqual(files.slice(-14, -9), AREA_MIGRATIONS, "then Phase 5's five, in order");
+  assert.deepEqual(files.slice(-9, -7), HARDENING_MIGRATIONS, "then the Q1 hardening");
+  assert.deepEqual(files.slice(-7, -4), LIFECYCLE_MIGRATIONS, "and Q2's Area lifecycle on top of that");
   // Q3's 044 sits above all of it. Named here so adding another migration is
   // still a deliberate act that has to come back through this file.
-  assert.equal(files.at(-3), "202608100044_area_scoped_person_administration.sql");
-  assert.equal(files.at(-2), "202608100045_area_scoped_mutation_hardening.sql");
+  assert.equal(files.at(-4), "202608100044_area_scoped_person_administration.sql");
+  assert.equal(files.at(-3), "202608100045_area_scoped_mutation_hardening.sql");
   // Q5 adds 046, which closes the one gift/purchase write 045 could not reach.
-  assert.equal(files.at(-1), "202608100046_area_scoped_gift_idea_removal.sql");
+  assert.equal(files.at(-2), "202608100046_area_scoped_gift_idea_removal.sql");
+  // Q6 adds 047: the four person routines that authorised in one family and
+  // wrote in another.
+  assert.equal(files.at(-1), "202608100047_area_scoped_person_routines.sql");
   for (const prefix of ["202608100026", "202608100027", "202608100028", "202608100029", "202608100030", "202608100031", "202608100032", "202608100033"]) {
     assert.equal(
       files.filter((name) => name.startsWith(prefix)).length,
