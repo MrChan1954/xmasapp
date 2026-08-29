@@ -168,3 +168,48 @@ describe("migration 046", () => {
     assert.match(routine, /grant execute on function public\.remove_gift_idea\(uuid\) to authenticated/u);
   });
 });
+
+// ===========================================================================
+// 6. Buying happens inside the event you are looking at
+// ===========================================================================
+
+const purchases = read("src", "app", "people", "purchases.tsx");
+
+describe("the purchase links stay inside the event", () => {
+  /*
+   * FOUND IN LIVE QA, AND IT BROKE THE WHOLE Q5 JOURNEY.
+   *
+   * "Buy this idea", "Add purchase" and "Edit" all pointed at
+   * `/add-purchase?...`. That path is the COMPATIBILITY redirect, whose one job
+   * is forwarding links written before events existed into the family's
+   * Christmas. From any other occasion it left the event; and in a family with
+   * NO Christmas -- which is every QA Area, and any real family that has only
+   * ever planned birthdays -- `legacyChristmasEventId()` resolves to nothing
+   * and the redirect lands on the dashboard.
+   *
+   * So on a Mother's Day or a custom event, the buttons that turn an idea into
+   * a purchase did nothing at all. Not an error: a dashboard.
+   */
+  test("NO GIFT OR PURCHASE LINK USES THE LEGACY /add-purchase PATH", () => {
+    for (const [name, source] of [["gift-ideas.tsx", giftIdeas], ["purchases.tsx", purchases]]) {
+      assert.doesNotMatch(source, /href=\{`\/add-purchase/u,
+        `${name} still points at the compatibility redirect`);
+    }
+  });
+
+  test("THEY BUILD THE EVENT'S OWN ADD-PURCHASE PATH INSTEAD", () => {
+    for (const [name, source] of [["gift-ideas.tsx", giftIdeas], ["purchases.tsx", purchases]]) {
+      assert.match(source, /eventPath\(eventId, "add-purchase"\)/u, `${name} must resolve the event's own route`);
+      assert.match(source, /const \{ eventId \} = useFamily\(\)/u,
+        `${name} must take the event from the provider, which reads it from the URL`);
+    }
+  });
+
+  test("and the buy link is not offered when there is no event to buy in", () => {
+    // `eventPath` returns null for a missing or malformed id. Interpolating that
+    // would produce href="null?recipient=..." -- a link that looks fine and goes
+    // nowhere, which is the same class of bug in a new costume.
+    assert.match(giftIdeas, /\) : addPurchaseHref \? \(/u);
+    assert.match(giftIdeas, /const addPurchaseHref = eventId \? eventPath\(eventId, "add-purchase"\) : null/u);
+  });
+});

@@ -10,7 +10,10 @@ import {
   validateOptionalText,
   validateRequiredText,
 } from "@/lib/input-validation";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { eventPath } from "@/lib/events.ts";
 import { createClient } from "@/utils/supabase/client";
+import { useFamily } from "../family-context";
 import { IconPlus } from "../components/icons";
 import { notifyFamily } from "../components/notify-family";
 import { PhotoGallery } from "../components/photo-gallery";
@@ -64,6 +67,22 @@ export function GiftIdeas({
   recipientName: string;
   onCountChange: (count: number) => void;
 }) {
+  /*
+   * THE EVENT THIS GIFT BELONGS TO, for the link that buys it.
+   *
+   * These buttons used to point at `/add-purchase?recipient=…&idea=…`, which is
+   * the COMPATIBILITY route: it forwards old links into the family's Christmas.
+   * So from any other occasion the link left the event entirely -- and in a
+   * family with no Christmas at all it forwarded to the dashboard, which meant
+   * "Buy this idea" and "Add purchase" simply did nothing. Found in live QA on
+   * an Area whose events are a Mother's Day and two custom ones.
+   *
+   * The event comes from the provider, which reads it from the URL, so the
+   * purchase opens on the occasion the reader is actually looking at.
+   */
+  const { eventId } = useFamily();
+  const addPurchaseHref = eventId ? eventPath(eventId, "add-purchase") : null;
+
   const [ideas, setIdeas] = useState<GiftIdea[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [editor, setEditor] = useState<EditorState>(null);
@@ -282,9 +301,9 @@ export function GiftIdeas({
               <div className="mt-auto flex flex-wrap gap-2 pt-4">
                 {purchasedIdeaIds.has(idea.id) ? (
                   <Badge tone="success" className="min-h-11 rounded-xl px-3">Purchased</Badge>
-                ) : (
-                  <ButtonLink href={`/add-purchase?recipient=${encodeURIComponent(recipientId)}&idea=${encodeURIComponent(idea.id)}`} size="md">Buy this idea</ButtonLink>
-                )}
+                ) : addPurchaseHref ? (
+                  <ButtonLink href={`${addPurchaseHref}?recipient=${encodeURIComponent(recipientId)}&idea=${encodeURIComponent(idea.id)}`} size="md">Buy this idea</ButtonLink>
+                ) : null}
                 {itemUrl && (
                   <a href={itemUrl} target="_blank" rel="noopener noreferrer" className={buttonClasses("tonal")}>
                     View item

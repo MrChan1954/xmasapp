@@ -7,7 +7,10 @@ import {
   purchaseLifecycleLabel,
   type PurchaseStatus,
 } from "@/lib/purchases";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { eventPath } from "@/lib/events.ts";
 import { createClient } from "@/utils/supabase/client";
+import { useFamily } from "../family-context";
 import { IconPlus } from "../components/icons";
 import { notifyFamily } from "../components/notify-family";
 import { PhotoGallery } from "../components/photo-gallery";
@@ -48,6 +51,17 @@ export function Purchases({
   recipientId: string;
   onMetricsChange: (spentPennies: number, count: number) => void;
 }) {
+  /*
+   * THE EVENT THESE PURCHASES BELONG TO.
+   *
+   * Both links below pointed at `/add-purchase`, which is the COMPATIBILITY
+   * route into the family's Christmas -- so from any other occasion they left
+   * the event, and in a family with no Christmas they landed on the dashboard
+   * and did nothing at all. Found in live QA.
+   */
+  const { eventId } = useFamily();
+  const addPurchaseHref = eventId ? eventPath(eventId, "add-purchase") : null;
+
   const [purchases, setPurchases] = useState<Purchase[] | null>(null);
   const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [contributorNames, setContributorNames] = useState<Map<string, string>>(new Map());
@@ -185,7 +199,7 @@ export function Purchases({
           <h3 className="font-display text-lg font-semibold">Purchases</h3>
           <p className="mt-1 text-xs leading-5 text-ink-600">Actual gifts bought for this person.</p>
         </div>
-        <ButtonLink href={`/add-purchase?recipient=${encodeURIComponent(recipientId)}`} className="w-full sm:w-auto">
+        <ButtonLink href={`${addPurchaseHref}?recipient=${encodeURIComponent(recipientId)}`} className="w-full sm:w-auto">
           <IconPlus size={16} />
           Add purchase
         </ButtonLink>
@@ -258,7 +272,7 @@ export function Purchases({
                       lockActive
                     />
                   </div>
-                  <ButtonLink variant="secondary" href={`/add-purchase?edit=${encodeURIComponent(purchase.id)}`}>Edit</ButtonLink>
+                  <ButtonLink variant="secondary" href={`${addPurchaseHref}?edit=${encodeURIComponent(purchase.id)}`}>Edit</ButtonLink>
                   <Button variant="dangerGhost" disabled={busy === purchase.id} onClick={() => setConfirming(purchase)}>Remove</Button>
                 </div>
 

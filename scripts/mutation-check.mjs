@@ -1084,6 +1084,29 @@ export function EventSettingsScreen(`,
     to: "  if allocation_total > p_actual_price_pennies * 1000 then",
     suites: DB_SUITES,
   },
+  {
+    /*
+     * Q5. The buy link goes back to the compatibility redirect, which forwards
+     * into the family's Christmas -- so on any other occasion it leaves the
+     * event, and in a family with no Christmas it lands on the dashboard and
+     * the button does nothing. This is the bug live QA found.
+     */
+    name: "Q5-14. Buy this idea goes back to the legacy add-purchase redirect",
+    file: "src/app/people/gift-ideas.tsx",
+    from: "                  <ButtonLink href={`${addPurchaseHref}?recipient=",
+    to: "                  <ButtonLink href={`/add-purchase?recipient=",
+    suites: ["scripts/gift-idea-lifecycle.test.mjs"],
+  },
+  {
+    /*
+     * Q5. Same for the Purchases panel's own two links.
+     */
+    name: "Q5-15. Add purchase goes back to the legacy redirect",
+    file: "src/app/people/purchases.tsx",
+    from: "        <ButtonLink href={`${addPurchaseHref}?recipient=",
+    to: "        <ButtonLink href={`/add-purchase?recipient=",
+    suites: ["scripts/gift-idea-lifecycle.test.mjs"],
+  },
 ];
 
 function runSuite(suite) {
