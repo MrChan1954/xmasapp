@@ -1297,6 +1297,37 @@ export function EventSettingsScreen(`,
     suites: ["scripts/settlement-lifecycle.test.mjs"],
   },
 
+  // -------------------------------------------------------------------------
+  // Q8 / background jobs: the three ways a job runs twice. Each of these looks
+  // harmless in review and sends somebody the same message again.
+  // -------------------------------------------------------------------------
+  {
+    name: "Q8-1. every worker is told it won the birthday reminder claim",
+    file: "supabase/migrations/202608100027_two_stage_birthday_reminders_and_safe_event_deletion.sql",
+    from: `  return claimed_id is not null;`,
+    to: `  return true;`,
+    suites: ["scripts/notification-jobs.test.mjs"],
+  },
+  {
+    name: "Q8-2. the monthly birthday summary can be claimed again for the same month",
+    file: "supabase/migrations/202608100029_add_monthly_birthday_budget_reminder.sql",
+    from: `  on conflict (contributor_person_id, budget_month) do nothing`,
+    to: `  on conflict (contributor_person_id, budget_month) do update set birthday_count = excluded.birthday_count`,
+    suites: ["scripts/notification-jobs.test.mjs"],
+  },
+  {
+    // 023 re-creates this index defensively with `if not exists`, so mutating
+    // 023 changes nothing -- 020 has already made it unique. A mutation has to
+    // target the statement that actually takes effect, which is 020.
+    name: "Q8-3. a retry may write a second copy of the same notification",
+    file: "supabase/migrations/202608100020_add_notification_outbox.sql",
+    from: `create unique index if not exists notifications_event_recipient_key
+  on public.notifications (app_member_id, event_kind, event_subject_id, category);`,
+    to: `create index if not exists notifications_event_recipient_key
+  on public.notifications (app_member_id, event_kind, event_subject_id, category);`,
+    suites: ["scripts/notification-jobs.test.mjs"],
+  },
+
 ];
 
 function runSuite(suite) {
