@@ -1250,6 +1250,53 @@ export function EventSettingsScreen(`,
     to: `  "keep_names": true,`,
     suites: ["scripts/theme-bootstrap.test.mjs"],
   },
+  // -------------------------------------------------------------------------
+  // Q7 / settlements: the difference between money CLAIMED and money RECEIVED.
+  // Each of these is a way of quietly settling a debt nobody confirmed.
+  // -------------------------------------------------------------------------
+  {
+    name: "Q7-1. a pending claim reduces Owed as if it had arrived",
+    file: "src/lib/owed.ts",
+    from: `      -settlement.confirmedAmountPennies,`,
+    to: `      -settlement.amountPennies,`,
+    suites: ["scripts/settlement-lifecycle.test.mjs", "src/lib/owed.test.ts"],
+  },
+  {
+    name: "Q7-2. a voided claim still settles the debt",
+    file: "src/lib/owed.ts",
+    from: `    if (settlement.voidedAt || settlement.confirmedAmountPennies === 0`,
+    to: `    if (settlement.confirmedAmountPennies === 0`,
+    suites: ["scripts/settlement-lifecycle.test.mjs", "src/lib/owed.test.ts"],
+  },
+  {
+    name: "Q7-3. receivables are netted against the contributor's outgoing Owed",
+    file: "src/lib/owed.ts",
+    from: `      if (balance.creditorContributorId === contributorId) summary.owedToYouPennies += balance.amountPennies;`,
+    to: `      if (balance.creditorContributorId === contributorId) { summary.owedToYouPennies += balance.amountPennies; summary.youOwePennies -= balance.amountPennies; }`,
+    suites: ["scripts/settlement-lifecycle.test.mjs", "src/lib/owed.test.ts"],
+  },
+  {
+    name: "Q7-4. the payer may confirm their own payment",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: `  if current_contributor_id is null
+    or current_contributor_id <> existing_settlement.payee_contributor_id
+  then
+    raise exception 'Only the person this payment was sent to can review it'`,
+    to: `  if current_contributor_id is null
+  then
+    raise exception 'Only the person this payment was sent to can review it'`,
+    suites: ["scripts/settlement-lifecycle.test.mjs"],
+  },
+  {
+    name: "Q7-5. the receiver may confirm more than was ever claimed",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    from: `    if p_amount_pennies > remaining_pennies then
+      raise exception 'You cannot confirm more than the amount still unconfirmed'`,
+    to: `    if false then
+      raise exception 'You cannot confirm more than the amount still unconfirmed'`,
+    suites: ["scripts/settlement-lifecycle.test.mjs"],
+  },
+
 ];
 
 function runSuite(suite) {
