@@ -1107,6 +1107,69 @@ export function EventSettingsScreen(`,
     to: "        <ButtonLink href={`/add-purchase?recipient=",
     suites: ["scripts/gift-idea-lifecycle.test.mjs"],
   },
+
+  // -------------------------------------------------------------------------
+  // Q6: the four numbers on a contributor card, and where they come from.
+  // -------------------------------------------------------------------------
+  {
+    /*
+     * Q6. Spent is recomputed from the CURRENT plan instead of from the
+     * allocations recorded at the time -- so a contributor joining today moves
+     * last year's totals. Identical-looking on a fresh event, wrong on every
+     * old one.
+     */
+    name: "Q6-1. Spent is derived from the plan instead of the purchase allocations",
+    file: "src/app/home-screen.tsx",
+    from: "          actualResponsibilityPennies: responsibilityRows.error ? null : (actual.get(row.id) ?? 0),",
+    to: "          actualResponsibilityPennies: responsibilityRows.error ? null : (planned.get(row.id) ?? 0),",
+    suites: ["scripts/financial-planning.test.mjs"],
+  },
+  {
+    /*
+     * Q6. Owed nets receivables against payables, so somebody who owes £30 and
+     * is owed £20 appears to owe £10 -- and the £30 debt to a third person
+     * stops being visible as a debt at all.
+     */
+    name: "Q6-2. the contributor card nets Owed instead of showing gross outgoing",
+    file: "src/app/home-screen.tsx",
+    from: "  const owedPennies = contributor.owed?.youOwePennies ?? null;",
+    to: "  const owedPennies = contributor.owed ? contributor.owed.youOwePennies - contributor.owed.owedToYouPennies : null;",
+    suites: ["scripts/financial-planning.test.mjs"],
+  },
+  {
+    /*
+     * Q6. The summary itself nets, one level lower -- the same bug where the
+     * arithmetic lives rather than where it is displayed.
+     */
+    name: "Q6-3. the owed summary subtracts incoming from outgoing",
+    file: "src/lib/owed.ts",
+    from: "      if (balance.debtorContributorId === contributorId) summary.youOwePennies += balance.amountPennies;",
+    to: "      if (balance.debtorContributorId === contributorId) summary.youOwePennies += balance.amountPennies;\n      if (balance.creditorContributorId === contributorId) summary.youOwePennies -= balance.amountPennies;",
+    suites: ["src/lib/owed.test.ts", "scripts/financial-planning.test.mjs"],
+  },
+  {
+    /*
+     * Q6. The weighted split stops keeping its remainder, so the pennies that
+     * do not divide evenly are silently dropped and the responsibilities no
+     * longer add up to the price.
+     */
+    name: "Q6-4. the weighted split throws away its remainder pennies",
+    file: "src/lib/purchases.ts",
+    from: "      remainder: numerator % totalWeight,",
+    to: "      remainder: BigInt(0),",
+    suites: ["src/lib/purchases.test.ts", "scripts/financial-planning.test.mjs"],
+  },
+  {
+    /*
+     * Q6. A negative Remaining is shown as a negative number instead of being
+     * named -- "Remaining -£12" reads as a target still to spend.
+     */
+    name: "Q6-5. going over plan stops being named",
+    file: "src/app/home-screen.tsx",
+    from: `          label={overPlan ? "Over plan" : "Remaining"}`,
+    to: `          label="Remaining"`,
+    suites: ["scripts/financial-planning.test.mjs"],
+  },
 ];
 
 function runSuite(suite) {
