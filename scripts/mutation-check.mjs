@@ -1057,6 +1057,33 @@ export function EventSettingsScreen(`,
     to: `            .eq("id", ideaId).maybeSingle()`,
     suites: ["scripts/gift-idea-lifecycle.test.mjs"],
   },
+  {
+    /*
+     * Q5. A contributor who has left the pool may take on responsibility for a
+     * NEW purchase again. The historical snapshot rests on this guard: without
+     * it, "who contributes" stops being a question about the moment of buying.
+     */
+    name: "Q5-12. a departed contributor can be allocated new spending",
+    file: "supabase/migrations/202608100008_add_purchases.sql",
+    from: `       or (
+         is_new
+         and contributor.active = false
+       )`,
+    to: "",
+    suites: DB_SUITES,
+  },
+  {
+    /*
+     * Q5. The split no longer has to add up to the price, so a purchase can be
+     * recorded whose responsibilities are smaller than the money spent -- a
+     * shortfall that lands in Owed as nobody's debt.
+     */
+    name: "Q5-13. a purchase split stops having to equal the price",
+    file: "supabase/migrations/202608100008_add_purchases.sql",
+    from: "  if allocation_total <> p_actual_price_pennies then",
+    to: "  if allocation_total > p_actual_price_pennies * 1000 then",
+    suites: DB_SUITES,
+  },
 ];
 
 function runSuite(suite) {

@@ -1194,3 +1194,169 @@ describe("Q5: if the delete grant ever comes back, the policy still refuses", ()
     await db.query("grant delete on table public.gift_ideas to authenticated");
   });
 });
+
+// ===========================================================================
+// Q5. A purchase's allocation is history, and history does not move
+// ===========================================================================
+
+/*
+ * THE INVARIANT EVERYTHING DOWNSTREAM RESTS ON.
+ *
+ * `purchase_allocations` is who owes what for one gift, decided at the moment
+ * it was bought. Owed, the payment log and every settlement read it. So a
+ * change to who contributes must apply to the NEXT purchase and never to one
+ * already made -- otherwise last year's balances quietly rewrite themselves
+ * when somebody joins or leaves the pool this year.
+ *
+ * The database already had the pieces: `save_purchase` refuses an inactive
+ * contributor on a NEW purchase, and nothing anywhere updates an existing
+ * allocation row. What was missing was a test that says so, run against a real
+ * PostgreSQL rather than inferred from reading the routine.
+ */
+describe("Q5: contributor changes do not rewrite an existing purchase", () => {
+  let event;
+  let recipientForBuying;
+  let jade;
+  let mo;
+  let firstPurchase;
+
+  before(async () => {
+    await asOwner(db);
+    event = await value(db,
+      "select christmas_event_id from public.christmas_recipients where id = $1", [f.recipient]);
+
+    /*
+     * Bought FOR the administrator's own birthday recipient rather than the
+     * celebrant's: `f.recipient` is Taylor's own birthday, and the celebrant
+     * privacy rules would (correctly) get in the way of reading back what was
+     * written. This block is about money, not secrecy.
+     */
+    recipientForBuying = f.adminRecipient;
+    event = await value(db,
+      "select christmas_event_id from public.christmas_recipients where id = $1", [recipientForBuying]);
+
+    // That event is set up deliberately with NO contributors, so this block
+    // elects the one it needs. Jade is an ordinary Alpha family member.
+    const elected = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select id from public.set_event_contributor($1, $2, true)", [event, f.people.jade]);
+    assert.equal(elected.ok, true, elected.error);
+    jade = elected.rows[0].id;
+  });
+
+  test("a purchase is made with the contributors active at the time", async () => {
+    assert.ok(jade, "precondition: Jade contributes to this event");
+
+    const made = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select id from public.save_purchase_with_location("
+      + "null, $1, 'Bookshelf', 4000, $2, null, current_date, null, null,"
+      + " 'purchased', 'custom', null, $3::jsonb)",
+      [recipientForBuying, jade,
+        JSON.stringify([{ contributor_id: jade, responsibility_pennies: 4000 }])]);
+    assert.equal(made.ok, true, made.error);
+    firstPurchase = made.rows[0].id;
+
+    await asOwner(db);
+    const split = await rows(db,
+      "select contributor_id, responsibility_pennies from public.purchase_allocations where purchase_id = $1",
+      [firstPurchase]);
+    assert.deepEqual(split, [{ contributor_id: jade, responsibility_pennies: 4000 }]);
+  });
+
+  test("THEN SOMEBODY ELSE BECOMES A CONTRIBUTOR", async () => {
+    const elected = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select id from public.set_event_contributor($1, $2, true)", [event, f.people.mo]);
+    assert.equal(elected.ok, true, elected.error);
+    mo = elected.rows[0].id;
+
+    await asOwner(db);
+    assert.equal(
+      await value(db, "select active from public.contributors where id = $1", [mo]), true);
+  });
+
+  test("AND THE PURCHASE ALREADY MADE IS UNTOUCHED", async () => {
+    await asOwner(db);
+    const split = await rows(db,
+      "select contributor_id, responsibility_pennies from public.purchase_allocations where purchase_id = $1",
+      [firstPurchase]);
+    assert.deepEqual(split, [{ contributor_id: jade, responsibility_pennies: 4000 }],
+      "electing a contributor rewrote an allocation that had already been decided");
+    assert.equal(
+      await value(db, "select actual_price_pennies from public.purchases where id = $1", [firstPurchase]),
+      4000, "and the price moved too");
+  });
+
+  test("while a NEW purchase may use the new contributor", async () => {
+    const made = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select id from public.save_purchase_with_location("
+      + "null, $1, 'Lamp', 3000, $2, null, current_date, null, null,"
+      + " 'purchased', 'custom', null, $3::jsonb)",
+      [recipientForBuying, jade,
+        JSON.stringify([
+          { contributor_id: jade, responsibility_pennies: 1000 },
+          { contributor_id: mo, responsibility_pennies: 2000 },
+        ])]);
+    assert.equal(made.ok, true, made.error);
+
+    await asOwner(db);
+    const split = await rows(db,
+      "select contributor_id, responsibility_pennies from public.purchase_allocations"
+      + " where purchase_id = $1 order by responsibility_pennies", [made.rows[0].id]);
+    assert.equal(split.length, 2, "the current contributor set applies to what happens next");
+  });
+
+  test("AND REMOVING A CONTRIBUTOR STILL DOES NOT REWRITE THE OLD ONE", async () => {
+    /*
+     * The direction that matters most. Somebody leaving the pool must not
+     * evaporate their share of a gift that was already bought and may already
+     * have been paid for.
+     */
+    const removed = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select id from public.set_event_contributor($1, $2, false)", [event, f.people.mo]);
+    assert.equal(removed.ok, true, removed.error);
+
+    await asOwner(db);
+    const split = await rows(db,
+      "select contributor_id, responsibility_pennies from public.purchase_allocations where purchase_id = $1",
+      [firstPurchase]);
+    assert.deepEqual(split, [{ contributor_id: jade, responsibility_pennies: 4000 }]);
+
+    const stillOwed = await value(db,
+      "select count(*)::int from public.purchase_allocations where contributor_id = $1", [mo]);
+    assert.equal(stillOwed, 1,
+      "deactivating a contributor deleted the share they had already taken on");
+  });
+
+  test("a NEW purchase may not name the contributor who has left", async () => {
+    const made = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select id from public.save_purchase_with_location("
+      + "null, $1, 'Rug', 2000, $2, null, current_date, null, null,"
+      + " 'purchased', 'custom', null, $3::jsonb)",
+      [recipientForBuying, jade,
+        JSON.stringify([{ contributor_id: mo, responsibility_pennies: 2000 }])]);
+    assert.equal(made.ok, false, "an inactive contributor took on new responsibility");
+    assert.match(made.error, /belong to this Christmas|contributor/iu);
+  });
+
+  test("and money is only ever whole pennies", async () => {
+    /*
+     * The split must equal the price exactly, and both are integers. A float
+     * anywhere in this chain is a rounding error that becomes somebody's debt.
+     */
+    const short = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select id from public.save_purchase_with_location("
+      + "null, $1, 'Short split', 1000, $2, null, current_date, null, null,"
+      + " 'purchased', 'custom', null, $3::jsonb)",
+      [recipientForBuying, jade,
+        JSON.stringify([{ contributor_id: jade, responsibility_pennies: 999 }])]);
+    assert.equal(short.ok, false, "a split that does not add up to the price was accepted");
+    assert.match(short.error, /equal the purchase price/u);
+
+    const fractional = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select id from public.save_purchase_with_location("
+      + "null, $1, 'Fractional', 1000, $2, null, current_date, null, null,"
+      + " 'purchased', 'custom', null, $3::jsonb)",
+      [recipientForBuying, jade,
+        JSON.stringify([{ contributor_id: jade, responsibility_pennies: 999.5 }])]);
+    assert.equal(fractional.ok, false, "a fractional penny was accepted");
+  });
+});
