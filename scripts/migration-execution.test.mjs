@@ -41,6 +41,7 @@ const GIFT_IDEA_REMOVAL = "202608100046_area_scoped_gift_idea_removal.sql";
 const PERSON_ROUTINES = "202608100047_area_scoped_person_routines.sql";
 const HELPER_GRANTS = "202608100048_revoke_area_helper_grants.sql";
 const AUDIT_ACTING_AREA = "202608100049_audit_area_from_acting_area.sql";
+const BIRTHDAY_PRIVACY_SUBJECT = "202608100050_audit_birthday_privacy_subject.sql";
 
 /** Everything the database owns, as names. The unit of "what a migration did". */
 async function inventory(db) {
@@ -85,13 +86,13 @@ describe("the whole history replays on PostgreSQL 18", () => {
   after(async () => { await db?.close(); });
 
   test("every migration executes, in order, against a real server", async () => {
-    assert.equal(db.appliedMigrations.length, 49);
-    assert.equal(db.appliedMigrations.at(-6).name, PERSON_ADMIN);
-    assert.equal(db.appliedMigrations.at(-5).name, MUTATION_HARDENING);
-    assert.equal(db.appliedMigrations.at(-4).name, GIFT_IDEA_REMOVAL);
-    assert.equal(db.appliedMigrations.at(-3).name, PERSON_ROUTINES);
-    assert.equal(db.appliedMigrations.at(-2).name, HELPER_GRANTS);
-    assert.equal(db.appliedMigrations.at(-1).name, AUDIT_ACTING_AREA);
+    assert.equal(db.appliedMigrations.length, 50);
+    assert.equal(db.appliedMigrations.at(-6).name, MUTATION_HARDENING);
+    assert.equal(db.appliedMigrations.at(-5).name, GIFT_IDEA_REMOVAL);
+    assert.equal(db.appliedMigrations.at(-4).name, PERSON_ROUTINES);
+    assert.equal(db.appliedMigrations.at(-3).name, HELPER_GRANTS);
+    assert.equal(db.appliedMigrations.at(-2).name, AUDIT_ACTING_AREA);
+    assert.equal(db.appliedMigrations.at(-1).name, BIRTHDAY_PRIVACY_SUBJECT);
     assert.ok(db.appliedMigrations.every((m) => m.ok));
   });
 
@@ -398,12 +399,12 @@ describe("public.rls_auto_enable, the object production has and no migration cre
 // ===========================================================================
 
 describe("the migration inventory", () => {
-  test("049 is the newest, and nothing older has moved", () => {
+  test("050 is the newest, and nothing older has moved", () => {
     const names = migrationNames();
-    assert.equal(names.length, 49);
+    assert.equal(names.length, 50);
     assert.deepEqual(names.slice(-8),
-      [LIFECYCLE, PLANNING, PERSON_ADMIN, MUTATION_HARDENING, GIFT_IDEA_REMOVAL,
-       PERSON_ROUTINES, HELPER_GRANTS, AUDIT_ACTING_AREA]);
+      [PLANNING, PERSON_ADMIN, MUTATION_HARDENING, GIFT_IDEA_REMOVAL,
+       PERSON_ROUTINES, HELPER_GRANTS, AUDIT_ACTING_AREA, BIRTHDAY_PRIVACY_SUBJECT]);
   });
 });
 

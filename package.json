@@ -77,6 +77,7 @@
     "test:area-context": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/dom/tsx-hook-register.mjs --test scripts/area-context.test.mjs",
     "test:notification-jobs": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/notification-jobs.test.mjs",
   "test:settlements": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/settlement-lifecycle.test.mjs",
+  "test:rls-matrix": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/rls-permission-matrix.test.mjs",
   "test:theme-bootstrap": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/theme-bootstrap.test.mjs",
   "check:worker-bundle": "wrangler deploy --dry-run --outdir .open-next/.worker-check",
   "test:shadcn-ui": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/dom/tsx-hook-register.mjs --test scripts/shadcn-ui.test.mjs",

@@ -113,7 +113,7 @@ test("the authorization migration explicitly enables RLS on every application ta
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
   // Q2 added 041-043 on top; Q3 added 044 and 045; Q5 added 046; Q6 added
-  // 047; Q10 added 048; Q11 added 049. What this
+  // 047; Q10 added 048; Q11 added 049; Q12 added 050. What this
   // file pins is that Phase 5's and Q1's security migrations are still there,
   // and still in order -- every offset moves together, so nothing about them
   // has changed.
@@ -127,8 +127,39 @@ test("the authorization migration explicitly enables RLS on every application ta
   // single-membership fallback. The refusal to choose between several
   // memberships is unchanged, and `area-mutation-security` still proves a
   // caller with several families and no Area claimed is refused.
-  assert.equal(migrationFiles.at(-10), wishlistMigrationName);
-  assert.equal(migrationFiles.at(-11), areaAuthMigrationName);
+  //
+  // 050 IS REVIEWED AND DOES ADD SECURITY SURFACE -- the first since 048 that
+  // does. It NARROWS one policy and widens nothing: `audit_log`'s SELECT policy
+  // keeps both of its existing clauses and gains two more, so that an entry
+  // about somebody's own birthday stops being readable by that person. It adds
+  // two columns to carry that fact, a CHECK, one partial index, and an
+  // own-birthday guard inside three routines. It creates no table, grants
+  // nothing to anyone, revokes nothing, and defines no trigger. The clauses are
+  // asserted below rather than merely described here, and the behaviour they
+  // produce is proved against a real PostgreSQL in
+  // `scripts/rls-permission-matrix.test.mjs`.
+  assert.equal(migrationFiles.at(-11), wishlistMigrationName);
+  assert.equal(migrationFiles.at(-12), areaAuthMigrationName);
+
+  // What 050 introduces, security-wise: a strictly narrower read policy.
+  const birthdayPrivacyMigration = readFileSync(
+    join(migrationsDirectory, "202608100050_audit_birthday_privacy_subject.sql"), "utf8",
+  ).replace(/\r\n/gu, "\n");
+  assert.match(birthdayPrivacyMigration, /create policy "members read the audit log"/u);
+  for (const clause of [
+    "public.is_active_app_member()",
+    "public.is_area_member(area_id)",
+    "birthday_privacy_unknown = false",
+    "celebrant_person_id <> public.current_person_id()",
+  ]) {
+    assert.ok(
+      birthdayPrivacyMigration.includes(clause),
+      `050's audit_log policy must still carry: ${clause}`,
+    );
+  }
+  assert.doesNotMatch(birthdayPrivacyMigration, /^grant /imu, "050 grants nothing");
+  assert.doesNotMatch(birthdayPrivacyMigration, /^create table/imu, "050 creates no table");
+  assert.doesNotMatch(birthdayPrivacyMigration, /create trigger/iu, "050 defines no trigger");
   assert.ok(migrationFiles.includes(actingMigrationName), "the acting-Area migration is still present");
   assert.ok(migrationFiles.includes(membershipMigrationName), "the membership guard migration is still present");
   assert.ok(migrationFiles.includes(peopleMigrationName), "the People directory migration is still present");

@@ -499,14 +499,14 @@ create or replace function public.is_area_admin(p_area_id uuid)`,
   },
   {
     name: "Q3S-2. the guard trusts the acting Area instead of the row's own",
-    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    file: "supabase/migrations/202608100050_audit_birthday_privacy_subject.sql",
     from: "  perform public.require_acting_area(public.area_of_event(p_event_id));\n  if not public.is_app_admin() then\n    raise exception 'Global Admin access required to archive an event'",
     to: "  perform public.require_acting_area(public.acting_area());\n  if not public.is_app_admin() then\n    raise exception 'Global Admin access required to archive an event'",
     suites: ["scripts/area-mutation-security.test.mjs"],
   },
   {
     name: "Q3S-3. event update loses its target-Area check",
-    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    file: "supabase/migrations/202608100050_audit_birthday_privacy_subject.sql",
     from: "  perform public.require_acting_area(public.area_of_event(p_event_id));\n  if not public.is_app_admin() then\n    raise exception 'Global Admin access required to change an event'",
     to: "  if not public.is_app_admin() then\n    raise exception 'Global Admin access required to change an event'",
     suites: ["scripts/area-mutation-security.test.mjs"],
@@ -544,7 +544,7 @@ create or replace function public.is_area_admin(p_area_id uuid)`,
   {
     // The FIRST purchase guard in the file is `set_purchase_status`'s.
     name: "Q3S-8. changing a purchase stops checking its Area",
-    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    file: "supabase/migrations/202608100050_audit_birthday_privacy_subject.sql",
     from: "  perform public.require_acting_area(public.area_of_purchase(p_purchase_id));",
     to: "",
     suites: ["scripts/area-mutation-security.test.mjs"],
@@ -661,7 +661,7 @@ create or replace function public.is_area_admin(p_area_id uuid)`,
   },
   {
     name: "Q4-10. archiving an event stops checking the event's Area",
-    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    file: "supabase/migrations/202608100050_audit_birthday_privacy_subject.sql",
     from: `  perform public.require_acting_area(public.area_of_event(p_event_id));
   if not public.is_app_admin() then
     raise exception 'Global Admin access required to archive an event'`,
@@ -671,7 +671,7 @@ create or replace function public.is_area_admin(p_area_id uuid)`,
   },
   {
     name: "Q4-11. deleting an event stops caring whether it is empty",
-    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    file: "supabase/migrations/202608100050_audit_birthday_privacy_subject.sql",
     from: `  if blocking_count > 0 then
     raise exception
       'This event has % % and cannot be deleted. Archive it instead`,
@@ -682,7 +682,7 @@ create or replace function public.is_area_admin(p_area_id uuid)`,
   },
   {
     name: "Q4-11b. deleting an event stops checking the event's Area",
-    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
+    file: "supabase/migrations/202608100050_audit_birthday_privacy_subject.sql",
     from: `  perform public.require_acting_area(public.area_of_event(p_event_id));
   if not public.is_app_admin() then
     raise exception 'Only the Global Admin can delete an event'`,
@@ -1326,6 +1326,76 @@ export function EventSettingsScreen(`,
     to: `create index if not exists notifications_event_recipient_key
   on public.notifications (app_member_id, event_kind, event_subject_id, category);`,
     suites: ["scripts/notification-jobs.test.mjs"],
+  },
+
+  // -------------------------------------------------------------------------
+  // Q12. Migration 050 -- the birthday privacy subject.
+  //
+  // 050 both NARROWS a policy and adds three guards, so each half needs its own
+  // mutation: it is not enough that the new tests pass, they have to fail when
+  // the thing they are about is taken away.
+  // -------------------------------------------------------------------------
+  {
+    name: "Q12-1. the audit log stops hiding entries whose subject is unknown",
+    file: "supabase/migrations/202608100050_audit_birthday_privacy_subject.sql",
+    from: "  and birthday_privacy_unknown = false\n",
+    to: "",
+    suites: ["scripts/rls-permission-matrix.test.mjs"],
+  },
+  {
+    name: "Q12-2. the audit log stops hiding a birthday from its own celebrant",
+    file: "supabase/migrations/202608100050_audit_birthday_privacy_subject.sql",
+    from: "    or celebrant_person_id <> public.current_person_id()",
+    to: "    or true",
+    suites: ["scripts/rls-permission-matrix.test.mjs"],
+  },
+  {
+    name: "Q12-3. set_purchase_status hands the celebrant their own present again",
+    // First occurrence of the guard is `set_purchase_status`; `void_purchase`
+    // carries the identical block and is mutated separately, below.
+    file: "supabase/migrations/202608100050_audit_birthday_privacy_subject.sql",
+    from: `  if public.is_own_birthday_purchase(p_purchase_id) then
+    raise exception 'That purchase is part of your own birthday.' using errcode = '42501';
+  end if;
+  if p_status not in ('purchased', 'wrapped') then`,
+    to: "  if p_status not in ('purchased', 'wrapped') then",
+    suites: ["scripts/rls-permission-matrix.test.mjs"],
+  },
+  {
+    name: "Q12-4. void_purchase hands the celebrant their own present again",
+    file: "supabase/migrations/202608100050_audit_birthday_privacy_subject.sql",
+    from: `  if public.is_own_birthday_purchase(p_purchase_id) then
+    raise exception 'That purchase is part of your own birthday.' using errcode = '42501';
+  end if;
+
+  update public.purchases
+  set
+    deleted_at = now(),`,
+    to: `  update public.purchases
+  set
+    deleted_at = now(),`,
+    suites: ["scripts/rls-permission-matrix.test.mjs"],
+  },
+  {
+    name: "Q12-5. the celebrant may overwrite the idea recorded for them again",
+    file: "supabase/migrations/202608100050_audit_birthday_privacy_subject.sql",
+    from: `  if public.is_own_birthday_recipient(p_christmas_recipient_id) then
+    raise exception 'That belongs to your own birthday.' using errcode = '42501';
+  end if;
+`,
+    to: "",
+    suites: ["scripts/rls-permission-matrix.test.mjs"],
+  },
+  {
+    name: "Q12-6. an unresolvable planning write stops failing closed",
+    file: "supabase/migrations/202608100050_audit_birthday_privacy_subject.sql",
+    from: `      resolved_celebrant := null;
+      privacy_unknown := true;
+    elsif resolved_event_type <> 'birthday' then`,
+    to: `      resolved_celebrant := null;
+      privacy_unknown := false;
+    elsif resolved_event_type <> 'birthday' then`,
+    suites: ["scripts/rls-permission-matrix.test.mjs"],
   },
 
 ];
