@@ -183,13 +183,3 @@ export function normalizePurchaseStatus(status: unknown): PurchaseStatus | null 
 export function purchaseLifecycleLabel(status: PurchaseStatus) {
   return status === "wrapped" ? "Wrapped" : "Purchased";
 }
-
-export function purchaseStatusLabel(status: PurchaseProgressStatus) {
-  const labels: Record<PurchaseProgressStatus, string> = {
-    not_started: "NOT STARTED",
-    in_progress: "IN PROGRESS",
-    budget_reached: "BUDGET REACHED",
-    over_budget: "OVER BUDGET",
-  };
-  return labels[status];
-}

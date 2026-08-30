@@ -691,22 +691,6 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   height: 44px;
 }
 
-/* One-shot celebration specks; the component unmounts itself on animation end. */
-.burst-speck {
-  animation: burst 900ms cubic-bezier(0.15, 0.7, 0.3, 1) forwards;
-}
-
-@keyframes burst {
-  from {
-    transform: translate3d(0, 0, 0) scale(0.4);
-    opacity: 1;
-  }
-  to {
-    transform: translate3d(var(--burst-x), var(--burst-y), 0) scale(1);
-    opacity: 0;
-  }
-}
-
 /*
  * White flakes vanish on paper, so light mode tints them instead — a soft slate
  * blue, which is how snow reads against white.

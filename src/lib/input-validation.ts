@@ -160,10 +160,6 @@ export function validateUuid(
   return { ok: true, value: input.toLowerCase() };
 }
 
-export function isUuid(input: unknown): input is string {
-  return validateUuid(input).ok;
-}
-
 export function validateEnum<const Value extends string>(
   input: unknown,
   allowed: readonly Value[],
@@ -191,10 +187,6 @@ export function validateDateInput(
     return { ok: false, error: message };
   }
   return { ok: true, value: input };
-}
-
-export function hasDisallowedControlCharacters(input: string, multiline = false) {
-  return containsDisallowedControlCharacters(input, multiline);
 }
 
 function containsDisallowedControlCharacters(value: string, multiline: boolean) {

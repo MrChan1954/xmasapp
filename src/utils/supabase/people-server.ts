@@ -1,7 +1,7 @@
 import "server-only";
 
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { nextBirthdayOccurrence, personBirthdayFromRow } from "@/lib/birthdays.ts";
+import { personBirthdayFromRow } from "@/lib/birthdays.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { groupGiftHistory, personAccountFrom, type GiftHistoryRow, type PersonAccount, type PersonDirectoryEntry, type PersonEventHistory } from "@/lib/people.ts";
 import { londonToday } from "./birthdays-server";
@@ -345,9 +345,4 @@ export async function loadPersonProfile(personId: string): Promise<PersonProfile
     viewerRole: isAdmin ? "admin" : "member",
     today,
   };
-}
-
-/** The age this person turns next, for the profile header. */
-export function nextBirthdayFor(entry: PersonDirectoryEntry, today: string) {
-  return entry.birthday ? nextBirthdayOccurrence(entry.birthday, today) : null;
 }

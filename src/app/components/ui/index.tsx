@@ -6,7 +6,7 @@ import { cx } from "../cx";
 import { cn } from "@/lib/cn";
 import { Button as ShadcnButton, buttonVariants } from "./button";
 import { Badge as ShadcnBadge } from "./badge";
-import { Input as ShadcnInput, fieldClasses } from "./input";
+import { Input as ShadcnInput } from "./input";
 import { Label } from "./label";
 import { NativeSelect } from "./native-select";
 import { Textarea as ShadcnTextarea } from "./textarea";
@@ -74,13 +74,6 @@ export function ButtonLink({
 }
 
 /* ----------------------------------- Forms ----------------------------------- */
-
-/**
- * The field look now lives in ./input.tsx as `fieldClasses` and is worn by the
- * shadcn Input, Textarea and NativeSelect alike. Re-exported under its old
- * name for the handful of places that compose a bespoke control.
- */
-export const inputClasses = fieldClasses;
 
 /**
  * A labelled form row.

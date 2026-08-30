@@ -206,8 +206,24 @@ drop policy if exists "active members add gift ideas" on public.gift_ideas;`,
     suites: ["scripts/areas-and-tenancy.test.mjs", "scripts/rls-security.test.mjs"],
   },
   {
+    /*
+     * RE-POINTED IN Q17, FOR THE REASON MUTATION 9 WAS RE-POINTED IN Q16.
+     *
+     * This used to edit migration 042, which first wrote `leave_area`. But 045
+     * REDEFINES `leave_area` in full, so breaking 042's copy changed a
+     * definition a later migration overwrote: the mutant never reached the
+     * schema the tests query. What killed it was 042's own apply-time block
+     * noticing its text had changed -- "the migration REFUSED TO APPLY", which
+     * the rules here do not accept as a behavioural kill.
+     *
+     * The guard is character-for-character the same in 045, and 045's is the
+     * one that is installed. Breaking it there lets the sole administrator
+     * deactivate their own membership and leave the family with nobody who can
+     * administer it. `area-lifecycle`'s "THE ADMINISTRATOR MAY NOT, and is told
+     * what to do instead" is a real call being refused, so that is what fails.
+     */
     name: "Q2-3. the sole administrator is allowed to walk out",
-    file: "supabase/migrations/202608100042_area_membership_lifecycle.sql",
+    file: "supabase/migrations/202608100045_area_scoped_mutation_hardening.sql",
     from: `  if mine.role = 'admin' then
     raise exception 'Hand this family over to somebody else before you leave it'
       using errcode = '42501';
@@ -439,9 +455,24 @@ create or replace function public.is_area_admin(p_area_id uuid)`,
     suites: ["scripts/people-and-access.test.mjs"],
   },
   {
+    /*
+     * RETARGETED BY Q17, the same way Q6 retargeted Q3-6 just below and Q16
+     * retargeted mutation 9. Written against 044, where the routine lived at
+     * the time; 047 does `create or replace` on it, so 044's body is no longer
+     * the one installed and the mutant died of "the migration REFUSED TO
+     * APPLY" -- an apply-time structural kill, which is not a kill here.
+     *
+     * The defect is unchanged and still the pre-044 hole: ask `is_app_admin()`,
+     * which answers about the Area the caller SAID they are standing in, and
+     * then trust it about a person resolved from somewhere else entirely. It is
+     * a different defect from Q6-6 below, which leaves the target-Area question
+     * in place and removes only `is_acting_area`.
+     */
     name: "Q3-3. the contributor routine goes back to asking about the ACTING Area",
-    file: "supabase/migrations/202608100044_area_scoped_person_administration.sql",
-    from: `  if target_area is null or not public.is_area_admin(target_area) then
+    file: "supabase/migrations/202608100047_area_scoped_person_routines.sql",
+    from: `  if target_area is null
+     or not public.is_acting_area(target_area)
+     or not public.is_area_admin(target_area) then
     -- One refusal for "no such person" and for "not your family", so the
     -- message cannot be used to discover who exists elsewhere.
     raise exception 'Only this family''s administrator can change who contributes'`,
@@ -450,18 +481,24 @@ create or replace function public.is_area_admin(p_area_id uuid)`,
     suites: ["scripts/people-and-access.test.mjs"],
   },
   {
+    /* RETARGETED BY Q17 onto the installed definition. See Q3-3 above. */
     name: "Q3-4. archiving a person stops checking which family they are in",
-    file: "supabase/migrations/202608100044_area_scoped_person_administration.sql",
-    from: `  if target_area is null or not public.is_area_admin(target_area) then
+    file: "supabase/migrations/202608100047_area_scoped_person_routines.sql",
+    from: `  if target_area is null
+     or not public.is_acting_area(target_area)
+     or not public.is_area_admin(target_area) then
     raise exception 'Only this family''s administrator can archive one of its people'`,
     to: `  if not public.is_app_admin() then
     raise exception 'Only this family''s administrator can archive one of its people'`,
     suites: ["scripts/people-and-access.test.mjs"],
   },
   {
+    /* RETARGETED BY Q17 onto the installed definition. See Q3-3 above. */
     name: "Q3-5. renaming a person stops checking which family they are in",
-    file: "supabase/migrations/202608100044_area_scoped_person_administration.sql",
-    from: `  if target_area is null or not public.is_area_admin(target_area) then
+    file: "supabase/migrations/202608100047_area_scoped_person_routines.sql",
+    from: `  if target_area is null
+     or not public.is_acting_area(target_area)
+     or not public.is_area_admin(target_area) then
     raise exception 'Only this family''s administrator can rename one of its people'`,
     to: `  if not public.is_app_admin() then
     raise exception 'Only this family''s administrator can rename one of its people'`,
