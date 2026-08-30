@@ -314,7 +314,7 @@ export function PersonModal({
           title={`Remove ${person.name} from ${event?.name ?? "this event"}?`}
           body="They will no longer appear in this event's active list or budget. You can restore them later."
           confirmLabel="Remove person"
-          busyLabel="Removing..."
+          busyLabel="Removing…"
           busy={removing}
           onCancel={() => setConfirmingRemove(false)}
           onConfirm={() => void remove()}
@@ -402,7 +402,7 @@ function DetailView({
             <Button variant="tonal" onClick={editContributors} disabled={!contributionsLoaded} className="w-full sm:w-auto">Edit contributors</Button>
           </div>
           {loading ? (
-            <p className="mt-4 text-sm text-ink-600">Loading contributors...</p>
+            <p className="mt-4 text-sm text-ink-600">Loading contributors…</p>
           ) : contributingRows.length === 0 ? (
             <p className="mt-4 text-sm text-ink-600">No contributors are currently sharing this budget.</p>
           ) : (
@@ -554,7 +554,7 @@ function Actions({ cancel, save, saving, saveDisabled = false }: { cancel: () =>
   return (
     <ModalFooter className="-mx-5 sm:-mx-7">
       <Button variant="secondary" size="lg" onClick={cancel} disabled={saving}>Cancel</Button>
-      <Button size="lg" disabled={saving || saveDisabled} onClick={save}>{saving ? "Saving..." : "Save"}</Button>
+      <Button size="lg" disabled={saving || saveDisabled} onClick={save}>{saving ? "Saving…" : "Save"}</Button>
     </ModalFooter>
   );
 }

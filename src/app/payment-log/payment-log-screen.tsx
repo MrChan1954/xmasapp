@@ -184,7 +184,7 @@ export function PaymentLogScreen({ eventId, eventName }: { eventId: string; even
               disabled={refreshing}
               onClick={() => { setRefreshing(true); void refresh().catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "Payment Log could not be refreshed.")).finally(() => setRefreshing(false)); }}
             >
-              {refreshing ? "Refreshing..." : "Refresh"}
+              {refreshing ? "Refreshing…" : "Refresh"}
             </Button>
           </div>
         ) : undefined}
@@ -511,7 +511,7 @@ function PaymentDetail({ record, isAdmin, onClose, onVoided }: { record: Payment
             <h3 className="font-semibold text-berry">Correction</h3>
             <p className="mt-1 text-xs leading-5 text-ink-600">Voiding keeps this record in the log and restores any confirmed amount to the Owed balance.</p>
             <Button variant="danger" size="lg" disabled={voiding} onClick={() => setConfirming(true)} className="mt-3 w-full">
-              {voiding ? "Voiding payment..." : "Void payment"}
+              {voiding ? "Voiding payment…" : "Void payment"}
             </Button>
           </div>
         )}
@@ -529,7 +529,7 @@ function PaymentDetail({ record, isAdmin, onClose, onVoided }: { record: Payment
             </p>
           </>}
           confirmLabel="Void payment"
-          busyLabel="Voiding..."
+          busyLabel="Voiding…"
           busy={voiding}
           onCancel={() => setConfirming(false)}
           onConfirm={() => void voidPayment()}

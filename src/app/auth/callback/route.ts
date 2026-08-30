@@ -59,7 +59,7 @@ function implicitAuthHandoff() {
 <html lang="en">
   <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Completing secure sign in</title></head>
   <body>
-    <p>Completing your secure sign in...</p>
+    <p>Completing your secure sign in…</p>
     <script>
       if (window.location.hash) {
         window.location.replace('/account-setup' + window.location.hash);

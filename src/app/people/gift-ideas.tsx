@@ -333,7 +333,7 @@ export function GiftIdeas({
                   <p className="mt-1 text-xs leading-5 text-ink-600">Nothing has been bought from this idea, so no purchase or budget is affected.</p>
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <Button variant="secondary" disabled={saving} onClick={() => setConfirming(null)}>Cancel</Button>
-                    <Button variant="danger" disabled={saving} onClick={() => void removeIdea(idea)}>{saving ? "Removing..." : "Remove"}</Button>
+                    <Button variant="danger" disabled={saving} onClick={() => void removeIdea(idea)}>{saving ? "Removing…" : "Remove"}</Button>
                   </div>
                 </div>
               )}
@@ -397,15 +397,15 @@ function GiftIdeaEditor({
         </Field>
 
         <Field label="Shop / retailer">
-          <Input maxLength={INPUT_LIMITS.retailer} value={values.retailer} onChange={(event) => update("retailer", event.target.value)} placeholder="Amazon, Boots, Next..." />
+          <Input maxLength={INPUT_LIMITS.retailer} value={values.retailer} onChange={(event) => update("retailer", event.target.value)} placeholder="Amazon, Boots, Next…" />
         </Field>
 
         <Field label="Link" className="md:col-span-2">
-          <Input type="url" inputMode="url" maxLength={INPUT_LIMITS.url} value={values.url} onChange={(event) => update("url", event.target.value)} placeholder="https://..." />
+          <Input type="url" inputMode="url" maxLength={INPUT_LIMITS.url} value={values.url} onChange={(event) => update("url", event.target.value)} placeholder="https://…" />
         </Field>
 
         <Field label="Notes" className="md:col-span-2">
-          <Textarea maxLength={INPUT_LIMITS.notes} rows={4} value={values.notes} onChange={(event) => update("notes", event.target.value)} placeholder="Size, colour, or anything useful..." />
+          <Textarea maxLength={INPUT_LIMITS.notes} rows={4} value={values.notes} onChange={(event) => update("notes", event.target.value)} placeholder="Size, colour, or anything useful…" />
         </Field>
       </div>
 
@@ -425,7 +425,7 @@ function GiftIdeaEditor({
 
       <div className="mt-6 grid grid-cols-2 gap-3">
         <Button variant="secondary" size="lg" disabled={saving} onClick={onCancel}>Cancel</Button>
-        <Button type="submit" size="lg" disabled={saving}>{saving ? "Saving..." : idea ? "Save changes" : "Add idea"}</Button>
+        <Button type="submit" size="lg" disabled={saving}>{saving ? "Saving…" : idea ? "Save changes" : "Add idea"}</Button>
       </div>
     </form>
   );

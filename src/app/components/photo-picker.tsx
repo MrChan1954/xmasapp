@@ -194,7 +194,7 @@ export function PhotoPicker({
             className="border-line px-3"
           >
             <ImagePlus aria-hidden size={17} strokeWidth={1.8} />
-            {preparing ? "Adding..." : "Add photo"}
+            {preparing ? "Adding…" : "Add photo"}
           </Button>
         </div>
       </div>

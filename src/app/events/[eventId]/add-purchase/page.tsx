@@ -10,7 +10,7 @@ export default async function EventAddPurchasePage({ params }: PageProps<"/event
   const event = await requireEvent(eventId);
   return (
     <AppShell>
-      <Suspense fallback={<p className="py-6 text-sm font-medium text-ink-600">Loading purchase form...</p>}>
+      <Suspense fallback={<p className="py-6 text-sm font-medium text-ink-600">Loading purchase form…</p>}>
         <PurchaseForm eventId={event.id} />
       </Suspense>
     </AppShell>

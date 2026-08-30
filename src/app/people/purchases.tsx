@@ -282,7 +282,7 @@ export function Purchases({
                     <p className="mt-1 text-xs leading-5 text-ink-600">This removes {formatPennies(purchase.actual_price_pennies)} from this event&apos;s spending. Financial history will be preserved.</p>
                     <div className="mt-3 grid grid-cols-2 gap-2">
                       <Button variant="secondary" disabled={busy === purchase.id} onClick={() => setConfirming(null)}>Cancel</Button>
-                      <Button variant="danger" disabled={busy === purchase.id} onClick={() => void removePurchase(purchase)}>{busy === purchase.id ? "Removing..." : "Remove purchase"}</Button>
+                      <Button variant="danger" disabled={busy === purchase.id} onClick={() => void removePurchase(purchase)}>{busy === purchase.id ? "Removing…" : "Remove purchase"}</Button>
                     </div>
                   </div>
                 )}

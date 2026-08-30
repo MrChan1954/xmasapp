@@ -387,7 +387,7 @@ function MyPaymentsSection({ payments, names, onRefresh }: { payments: OwedSettl
                   onClick={() => { setError(null); setCancelling(payment); }}
                   className="mt-3 border border-berry/30 bg-surface"
                 >
-                  {busyId === payment.id ? "Cancelling..." : "Cancel this payment"}
+                  {busyId === payment.id ? "Cancelling…" : "Cancel this payment"}
                 </Button>
               )}
             </article>
@@ -400,7 +400,7 @@ function MyPaymentsSection({ payments, names, onRefresh }: { payments: OwedSettl
           title={`Cancel your ${formatPennies(cancelling.amountPennies)} payment?`}
           body={`${contributorName(names, cancelling.payeeContributorId)} has not confirmed any of it yet, so nothing about your balance changes. The record stays in the Payment Log.`}
           confirmLabel="Cancel payment"
-          busyLabel="Cancelling..."
+          busyLabel="Cancelling…"
           busy={busyId === cancelling.id}
           onCancel={() => setCancelling(null)}
           onConfirm={() => void cancelClaim(cancelling)}
@@ -544,7 +544,7 @@ function ReviewSheet({ payment, choice, names, onClose, onReviewed }: { payment:
           <div className="mt-6 grid grid-cols-2 gap-3">
             <Button variant="secondary" size="lg" onClick={onClose}>Cancel</Button>
             <Button type="submit" size="lg" variant={choice === "none" ? "danger" : "primary"} disabled={saving}>
-              {saving ? "Saving..." : choice === "none" ? "Mark not received" : "Confirm"}
+              {saving ? "Saving…" : choice === "none" ? "Mark not received" : "Confirm"}
             </Button>
           </div>
         </div>
@@ -714,7 +714,7 @@ function AdminPaymentSheet({ data, onClose, onSaved }: { data: OwedData; onClose
 
           <div className="mt-6 grid grid-cols-2 gap-3">
             <Button variant="secondary" size="lg" onClick={onClose}>Cancel</Button>
-            <Button type="submit" size="lg" disabled={saving}>{saving ? "Recording..." : "Record as confirmed"}</Button>
+            <Button type="submit" size="lg" disabled={saving}>{saving ? "Recording…" : "Record as confirmed"}</Button>
           </div>
         </div>
       </form>
@@ -960,7 +960,7 @@ function Breakdown({ pairKeyValue, data, onClose, onPay, onRefresh }: { pairKeyV
                         onClick={() => { setVoidError(null); setConfirmingVoid({ id: row.id, label: `${formatPennies(row.amountPennies)} payment from ${payer} to ${payee}` }); }}
                         className="mt-3 border border-berry/30 bg-surface"
                       >
-                        {voidingId === row.id ? "Voiding..." : "Void payment"}
+                        {voidingId === row.id ? "Voiding…" : "Void payment"}
                       </Button>
                     )}
                   </div>
@@ -980,7 +980,7 @@ function Breakdown({ pairKeyValue, data, onClose, onPay, onRefresh }: { pairKeyV
           title={`Void ${confirmingVoid.label}?`}
           body="This removes its effect from the current balance. The history record will be kept."
           confirmLabel="Void payment"
-          busyLabel="Voiding..."
+          busyLabel="Voiding…"
           busy={voidingId === confirmingVoid.id}
           onCancel={() => setConfirmingVoid(null)}
           onConfirm={() => void voidPayment(confirmingVoid.id)}
@@ -1106,7 +1106,7 @@ function PaymentSheet({ balance, data, onClose, onSaved }: { balance: NetOwedBal
           </div>
           <div className="mt-6 grid grid-cols-2 gap-3">
             <Button variant="secondary" size="lg" onClick={onClose}>Cancel</Button>
-            <Button type="submit" size="lg" disabled={saving}>{saving ? "Recording..." : iAmPayer ? "I have paid this" : "Record payment"}</Button>
+            <Button type="submit" size="lg" disabled={saving}>{saving ? "Recording…" : iAmPayer ? "I have paid this" : "Record payment"}</Button>
           </div>
         </div>
       </form>

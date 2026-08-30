@@ -231,7 +231,7 @@ export function FamilyAccessClient() {
   if (loading) {
     return (
       <div role="status">
-        <p className="text-sm font-medium text-ink-600">Checking Family Access permission...</p>
+        <p className="text-sm font-medium text-ink-600">Checking Family Access permission…</p>
         <div className="mt-7 grid gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="Loading family access">
           {[0, 1, 2, 3, 4, 5].map((item) => <AccountSkeleton key={item} />)}
         </div>
@@ -371,7 +371,7 @@ export function FamilyAccessClient() {
           title={`Disable app access for ${dialog.person.name}?`}
           body="Their Christmas information will not be deleted."
           confirmLabel="Disable access"
-          busyLabel="Disabling..."
+          busyLabel="Disabling…"
           busy={busy !== null}
           onCancel={() => setDialog(null)}
           onConfirm={() => void runAction("disable", dialog.person).then(() => setDialog(null))}
@@ -559,7 +559,7 @@ function AccountCard({
             </div>
           )}
 
-          {working && <p role="status" className="mt-3 text-center text-xs font-medium text-ink-600">Saving change...</p>}
+          {working && <p role="status" className="mt-3 text-center text-xs font-medium text-ink-600">Saving change…</p>}
         </div>
       </div>
     </article>

@@ -1430,6 +1430,14 @@ export function EventSettingsScreen(`,
     to: `<h3 className="font-display text-lg font-semibold text-ink-900">{title}</h3>`,
     suites: ["scripts/interface-polish.test.mjs"],
   },
+  {
+    name: "Q13-4. a busy label goes back to spelling the pause with three full stops",
+    file: "src/app/owed/owed-screen.tsx",
+    from: `{saving ? "Recording…" : "Record as confirmed"}`,
+    to: `{saving ? "Recording..." : "Record as confirmed"}`,
+    suites: ["scripts/interface-polish.test.mjs"],
+  },
+
 ];
 
 function runSuite(suite) {

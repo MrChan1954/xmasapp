@@ -107,7 +107,7 @@ export default function LoginPage() {
         <Field label="Password" className="mt-4" required>
           <Input required type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
         </Field>
-        <Button type="submit" size="lg" disabled={busy} className="mt-6 w-full">{busy ? "Signing in..." : "Sign in"}</Button>
+        <Button type="submit" size="lg" disabled={busy} className="mt-6 w-full">{busy ? "Signing in…" : "Sign in"}</Button>
         <Link href="/forgot-password" className="mt-5 block text-center text-sm font-semibold text-accent">Forgot password?</Link>
         {message && <Notice tone="danger" className="mt-4">{message}</Notice>}
       </form>

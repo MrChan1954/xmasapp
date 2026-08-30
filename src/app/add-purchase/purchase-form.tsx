@@ -431,7 +431,7 @@ export function PurchaseForm({ eventId }: { eventId: string }) {
   };
 
   if (loading) {
-    return <p className="py-6 text-sm font-medium text-ink-600">Loading purchase form...</p>;
+    return <p className="py-6 text-sm font-medium text-ink-600">Loading purchase form…</p>;
   }
 
   // Nobody to buy for. A purchase belongs to a recipient, so there is no
@@ -528,7 +528,7 @@ export function PurchaseForm({ eventId }: { eventId: string }) {
               </Field>
 
               <Field label="Retailer" className="sm:col-span-2">
-                <Input maxLength={INPUT_LIMITS.retailer} value={retailer} onChange={(event) => setRetailer(event.target.value)} placeholder="Amazon, Boots, Next..." />
+                <Input maxLength={INPUT_LIMITS.retailer} value={retailer} onChange={(event) => setRetailer(event.target.value)} placeholder="Amazon, Boots, Next…" />
               </Field>
 
               <Field label="Notes" className="sm:col-span-2">
@@ -572,7 +572,7 @@ export function PurchaseForm({ eventId }: { eventId: string }) {
           </div>
 
           {weightsLoading ? (
-            <p className="mt-5 text-sm text-ink-600">Calculating split...</p>
+            <p className="mt-5 text-sm text-ink-600">Calculating split…</p>
           ) : allocationRows.length === 0 ? (
             <Notice tone="danger" className="mt-5">This recipient has no active contributor allocation to split against.</Notice>
           ) : (
@@ -607,7 +607,7 @@ export function PurchaseForm({ eventId }: { eventId: string }) {
 
           {/* Desktop submit lives in the sticky rail; mobile gets the bar below. */}
           <Button type="submit" size="lg" disabled={saving || !balanced} className="mt-4 hidden min-h-14 w-full text-base lg:inline-flex">
-            {saving ? "Saving purchase..." : editId ? "Save purchase changes" : "Save purchase"}
+            {saving ? "Saving purchase…" : editId ? "Save purchase changes" : "Save purchase"}
           </Button>
         </section>
       </div>
@@ -626,7 +626,7 @@ export function PurchaseForm({ eventId }: { eventId: string }) {
             </strong>
           </p>
           <Button type="submit" size="lg" disabled={saving || !balanced} className="shrink-0">
-            {saving ? "Saving..." : editId ? "Save changes" : "Save purchase"}
+            {saving ? "Saving…" : editId ? "Save changes" : "Save purchase"}
           </Button>
         </div>
       </div>

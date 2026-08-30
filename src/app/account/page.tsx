@@ -39,7 +39,7 @@ export default function AccountPage() {
     <AppShell width="narrow" parent={{ href: "/settings", label: "Settings" }}>
       <PageHeader
         title="Account & security"
-        description={email ? `Signed in as ${email}` : "Loading your account..."}
+        description={email ? `Signed in as ${email}` : "Loading your account…"}
       />
 
       <div className="mt-8 max-w-xl space-y-5">

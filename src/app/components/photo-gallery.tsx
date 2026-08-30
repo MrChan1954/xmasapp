@@ -162,7 +162,7 @@ export function PhotoGallery({ parent, label }: { parent: Parent; label: string 
             className="border-line px-3"
           >
             <ImagePlus aria-hidden size={17} strokeWidth={1.8} />
-            {busy ? "Adding..." : "Add photo"}
+            {busy ? "Adding…" : "Add photo"}
           </Button>
         </div>
       </div>

@@ -58,7 +58,7 @@ export default function ForgotPasswordPage() {
           />
         </Field>
         <Button type="submit" size="lg" disabled={busy} className="mt-5 w-full">
-          {busy ? "Sending..." : "Send reset link"}
+          {busy ? "Sending…" : "Send reset link"}
         </Button>
         {message && <Notice tone="info" className="mt-4">{message}</Notice>}
         <Link href="/login" className="mt-5 block text-center text-sm font-semibold text-accent">Back to sign in</Link>

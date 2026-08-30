@@ -297,7 +297,7 @@ function PeopleView({
       </ChipRow>
 
       {loading ? (
-        <p className="mt-8 text-sm font-medium text-ink-600">Loading people...</p>
+        <p className="mt-8 text-sm font-medium text-ink-600">Loading people…</p>
       ) : visible.length > 0 ? (
         <div className="mt-7 grid gap-5 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
           {visible.map((person) => <PersonCard key={person.id} person={person} onClick={() => setSelectedId(person.id)} />)}
@@ -627,7 +627,7 @@ function AddForm({ eventId, eventName, areaId, alreadyRecipientPersonIds, onCanc
             <h3 className="font-display text-lg font-semibold">Who contributes?</h3>
             <p className="mt-1 text-sm text-ink-600">Create a complete plan before adding this person.</p>
             {contributorsLoading ? (
-              <p className="mt-4 text-sm text-ink-600">Loading contributors...</p>
+              <p className="mt-4 text-sm text-ink-600">Loading contributors…</p>
             ) : (
               <RecipientAllocationEditor
                 idPrefix="add-person-contributor"
@@ -641,7 +641,7 @@ function AddForm({ eventId, eventName, areaId, alreadyRecipientPersonIds, onCanc
         </div>
         <ModalFooter>
           <Button variant="secondary" size="lg" onClick={onCancel} disabled={saving}>Cancel</Button>
-          <Button type="submit" size="lg" disabled={saving || !canSave}>{saving ? "Adding..." : "Add to event"}</Button>
+          <Button type="submit" size="lg" disabled={saving || !canSave}>{saving ? "Adding…" : "Add to event"}</Button>
         </ModalFooter>
       </form>
     </Modal>

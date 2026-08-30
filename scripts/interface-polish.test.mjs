@@ -1,7 +1,7 @@
 /**
- * THE POLISH DEFECTS Q13 CLOSED, EACH PINNED SO IT CANNOT COME BACK.
+ * THE FOUR POLISH DEFECTS Q13 CLOSED, EACH PINNED SO IT CANNOT COME BACK.
  *
- * None of these was a suspicion. All three were carried forward as known,
+ * None of these was a suspicion. All four were carried forward as known,
  * recorded limitations for several phases:
  *
  *   1. the Notification Centre announced `role="dialog"` and then let Tab walk
@@ -10,16 +10,17 @@
  *      floor, and well under the 44px this product uses everywhere else;
  *   3. `/people/<id>` went h1 then h3, so a screen reader's heading list lost a
  *      level with nothing in it;
+ *   4. user-facing copy spelled the same pause two ways, `...` and `…`.
  *
  * The first is proven by RENDERING, because a focus trap is behaviour and no
  * amount of reading the source establishes it -- the version this replaced
- * looked entirely correct and trapped nothing. The other two are proven by
- * reading, because they are facts about a stylesheet and about markup levels,
- * and jsdom has no viewport to measure a 44px box in. Their live counterparts
- * are the browser QA that runs against `xmas-family.uk`.
+ * looked entirely correct and trapped nothing. The rest are proven by reading,
+ * because they are facts about a stylesheet, about markup levels and about
+ * copy, and jsdom has no viewport to measure a 44px box in. Their live
+ * counterparts are the browser QA that runs against `xmas-family.uk`.
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test, { describe, after } from "node:test";
 
@@ -288,5 +289,86 @@ describe("Person detail headings", () => {
     // it changed the outline and not the design. A heading level picked for its
     // default size is how the skip got there in the first place.
     assert.match(panel, /<h2 className="font-display text-lg/);
+  });
+});
+
+// ===========================================================================
+// 4. One ellipsis, spelled one way
+// ===========================================================================
+
+/**
+ * Every `.ts`/`.tsx` under `src`, except the tests -- a test fixture is allowed
+ * to carry an abbreviated copy of somebody else's error message.
+ */
+function sourceFiles(directory) {
+  const found = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) found.push(...sourceFiles(path));
+    else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) found.push(path);
+  }
+  return found;
+}
+
+/**
+ * The file with its comments removed.
+ *
+ * Crude on purpose: a line whose first non-space characters open or continue a
+ * comment is dropped whole. That is enough, because the `...` this rule is NOT
+ * about -- an abbreviated SQL statement, an elided route, a quoted database
+ * error, a spread written out in prose -- all live in JSDoc blocks, and none of
+ * this repository's comments trail a line of code that also contains a string.
+ * A real parser would be the wrong trade here: it would be a second thing that
+ * can be wrong, in service of a rule about punctuation.
+ */
+const withoutComments = (source) => source
+  .split("\n")
+  .filter((line) => !/^\s*(\/\/|\/\*|\*)/.test(line))
+  .join("\n");
+
+describe("User-facing copy", () => {
+  test("THE ELLIPSIS IS ALWAYS `…`, NEVER THREE FULL STOPS", () => {
+    /*
+     * The app said "Saving..." on one screen and "Saving…" on the next -- the
+     * same word, the same wait, two different characters. This is not a
+     * blanket ban on three dots: a spread, a range in a comment and an elided
+     * error message are all still spelled `...`, and none of them is prose.
+     * What is checked is the two places a reader actually sees: the inside of
+     * a double-quoted string, and JSX text between two tags.
+     */
+    const offenders = [];
+    for (const file of sourceFiles(join(root, "src"))) {
+      const source = withoutComments(readFileSync(file, "utf8").replace(/\r\n/gu, "\n"));
+      const relative = file.slice(root.length + 1).replaceAll("\\", "/");
+
+      /*
+       * Line by line, and by SPLITTING on the quote rather than matching
+       * across it. A pattern that requires the dots to be inside the quotes
+       * can begin its match at the closing quote of an innocent string and end
+       * at the opening quote of the next one -- so a spread sitting in the code
+       * between two className attributes reads as copy, which is exactly what
+       * the first draft of this reported. Splitting cannot do that: on any one
+       * line the odd-numbered pieces ARE the strings and the even-numbered ones
+       * are the code between them.
+       */
+      for (const line of source.split("\n")) {
+        const pieces = line.split('"');
+        for (let index = 1; index < pieces.length; index += 2) {
+          if (pieces[index].includes("...")) offenders.push(`${relative}  "${pieces[index]}"`);
+        }
+      }
+      for (const [, text] of source.matchAll(/>([^<>{}\n]*\.\.\.[^<>{}\n]*)</gu)) {
+        offenders.push(`${relative}  ${text.trim()}`);
+      }
+    }
+
+    assert.deepEqual(offenders, [],
+      `user-facing copy must use "…":\n  ${offenders.join("\n  ")}`);
+  });
+
+  test("AND THE CONVENTION IS ACTUALLY IN USE, so the rule above is not vacuous", () => {
+    // A rule that passes because nothing anywhere pauses would be worthless.
+    const busy = readFileSync(join(root, "src", "app", "owed", "owed-screen.tsx"), "utf8");
+    assert.match(busy, /"Recording…"/u);
   });
 });

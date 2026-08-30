@@ -225,7 +225,7 @@ export default function AccountSetupPage() {
             />
           </Field>
           <Button type="submit" size="lg" disabled={stage === "saving"} className="mt-6 w-full">
-            {stage === "saving" ? "Saving..." : "Create password"}
+            {stage === "saving" ? "Saving…" : "Create password"}
           </Button>
           {message && <Notice tone="danger" className="mt-4">{message}</Notice>}
         </form>

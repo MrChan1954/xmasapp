@@ -901,7 +901,7 @@ export function ConfirmDialog({
             disabled={busy}
             onClick={(event) => { event.preventDefault(); onConfirm(); }}
           >
-            {busy ? (busyLabel ?? "Working...") : confirmLabel}
+            {busy ? (busyLabel ?? "Working…") : confirmLabel}
           </AlertDialogAction>
         </div>
       </AlertDialogContent>
