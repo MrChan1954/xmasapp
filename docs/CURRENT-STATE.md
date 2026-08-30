@@ -1,6 +1,6 @@
 # Current State
 
-**Last updated:** 2026-08-30, at the Q13 closeout.
+**Last updated:** 2026-08-30, after the Gift Planner brand rename.
 
 The handoff between phases. Current facts only — history lives in git.
 
@@ -13,9 +13,10 @@ The handoff between phases. Current facts only — history lives in git.
 | Q13 verdict | `Q13 PASS — RELEASE POLISH COMPLETE` |
 | Next phase | **Q14 — not started; nothing outstanding requires one** |
 | Branch | `main` |
-| Local HEAD | this closeout commit |
-| origin/main | `25ecff8` — the closeout commit is held back |
-| Serving Worker | `2cd2ad03-e41d-4a77-8494-5d2528941481` |
+| Local HEAD | this docs commit, held back |
+| origin/main | `d4bacd8` — the brand rename, carrying the held Q13 closeout |
+| Serving Worker | `ea1ccdad-247f-41f9-9486-a09b2458fd28` |
+| Product name | **Gift Planner** |
 | Migrations applied | **001–050**, immutable. **Q13 needed none.** |
 
 Q13 closed the four product-quality gaps the final site audit left open, and
@@ -138,7 +139,39 @@ accessible name, no nested interactive controls, no `tabindex="-1"` traps, one
 which already carries its own 44×44 `before:` hit area.
 
 **Branding.** Favicon 200, apple-touch-icon 200, manifest "Family Gift Planner"
-with all four icons 200. No Christmas-tree references in the head.
+with all four icons 200. No Christmas-tree references in the head. That name is
+the one the rename below replaced; the icons are unchanged.
+
+## After Q13 — the brand rename
+
+The product is called **Gift Planner**. It had been called three things at once:
+"Family Budget" on the desktop rail, "the Christmas app" in two account-setup
+messages and the family-access role card, and "Family Gift Planner" everywhere
+else. All of them now say Gift Planner — manifest `name` and `short_name`, the
+browser tab, the iOS Home Screen title, the auth wordmark, the install card, the
+push-notification fallback, the offline page, and the sticky bar's fallback for
+a path no route claims.
+
+**The installation was relabelled, not replaced.** `id`, `start_url`, `scope`,
+both colours and all four `-v2` icon paths are byte-for-byte what they were, so
+an existing Home Screen install keeps its place and its green tile. Nothing in
+the domain moved: `Our family`, Areas, Christmas 2026, the tree ornament and the
+`christmas-budget` push tag are vocabulary, not the product's name.
+
+**Guarded by `npm run test:brand`.** A name has to be spelt out at every surface
+that shows it — a manifest cannot import a constant, and neither can a static
+offline page — so `scripts/app-brand.test.mjs` scans everything the app ships and
+fails on any of the three retired names, comments included. Proved to fail: it
+was run against a deliberately reverted manifest name and rail wordmark and
+caught both.
+
+**Verified live** on `ea1ccdad` in Edge, desktop 1440x900 and a genuine 390x844
+CDP viewport at DPR 3 with touch. Tab title, manifest, all seven icon URLs 200,
+sticky bar naming the screen at both widths, rail hidden at 390, no retired name
+in any DOM, no horizontal overflow on the dashboard, People, Birthdays, Settings,
+Family settings, Notifications, Account or the auth screen. The signed-out login
+eyebrow is source-verified only: `/login` redirects an authenticated session to
+`/`, and signing the family out to look at it is not allowed.
 
 ## Accepted state and open risks
 
