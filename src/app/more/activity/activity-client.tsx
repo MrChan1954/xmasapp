@@ -310,10 +310,26 @@ export function ActivityClient() {
               {visible.map((entry) => (
                 <li
                   key={entry.id}
-                  className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-2xl border border-line bg-surface px-5 py-4 shadow-card"
+                  /**
+                   * `min-w-0` MATTERS ON A GRID ITEM, and its absence was
+                   * visible on a phone.
+                   *
+                   * These rows are items of a single-column `grid`, and a grid
+                   * item's `min-width` defaults to `auto` -- it will not shrink
+                   * below its own min-content width. One row containing a long
+                   * unbreakable run of characters therefore widened the TRACK,
+                   * and every other row with it: measured at 390px in live Q10
+                   * QA, one gift name pushed all three hundred rows to 407px
+                   * and scrolled the whole page sideways by 33.
+                   *
+                   * `break-words` is the other half. Without it the long run
+                   * has nowhere to break and overflows the row instead of the
+                   * page, which is tidier and still wrong.
+                   */
+                  className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-2xl border border-line bg-surface px-5 py-4 shadow-card"
                 >
                   <div className="min-w-0">
-                    <p className="font-medium text-ink-900">{describe(entry)}</p>
+                    <p className="font-medium break-words text-ink-900">{describe(entry)}</p>
                     <p className="mt-0.5 text-sm text-ink-600">
                       {/* A missing actor can only come from the service-role
                           client, which nothing but the Family Access route uses. */}
