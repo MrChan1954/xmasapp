@@ -5,6 +5,7 @@ import { createClient } from "@/utils/supabase/client";
 import { formatPennies } from "@/lib/currency";
 import { PageHeader } from "../../components/app-shell";
 import { Badge, ChipRow, EmptyState, FilterChip, Input, Notice, Segmented, Skeleton, Toolbar } from "../../components/ui";
+import { useAreas } from "../../components/use-areas";
 import { useRealtimeRefresh } from "../../components/use-realtime-refresh";
 
 type AuditEntry = {
@@ -85,6 +86,14 @@ export function ActivityClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  /*
+   * The family on screen, resolved the same way the switcher resolves it, so
+   * this screen and the menu can never disagree about which one that is.
+   * `active` is null until the list has loaded; the read below waits for it.
+   */
+  const { active, loading: areasLoading } = useAreas();
+  const activeAreaId = active?.id ?? null;
+
   const [action, setAction] = useState<ActionFilter>("all");
   const [kind, setKind] = useState<string>("all");
   const [actor, setActor] = useState<string>("all");
@@ -92,12 +101,49 @@ export function ActivityClient() {
   const [sort, setSort] = useState<SortKey>("newest");
 
   const load = useCallback(async (quiet = false) => {
+    /*
+     * NOTHING UNTIL WE KNOW WHICH FAMILY THIS IS ABOUT. Reading first and
+     * narrowing afterwards would put another family's activity on screen for
+     * however long the Area takes to resolve, which is the whole defect.
+     */
+    if (!activeAreaId) {
+      /*
+       * No family resolved. While the list is still arriving that is simply
+       * "not yet", and the skeleton is the right thing to show. Once it HAS
+       * arrived and there is still nothing, waiting for ever is not -- an
+       * account with no family gets the empty state rather than a skeleton
+       * that never resolves.
+       */
+      if (!areasLoading) setLoading(false);
+      return;
+    }
     if (!quiet) setLoading(true);
-    // No role check here: RLS on `audit_log` returns rows to active members and
-    // nobody else, so the database is the whole enforcement.
+
+    /**
+     * ROW LEVEL SECURITY IS NOT THE WHOLE ANSWER HERE, AND USED TO BE ASKED TO BE.
+     *
+     * `audit_log`'s policy is `is_active_app_member() AND is_area_member(area_id)`
+     * -- it asks which families you BELONG to, not which one you are STANDING
+     * IN. For a login in one family those are the same sentence. For a login in
+     * several they are not, and this screen asked the wrong one: standing in
+     * one family it listed the activity of every family the account belonged
+     * to, interleaved, with no way to tell which row came from where.
+     *
+     * Found in live Q10 browser QA: the same three hundred entries came back
+     * whichever family was selected, byte for byte.
+     *
+     * This is NOT a cross-tenant leak -- the policy still refuses an Area you
+     * are not a member of, so nobody ever saw a stranger's family. It is the
+     * acting-Area rule being skipped, and that rule is the one the whole
+     * application rests on: the selected Area is authoritative for every read.
+     *
+     * The bell is deliberately account-global and stays that way. This screen
+     * was never meant to be, and nothing documented it as such.
+     */
     const result = await createClient()
       .from("audit_log")
       .select("id, occurred_at, table_name, action, actor_name, subject, context, amount_pennies")
+      .eq("area_id", activeAreaId)
       .order("occurred_at", { ascending: false })
       .limit(PAGE_SIZE);
 
@@ -108,7 +154,7 @@ export function ActivityClient() {
       setEntries(result.data as AuditEntry[]);
     }
     setLoading(false);
-  }, []);
+  }, [activeAreaId, areasLoading]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);

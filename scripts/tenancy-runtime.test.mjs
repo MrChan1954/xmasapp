@@ -19,6 +19,7 @@ import assert from "node:assert/strict";
 import test, { describe, before, after } from "node:test";
 import { asOwner, attempt, buildRehearsal, probe, probeValue, rows, seen, value } from "./pg/rehearsal.mjs";
 import { buildTwoFamilies } from "./pg/fixtures.mjs";
+import { readFileSync } from "node:fs";
 
 let db;
 let f;
@@ -1632,5 +1633,98 @@ describe("Q6: the routines deliberately left unguarded", () => {
      */
     const r = await probe(db, who(f.users.dual, f.areas.bravo), "select public.claim_app_member()", []);
     assert.equal(r.ok, true, "claiming an invitation must not depend on where you are standing");
+  });
+});
+
+/**
+ * ---------------------------------------------------------------------------
+ * Q10: THE ACTIVITY LOG IS ABOUT THE FAMILY YOU ARE STANDING IN.
+ * ---------------------------------------------------------------------------
+ *
+ * `audit_log`'s policy is `is_active_app_member() AND is_area_member(area_id)`.
+ * That asks which families you BELONG to -- not which one you are STANDING IN.
+ * For a login with one family the two questions have the same answer, which is
+ * why this went unnoticed; for a login with several they diverge completely.
+ *
+ * `/more/activity` asked only the policy, with no Area on the query, and its
+ * comment said so: "RLS on audit_log returns rows to active members and nobody
+ * else, so the database is the whole enforcement." True about tenancy, and the
+ * wrong question about place.
+ *
+ * MEASURED IN LIVE Q10 BROWSER QA, with the acting-Area cookie asserted at the
+ * moment of each read: standing in the real family and standing in a QA Area
+ * both returned the SAME three hundred entries, byte for byte -- zero unique to
+ * either. QA rows appeared in the real family's Activity screen and the real
+ * family's rows appeared in QA's.
+ *
+ * NOT A CROSS-TENANT LEAK, and the first test below is what says so: a member
+ * of one family alone still sees nothing of the other. The defect is the
+ * acting-Area rule being skipped for an account that belongs to both.
+ */
+describe("Q10: the activity log answers about the acting Area, not every membership", () => {
+  test("a member of ONE family still sees only that family -- no tenant leak", async () => {
+    // `users.taylor` belongs to Alpha and nowhere else.
+    const result = await probe(db, who(f.users.taylor, f.areas.alpha),
+      "select distinct area_id from public.audit_log");
+    assert.ok(result.ok, "the read itself is allowed");
+    assert.ok(result.rows.length > 0, "there is activity in Alpha to see");
+    const areas = new Set(result.rows.map((row) => row.area_id));
+    assert.deepEqual([...areas], [f.areas.alpha],
+      "a single-family member sees their own family's activity and nothing else");
+  });
+
+  test("THE DEFECT: an unscoped read by a DUAL member spans both families", async () => {
+    /*
+     * `users.dual` administers Alpha and belongs to Bravo. This is the query
+     * the screen used to send -- no Area on it, exactly as written.
+     */
+    const unscoped = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select distinct area_id from public.audit_log");
+    assert.ok(unscoped.ok, "the read itself is allowed");
+    const areas = new Set(unscoped.rows.map((row) => row.area_id));
+    assert.ok(areas.size > 1,
+      "with no Area on the query a dual member sees more than one family -- the defect");
+    assert.ok(areas.has(f.areas.bravo),
+      "including Bravo, while standing in Alpha");
+  });
+
+  test("AND THE FIX: the same reader, narrowed to the acting Area, sees one", async () => {
+    const scoped = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select distinct area_id from public.audit_log where area_id = $1", [f.areas.alpha]);
+    assert.ok(scoped.ok, "the read itself is allowed");
+    assert.ok(scoped.rows.length > 0, "Alpha's own activity is still there");
+    const areas = new Set(scoped.rows.map((row) => row.area_id));
+    assert.deepEqual([...areas], [f.areas.alpha],
+      "and nothing from the family they are not standing in");
+  });
+
+  test("the rule is symmetric: standing in Bravo shows Bravo", async () => {
+    const scoped = await probe(db, who(f.users.dual, f.areas.bravo),
+      "select distinct area_id from public.audit_log where area_id = $1", [f.areas.bravo]);
+    assert.ok(scoped.ok, "the read itself is allowed");
+    const areas = new Set(scoped.rows.map((row) => row.area_id));
+    assert.ok(areas.size <= 1, "one family at most");
+    if (areas.size === 1) {
+      assert.deepEqual([...areas], [f.areas.bravo],
+        "so this is a rule, not a special case for Alpha");
+    }
+  });
+
+  test("and the screen really does send the Area now", () => {
+    const source = readFileSync(
+      new URL("../src/app/more/activity/activity-client.tsx", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/gu, "\n");
+
+    assert.match(
+      source,
+      /\.from\("audit_log"\)[\s\S]{0,400}?\.eq\("area_id", activeAreaId\)/u,
+      "the activity read must be narrowed to the acting Area",
+    );
+    assert.match(
+      source,
+      /if \(!activeAreaId\) \{/u,
+      "and must not read at all before the Area is known, or it renders the wrong family first",
+    );
   });
 });
