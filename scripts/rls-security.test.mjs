@@ -117,8 +117,8 @@ test("the authorization migration explicitly enables RLS on every application ta
   // file pins is that Phase 5's and Q1's security migrations are still there,
   // and still in order -- every offset moves together, so nothing about them
   // has changed.
-  assert.equal(migrationFiles.at(-8), wishlistMigrationName);
-  assert.equal(migrationFiles.at(-9), areaAuthMigrationName);
+  assert.equal(migrationFiles.at(-9), wishlistMigrationName);
+  assert.equal(migrationFiles.at(-10), areaAuthMigrationName);
   assert.ok(migrationFiles.includes(actingMigrationName), "the acting-Area migration is still present");
   assert.ok(migrationFiles.includes(membershipMigrationName), "the membership guard migration is still present");
   assert.ok(migrationFiles.includes(peopleMigrationName), "the People directory migration is still present");

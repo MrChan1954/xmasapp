@@ -489,3 +489,122 @@ describe("require_acting_area, on its own terms", () => {
     assert.equal(await value(db, "select name from public.areas where id = $1", [f.areas.alpha]), "Alpha");
   });
 });
+
+/**
+ * ---------------------------------------------------------------------------
+ * NOTHING THE ANONYMOUS ROLE CAN CALL MAY READ ACROSS FAMILIES.
+ * ---------------------------------------------------------------------------
+ *
+ * THE HOLE THIS FILLS. The sweep above is thorough about MUTATIONS and blind to
+ * everything else: it asks which routines WRITE, and checks a named list of
+ * them for an anon grant. A SECURITY DEFINER routine that only READS was never
+ * asked about at all.
+ *
+ * Three of them were therefore live, unauthenticated RPC endpoints for as long
+ * as they had existed. Supabase's project default grants EXECUTE on every new
+ * function in `public` to anon, authenticated and service_role; migrations
+ * 034-047 revoke it on the routines they add, and `area_of_record`,
+ * `area_of_written_row` and `audit_actor_name` were missed. Measured against
+ * PRODUCTION during the Q10 audit, with no session and only the public
+ * publishable key, `area_of_record('events', <real event id>)` returned the
+ * real family's Area id -- definer rights, so row level security never saw the
+ * call. Migration 048 revoked all three.
+ *
+ * SO THIS TEST NAMES NO FUNCTIONS. A list is what failed; asking the catalogue
+ * is what cannot. Any future definer routine that arrives carrying the default
+ * grant fails here on the day it is written.
+ */
+describe("the anonymous role cannot call a definer routine that reads family data", () => {
+  /**
+   * A trigger function is not an exception, it is a non-entry: PostgreSQL
+   * refuses to invoke one directly whatever the grant says (0A000), which the
+   * test below proves rather than assumes. `claim_active_area` is PostgREST's
+   * pre-request hook and MUST stay anon-callable or every anonymous request --
+   * including the sign-in page's -- fails.
+   */
+  const ALLOWED_FOR_ANON = new Set(["claim_active_area"]);
+
+  test("NO SECURITY DEFINER ROUTINE IS CALLABLE BY anon, beyond the hook", async () => {
+    await asOwner(db);
+    const reachable = await rows(db, `
+      select p.proname, pg_get_function_identity_arguments(p.oid) as args
+      from pg_proc p
+      where p.pronamespace = 'public'::regnamespace
+        and p.prosecdef
+        and p.prorettype::regtype::text <> 'trigger'
+        and has_function_privilege('anon', p.oid, 'execute')
+      order by p.proname`);
+
+    const unexplained = reachable
+      .map((row) => `${row.proname}(${row.args})`)
+      .filter((signature) => !ALLOWED_FOR_ANON.has(signature.slice(0, signature.indexOf("("))));
+
+    assert.deepEqual(unexplained, [],
+      "a definer routine reachable by anon bypasses row level security for the whole internet");
+  });
+
+  test("and the trigger functions anon still holds a grant on cannot be invoked at all", async () => {
+    await asOwner(db);
+    const triggers = await rows(db, `
+      select p.proname
+      from pg_proc p
+      where p.pronamespace = 'public'::regnamespace
+        and p.prosecdef
+        and p.prorettype::regtype::text = 'trigger'
+        and has_function_privilege('anon', p.oid, 'execute')
+      order by p.proname`);
+
+    assert.ok(triggers.length > 0, "there really are trigger functions carrying the default grant");
+    for (const { proname } of triggers) {
+      const result = await probe(db, { role: "anon" }, `select public.${proname}()`);
+      assert.equal(result.ok, false, `${proname} must not be invocable`);
+      assert.equal(result.code, "0A000",
+        `${proname} must be refused as "can only be called as a trigger", not merely unauthorised`);
+    }
+  });
+
+  test("THE THREE THAT WERE OPEN ARE SHUT, for authenticated as well as anon", async () => {
+    for (const call of [
+      "select public.area_of_record('events', gen_random_uuid())",
+      "select public.area_of_written_row('people', '{}'::jsonb)",
+      "select public.audit_actor_name()",
+    ]) {
+      for (const role of ["anon", "authenticated"]) {
+        const result = await probe(db, { role }, call);
+        assert.equal(result.ok, false, `${role} must not be able to run: ${call}`);
+        assert.equal(result.code, "42501", `${role} must be refused for want of a grant`);
+      }
+    }
+  });
+
+  test("but the policy helpers KEEP the grant their policies need", async () => {
+    /*
+     * The mirror image, and the reason 048 is a named revoke rather than a
+     * sweep of its own. These four are written into row level security policy
+     * expressions, so `authenticated` losing EXECUTE would not harden anything
+     * -- it would stop ordinary members reading their own family.
+     */
+    await asOwner(db);
+    const usedInPolicies = await rows(db, `
+      select distinct p.proname
+      from pg_proc p
+      where p.pronamespace = 'public'::regnamespace
+        and exists (
+          select 1 from pg_policies pol
+          where pol.schemaname = 'public'
+            and strpos(coalesce(pol.qual, '') || ' ' || coalesce(pol.with_check, ''),
+                       p.proname || '(') > 0)
+      order by p.proname`);
+
+    assert.ok(usedInPolicies.length > 0, "policies really do call helper functions");
+    for (const { proname } of usedInPolicies) {
+      const granted = await value(db, `
+        select has_function_privilege('authenticated', p.oid, 'execute')
+        from pg_proc p
+        where p.pronamespace = 'public'::regnamespace and p.proname = $1
+        limit 1`, [proname]);
+      assert.equal(granted, true,
+        `${proname} is named in a policy, so authenticated must keep EXECUTE on it`);
+    }
+  });
+});

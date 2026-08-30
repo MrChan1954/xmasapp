@@ -1393,7 +1393,28 @@ for (const mutation of selected) {
     continue;
   }
 
-  writeFileSync(path, original.replace(needle, mutation.to.replace(/\r\n/g, "\n").split("\n").join(eol)));
+  /**
+   * THE REPLACEMENT IS PASSED AS A FUNCTION, AND THAT IS NOT A STYLE CHOICE.
+   *
+   * `String.replace(needle, text)` reads `$` sequences in TEXT as substitution
+   * patterns: `$$` means one literal dollar, `$&` the whole match, `` $` ``
+   * everything before it. Every SQL body in this file is dollar-quoted, so a
+   * replacement carrying `as $$ ... $$;` had each `$$` collapsed to `$` on its
+   * way to disk.
+   *
+   * WHAT THAT COST. Q2-9 breaks `is_area_member` by dropping its `active`
+   * check. The mutation was written correctly and arrived on disk as `$;`,
+   * which is not SQL at all -- so migration 034 failed to PARSE, the suite
+   * failed for that reason, and the gate recorded a kill. It reported
+   * "124/124 caught" while one of the hundred and twenty-four had never run
+   * the scenario it names. A migration that will not parse is exactly the
+   * "build-only failure" this project does not accept as a kill.
+   *
+   * A function replacement is returned verbatim, with no pattern reading at
+   * all, which is why this cannot come back for the next dollar-quoted body.
+   */
+  const replacement = mutation.to.replace(/\r\n/g, "\n").split("\n").join(eol);
+  writeFileSync(path, original.replace(needle, () => replacement));
 
   let failure = null;
   try {

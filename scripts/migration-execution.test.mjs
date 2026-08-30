@@ -39,6 +39,7 @@ const PERSON_ADMIN = "202608100044_area_scoped_person_administration.sql";
 const MUTATION_HARDENING = "202608100045_area_scoped_mutation_hardening.sql";
 const GIFT_IDEA_REMOVAL = "202608100046_area_scoped_gift_idea_removal.sql";
 const PERSON_ROUTINES = "202608100047_area_scoped_person_routines.sql";
+const HELPER_GRANTS = "202608100048_revoke_area_helper_grants.sql";
 
 /** Everything the database owns, as names. The unit of "what a migration did". */
 async function inventory(db) {
@@ -83,12 +84,13 @@ describe("the whole history replays on PostgreSQL 18", () => {
   after(async () => { await db?.close(); });
 
   test("every migration executes, in order, against a real server", async () => {
-    assert.equal(db.appliedMigrations.length, 47);
-    assert.equal(db.appliedMigrations.at(-5).name, PLANNING);
-    assert.equal(db.appliedMigrations.at(-4).name, PERSON_ADMIN);
-    assert.equal(db.appliedMigrations.at(-3).name, MUTATION_HARDENING);
-    assert.equal(db.appliedMigrations.at(-2).name, GIFT_IDEA_REMOVAL);
-    assert.equal(db.appliedMigrations.at(-1).name, PERSON_ROUTINES);
+    assert.equal(db.appliedMigrations.length, 48);
+    assert.equal(db.appliedMigrations.at(-6).name, PLANNING);
+    assert.equal(db.appliedMigrations.at(-5).name, PERSON_ADMIN);
+    assert.equal(db.appliedMigrations.at(-4).name, MUTATION_HARDENING);
+    assert.equal(db.appliedMigrations.at(-3).name, GIFT_IDEA_REMOVAL);
+    assert.equal(db.appliedMigrations.at(-2).name, PERSON_ROUTINES);
+    assert.equal(db.appliedMigrations.at(-1).name, HELPER_GRANTS);
     assert.ok(db.appliedMigrations.every((m) => m.ok));
   });
 
@@ -395,11 +397,12 @@ describe("public.rls_auto_enable, the object production has and no migration cre
 // ===========================================================================
 
 describe("the migration inventory", () => {
-  test("047 is the newest, and nothing older has moved", () => {
+  test("048 is the newest, and nothing older has moved", () => {
     const names = migrationNames();
-    assert.equal(names.length, 47);
-    assert.deepEqual(names.slice(-7),
-      [HANDOVER, LIFECYCLE, PLANNING, PERSON_ADMIN, MUTATION_HARDENING, GIFT_IDEA_REMOVAL, PERSON_ROUTINES]);
+    assert.equal(names.length, 48);
+    assert.deepEqual(names.slice(-8),
+      [HANDOVER, LIFECYCLE, PLANNING, PERSON_ADMIN, MUTATION_HARDENING, GIFT_IDEA_REMOVAL,
+       PERSON_ROUTINES, HELPER_GRANTS]);
   });
 });
 

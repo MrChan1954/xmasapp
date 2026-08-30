@@ -198,15 +198,40 @@ export async function readDeviceStatus(endpoint: string | null) {
     .eq("app_member_id", member.id);
   if (devices.error) throw new NotificationError(503, notificationSetupError(devices.error.code));
 
-  // How many OTHER members could receive a push right now. A count only: no
-  // names, no endpoints. This exists because of a real failure — every device
-  // registered belonged to one person, so every notification they triggered was
-  // correctly suppressed by actor exclusion and nothing was ever sent. The page
-  // now says so plainly instead of looking healthy while reaching nobody.
-  const others = await admin
-    .from("push_subscriptions")
-    .select("app_member_id")
-    .neq("app_member_id", member.id);
+  /**
+   * How many OTHER members OF THIS FAMILY could receive a push right now. A
+   * count only: no names, no endpoints. This exists because of a real failure —
+   * every device registered belonged to one person, so every notification they
+   * triggered was correctly suppressed by actor exclusion and nothing was ever
+   * sent. The page now says so plainly instead of looking healthy while
+   * reaching nobody.
+   *
+   * THE AREA IS APPLIED BY HAND, because nothing underneath will apply it.
+   * `push_subscriptions` carries no `area_id` of its own — it hangs off
+   * `app_members` — and this is the ADMIN client, which bypasses row level
+   * security. An unscoped `neq(app_member_id, me)` therefore counted every
+   * member of every family in the database.
+   *
+   * That is a disclosure and a wrong answer at the same time. The page says
+   * "nobody else can receive these yet" only when this count is zero, so one
+   * device registered in ANOTHER family silently suppressed that warning here —
+   * telling a family their notifications were reaching people it cannot see.
+   */
+  const areaMembers = await admin
+    .from("app_members")
+    .select("id")
+    .eq("area_id", member.area_id)
+    .eq("active", true)
+    .neq("id", member.id);
+  if (areaMembers.error) throw new NotificationError(503, notificationSetupError(areaMembers.error.code));
+
+  const otherMemberIds = areaMembers.data.map((row) => row.id as string);
+  const others = otherMemberIds.length
+    ? await admin
+      .from("push_subscriptions")
+      .select("app_member_id")
+      .in("app_member_id", otherMemberIds)
+    : { data: [] as Array<{ app_member_id: string }>, error: null };
   if (others.error) throw new NotificationError(503, notificationSetupError(others.error.code));
 
   const normalized = endpoint ? safeEndpoint(endpoint) : null;

@@ -25,6 +25,7 @@
  */
 import assert from "node:assert/strict";
 import test, { describe, before, after } from "node:test";
+import { readFileSync } from "node:fs";
 
 import { buildRehearsal, asOwner, rows } from "./pg/rehearsal.mjs";
 import { buildTwoFamilies } from "./pg/fixtures.mjs";
@@ -155,5 +156,126 @@ describe("a notification audience is one family, and the subject chooses which",
       assert.equal(member.area_id, f.areas.bravo,
         "and only Bravo's, so this is a rule rather than a special case for Alpha");
     }
+  });
+});
+
+/**
+ * ---------------------------------------------------------------------------
+ * "NOBODY ELSE CAN RECEIVE THESE YET" -- ASKED OF ONE FAMILY.
+ * ---------------------------------------------------------------------------
+ *
+ * `readDeviceStatus` reports `otherMembersWithPush`, and the Notifications
+ * screen shows its warning ONLY when that number is zero. The count was read
+ * through the ADMIN client as `neq("app_member_id", me)` with no Area on it.
+ *
+ * `push_subscriptions` has no `area_id` of its own -- it hangs off
+ * `app_members` -- so there was nothing underneath to narrow it: the admin
+ * client bypasses row level security, and the read returned every member of
+ * every family in the database.
+ *
+ * That is wrong twice over. It DISCLOSES how many people in other families
+ * have notifications turned on, and it SUPPRESSES a true warning: one device
+ * registered in another family made this one look reachable when nobody in it
+ * could receive anything.
+ *
+ * The two reads below are the two shapes, run against a real database with
+ * three families in it, so the difference is measured rather than asserted.
+ */
+describe("how many others can receive a push is a question about ONE family", () => {
+  /** Give one member a registered device, the way `registerDevice` does. */
+  const registerFor = async (appMemberId, label) => {
+    await asOwner(db);
+    await rows(
+      db,
+      `insert into public.push_subscriptions (app_member_id, endpoint, p256dh, auth, device_label)
+       values ($1, $2, $3, $4, 'Windows PC')`,
+      [
+        appMemberId,
+        `https://push.example.test/${label}`,
+        "k".repeat(87),
+        "s".repeat(22),
+      ],
+    );
+  };
+
+  /** The unscoped read, exactly as it was: every family at once. */
+  const unscopedOthers = async (meAppMemberId) => {
+    await asOwner(db);
+    return rows(
+      db,
+      "select app_member_id from public.push_subscriptions where app_member_id <> $1",
+      [meAppMemberId],
+    );
+  };
+
+  /** The Area-scoped read: this family's other active members, and only those. */
+  const scopedOthers = async (meAppMemberId, areaId) => {
+    await asOwner(db);
+    return rows(
+      db,
+      `select s.app_member_id
+         from public.push_subscriptions s
+        where s.app_member_id in (
+                select m.id from public.app_members m
+                 where m.area_id = $2 and m.active = true and m.id <> $1)`,
+      [meAppMemberId, areaId],
+    );
+  };
+
+  test("ANOTHER FAMILY'S DEVICE IS COUNTED BY THE UNSCOPED READ -- the defect", async () => {
+    // Jade is in Alpha and has a device. Sam is in Bravo and has one too.
+    await registerFor(f.members.jadeAlpha, "jade-alpha");
+    await registerFor(f.members.samBravo, "sam-bravo");
+
+    // Taylor, in Alpha, asks how many OTHER people could receive a push.
+    const unscoped = await unscopedOthers(f.members.taylorAlpha);
+    const unscopedCount = new Set(unscoped.map((row) => row.app_member_id)).size;
+
+    const scoped = await scopedOthers(f.members.taylorAlpha, f.areas.alpha);
+    const scopedCount = new Set(scoped.map((row) => row.app_member_id)).size;
+
+    assert.equal(scopedCount, 1, "only Jade, who is actually in Taylor's family");
+    assert.equal(unscopedCount, 2, "the unscoped read also counts Bravo's Sam");
+    assert.ok(unscopedCount > scopedCount,
+      "the unscoped read really does reach past this family -- which is the bug");
+  });
+
+  test("AND IT SUPPRESSES A TRUE WARNING: a family alone looks reachable", async () => {
+    /*
+     * Cass is the only member of Charlie with an account, and nobody in
+     * Charlie has registered a device. The screen must say so. The unscoped
+     * read answers 2 -- Alpha's and Bravo's -- and the warning disappears.
+     */
+    const unscoped = await unscopedOthers(f.members.cassCharlie);
+    const scoped = await scopedOthers(f.members.cassCharlie, f.areas.charlie);
+
+    assert.equal(new Set(scoped.map((row) => row.app_member_id)).size, 0,
+      "nobody in Charlie can receive a push, so the warning must show");
+    assert.ok(new Set(unscoped.map((row) => row.app_member_id)).size > 0,
+      "yet the unscoped read finds devices, and the warning would be hidden");
+  });
+
+  test("the runtime issues the Area-scoped read, not the unscoped one", () => {
+    const source = readFileSync(
+      new URL("../src/utils/supabase/notifications-server.ts", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/gu, "\n");
+
+    const readDeviceStatus = source.slice(
+      source.indexOf("export async function readDeviceStatus"),
+      source.indexOf("// ---", source.indexOf("export async function readDeviceStatus")),
+    );
+    assert.ok(readDeviceStatus.length > 0, "readDeviceStatus must still be there to check");
+
+    assert.match(
+      readDeviceStatus,
+      /\.from\("app_members"\)[\s\S]*?\.eq\("area_id", member\.area_id\)/u,
+      "the other-members count must be narrowed to the caller's own Area",
+    );
+    assert.doesNotMatch(
+      readDeviceStatus,
+      /\.from\("push_subscriptions"\)\s*\.select\("app_member_id"\)\s*\.neq\(/u,
+      "an unscoped neq() over push_subscriptions counts every family in the database",
+    );
   });
 });
