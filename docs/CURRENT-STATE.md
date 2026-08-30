@@ -1,6 +1,6 @@
 # Current State
 
-**Last updated:** 2026-08-30, after Q16 closed.
+**Last updated:** 2026-08-30, after Q17 closed.
 
 The handoff between phases. Current facts only — history lives in git.
 
@@ -9,15 +9,98 @@ The handoff between phases. Current facts only — history lives in git.
 | Fact | Value |
 | ---- | ----- |
 | Live site | `https://xmas-family.uk/` |
-| Last completed phase | **Q16 — the UI primitive audit and cleanup** |
-| Q16 verdict | `Q16 PASS — SHADCN/RADIX IS THE CANONICAL PRIMITIVE SYSTEM` |
-| Next phase | **Q17 — the repository-wide dead-code audit** |
+| Last completed phase | **Q17 — the dead-code, duplicate-code and dependency audit** |
+| Q17 verdict | `Q17 CONDITIONAL PASS — UNCERTAIN CANDIDATES DOCUMENTED` |
+| Next phase | **Q18 — consolidating the live duplicates Q17 mapped** |
 | Branch | `main` |
 | Local HEAD | one commit ahead of `origin/main` — this closeout, **held back deliberately** (docs only) |
-| origin/main | `9f5551c` — Q16's runtime work, deployed |
-| Serving Worker | `7797eb98-1ff1-4f49-9108-d749a146a949` |
+| origin/main | `8195581` — Q17's cleanup, deployed. It carried Q16's held docs commit `1009bcf`. |
+| Serving Worker | `fa57b868-c025-45e0-89c4-af2c64e5d062` |
 | Product name | **Gift Planner** |
 | Migrations applied | **001–051**, immutable. 051 applied manually 2026-08-30. |
+
+## Q17 — what nothing runs, and four mutations that proved nothing
+
+`docs/Q17-DEAD-CODE-DEPENDENCY-AUDIT.md` is the audit and the removal manifest.
+Read on demand. **No database change; migrations still end at 051.**
+
+**Every module in `src/` is reachable.** The import graph was rebuilt from the
+entry points rather than trusted from Q14, and Q14's "172 of 174" is now 174 of
+174 — Q16 deleted the two that were not. Three files fall out of the walk and
+all three are alive by design: `public/sw.js` is registered by URL, and two
+`scripts/dom/stubs/` modules are named as **strings** in `tsx-hook.mjs`'s
+`STUBS` map. A tool that did not read that map would have proposed deleting
+them.
+
+**Removed:** the five `create-next-app` SVGs; `GiftCompleteBurst`, which
+`git log -S` proves was never rendered in any commit, plus the `.burst-speck`
+rule and keyframes that existed only for it; and fourteen exported names with no
+consumer of any kind — `inputClasses` (a compatibility alias for a set Q16
+emptied), `isUuid` and `hasDisallowedControlCharacters` (wrappers over functions
+that are used), `purchaseStatusLabel` (superseded by three screens' own
+vocabularies), `nextBirthdayFor`, and eight `Icon*` glyphs with their
+`lucide-react` imports.
+
+**`CompleteRibbon`, the snow, the garland and the ornaments are untouched.** The
+festive layer is not being trimmed for being festive.
+
+**The real find was in the mutation harness.** Q15 left the rule that a mutation
+aimed at an implementation a later migration overwrites is testing nothing; Q16
+applied it to one mutation, and nobody had applied it to all of them. All 141
+were checked mechanically against the final schema. **Four were still doing it:**
+`Q2-3` edited 042's `leave_area`, which **045** redefines, and `Q3-3/4/5` edited
+044's person routines, which **047** redefines. Run individually, every one
+reported `caught by: the migration REFUSED TO APPLY` — the defect never reached
+the installed schema and a text check noticed. All four now edit the installed
+definition and die against a real refused request (`THE ADMINISTRATOR MAY NOT`,
+`CONTRIBUTOR/ARCHIVE/RENAME: refused across the Area boundary`). They stay
+distinct from `Q6-6/7/8`, which break the *acting*-Area half of the same guards.
+**Behavioural kills went 122 → 126 of 141, and superseded targets 4 → 0.**
+
+**`/owed` is not a legacy redirect and Q14 understated it.** Q14 warned that old
+notification rows might point there; the code running today points there too —
+`notification-content.ts` declares `OWED_URL = "/owed"` and uses it as the `url`
+of every money notification the app writes. All four shims stay.
+
+**The three `*-taylor*` scripts stay, classified `MANUAL-USE UNKNOWN`.**
+`set-taylor-password.mjs` refuses to run without an interactive TTY,
+`admin-account-target.mjs` was *generalised* after it was written, and nothing
+supersedes them — they are the only path that links an Auth user to an
+`app_members` row or resets that password without the email flow. To close the
+question the user need only say whether they have run either by hand since the
+family went live, and whether they would want that recovery path if locked out.
+
+**Every direct dependency is still used**, all 12 and all 13. Deleting eight
+`lucide-react` glyph imports did not orphan the package.
+
+**A near-miss worth remembering.** A CSS sweep flagged `.garland-bulb-berry`,
+`-gold`, `-green` and `-warm` as unreferenced. `garland.tsx:53` builds the class
+as `` `garland-bulb-${bulb.tone}` ``. Deleting them would have put the garland's
+bulbs on screen unstyled.
+
+**Live QA on Worker `fa57b868`, Edge over CDP, entirely read-only.** Seven
+screens — home, People, Birthdays, Events, Activity, Settings, Notifications —
+at desktop 1440×900 and at a genuine 390×844, DPR 3, `mobile: true`, 5 touch
+points, coarse pointer. **All 200, no horizontal overflow anywhere, one `h1`
+each, zero broken images, and zero HTTP responses ≥ 400 while browsing.** The
+only failed requests at either width are `net::ERR_ABORTED` on Next's `?_rsc=`
+prefetches, which is a navigation cancelling a prefetch, not an error. The
+manifest still says "Gift Planner" with `id`, `start_url` and `scope` all `/`
+and **all four icons 200**, alongside `favicon.ico`, `icon.png`,
+`apple-icon.png`, `sw.js` and `/offline`. The five deleted SVGs now return
+**404, and no page requests them** — the only 404 in the console is the probe
+that asked for one on purpose.
+
+**Protected fingerprint after live QA: identical to the baseline** —
+notifications 37, people 19, events 15, appMembers 4, recipients 35, Christmas
+2026 active with 19 recipients, `crossAreaTotal` 0. Nothing was written.
+
+**Handed to Q18:** three live, correct duplicates — `priceInput` in **four**
+files, `progressPresentation` in two (byte-identical), and `todayInput` in two.
+All are money or date formatting, so each wants its own test rather than a
+drive-by edit. `events-dashboard.tsx`'s deliberately different status wording
+("Complete" where the people screens say "Budget reached") must be decided
+before `progressPresentation` gets a home.
 
 ## Q16 — shadcn/Radix is the canonical UI primitive system
 
@@ -62,9 +145,9 @@ state, not a `Progress` duplicate), `BottomTabs` (navigation, not a tablist),
 `components/popover.tsx` (a wrapper that keeps `Menu` and `Popover` apart), the
 native `Select`, and one raw `<button>` in `global-error.tsx`.
 
-**Handed to Q17:** the five unreferenced starter SVGs in `public/`, and the
-still-open Q14 question of whether the three `*-taylor*` operator scripts are
-run by hand.
+**Handed to Q17, and both now settled:** the five unreferenced starter SVGs are
+deleted, and the `*-taylor*` scripts are kept as live operator tooling with one
+narrow question left for the user (see Q17 above).
 
 **Live QA on Worker `7797eb98`, Edge, entirely read-only.** Desktop 1440×900:
 seven screens, no horizontal overflow, one `h1` each, **zero controls without an
@@ -182,14 +265,14 @@ Three DB routines have no caller in the final schema —
 `save_recipient_contributions` — **all three dropped by migration 051**. Two app
 files have no importer, `components/ui/select.tsx` and
 `components/use-mounted.ts` — **both deleted by Q16**. Five starter SVGs in
-`public/` are referenced nowhere and are **still there, for Q17**.
+`public/` were referenced nowhere — **deleted by Q17**.
 
-Of Q14's four unknowns, **Q15 settled two**: the wide grants are Supabase
+Of Q14's four unknowns, **Q15 settled two** — the wide grants are Supabase
 default-privilege residue and are broader than needed, and the Q12 post-apply
-checks had in fact already been run and passed — Q14 was wrong about that. Two
-stay open: whether the three `*-taylor*` operator scripts are still run by hand,
-and which indexes production actually uses. Neither can be settled without
-either asking the user or opening a read-only production connection.
+checks had in fact already been run and passed — and **Q17 settled the third**
+as far as the repository can: the `*-taylor*` scripts are live operator tooling
+and are kept. One stays open: **which indexes production actually uses**, which
+needs a read-only production connection.
 
 **`CLAUDE.md`'s migration range said 001–047. It is now 001–051.**
 
@@ -261,10 +344,13 @@ Being the Area's admin did not help them, which is the invariant.
 
 ## Verification state
 
-- Full regression **1,725 tests, all passing** — Q15's 1,712 plus Q16's 13.
-- Mutations **141/141 caught, zero survivors** (137 + `Q16-1`…`Q16-4`). Every
-  Q16 kill was behavioural and named the intended assertion; none was a build
-  or parse failure.
+- Full regression **1,725 tests, all passing**. Q17 removed no test.
+- Mutations **141/141 caught, zero survivors**. **126 are killed by a named
+  failing test** (Q17 moved four there) and 15 by a migration's own end-state
+  block — and after Q17 every one of those 15 edits an object that is actually
+  installed, so the block is querying the resulting schema rather than comparing
+  a migration with its own text. **Zero mutations target a superseded
+  definition**; Q17 re-checked all 141 and re-pointed the four that did.
 - TypeScript, ESLint, production build and worker bundle all clean.
 - `scripts/interface-polish.test.mjs` is new and renders the bell into a real
   DOM, because a focus trap is behaviour: **12 of its 14 original assertions
@@ -372,7 +458,18 @@ eyebrow is source-verified only: `/login` redirects an authenticated session to
 - Twelve trigger functions still carry `anon` EXECUTE from the platform default.
   Harmless: PostgreSQL refuses to invoke a trigger function directly (`0A000`).
 - Both `package-lock.json` and `pnpm-lock.yaml` are committed and resolve
-  identically.
+  identically. **Q17 could not settle which is canonical and kept both.**
+  `package.json` declares no `packageManager`, neither workflow installs node
+  modules, and `node_modules/.package-lock.json` shows npm installed this
+  working copy — but production is built by Cloudflare Workers Builds, whose
+  package-manager detection lives in its dashboard. **To close it, read the
+  install command for `xmasapp` there, delete the other lockfile, and prove a
+  clean install and build before pushing.**
+- `birthday-wishlist.test.mjs:194` still asserts the body of
+  `is_family_contributor_member`, which **migration 051 dropped**. It reads
+  immutable migration text so it cannot fail, and `table-privileges.test.mjs`
+  holds the stronger invariant that the routine is gone. Kept deliberately —
+  removing it would cut the test count without removing a risk.
 - The four limitations Q13 closed are gone from this list on purpose. Each is
   now held by a mutation (`Q13-1`…`Q13-4`) that puts the exact defect back.
 
@@ -386,3 +483,10 @@ In a **fresh** Claude session (Opus 5, High):
 
 **Push the closeout commit with the next phase's work.** It is docs-only and on
 its own would trigger a production build that changes nothing.
+
+**Two questions only the user can answer**, both from Q17 and neither blocking:
+
+1. Which package manager does **Cloudflare Workers Builds** use for `xmasapp`?
+   Its install command decides which of the two lockfiles is redundant.
+2. Have the `*-taylor*` scripts been run by hand since the family went live, and
+   is that admin-account recovery path still wanted?
