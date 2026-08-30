@@ -4,6 +4,7 @@ import { createClient as createAdminSupabaseClient } from "@supabase/supabase-js
 import type { PaymentLogReceipt, PaymentLogRecord, PaymentLogResponse } from "@/lib/payment-log";
 import { validateUuid } from "@/lib/input-validation";
 import { paymentStatusOf, type PaymentStatus } from "@/lib/payment-confirmation";
+import { londonToday } from "@/utils/supabase/birthdays-server";
 import { getCurrentMember } from "@/utils/supabase/current-member";
 import { createClient as createSessionClient } from "@/utils/supabase/server";
 
@@ -189,7 +190,7 @@ export async function loadPaymentLog(eventId: string): Promise<PaymentLogRespons
     eventId: event.id,
     eventName,
     eventYear: event.year,
-    today: londonDateInput(),
+    today: londonToday(),
     currentContributorId: currentContributor.id,
     currentAppMemberId: membership.id,
     isAdmin: membership.role === "admin",
@@ -211,16 +212,6 @@ async function loadAppMembers(ids: string[]) {
   return result.data;
 }
 
-function londonDateInput() {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/London",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
 
 function paymentLogDatabaseError(code?: string) {
   if (code === "42703" || code === "PGRST204") return "The payment confirmations migration must be applied before Payment Log can load.";

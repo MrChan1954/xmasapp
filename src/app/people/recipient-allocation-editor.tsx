@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { formatPennies } from "@/lib/currency";
+import { formatPennies, priceInput } from "@/lib/currency";
 import {
   INPUT_LIMITS,
   parseMoneyToPennies,
@@ -202,8 +202,4 @@ export function RecipientAllocationEditor({
       {actionError && <p className="mt-2 text-sm font-medium text-berry">{actionError}</p>}
     </div>
   );
-}
-
-function priceInput(pennies: number) {
-  return (pennies / 100).toFixed(2).replace(/\.00$/u, "");
 }

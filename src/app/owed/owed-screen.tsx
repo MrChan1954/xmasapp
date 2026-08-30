@@ -21,7 +21,7 @@ import {
   type PaymentStatus,
 } from "../../lib/payment-confirmation";
 import { parsePoundsToPennies } from "../../lib/purchases";
-import { INPUT_LIMITS, validateDateInput, validateOptionalText, validateUuid } from "../../lib/input-validation";
+import { INPUT_LIMITS, todayInput, validateDateInput, validateOptionalText, validateUuid } from "../../lib/input-validation";
 import { AppShell, PageHeader } from "../components/app-shell";
 import { GarlandRule } from "../components/festive/garland";
 import { notifyFamily } from "../components/notify-family";
@@ -1169,10 +1169,6 @@ function formatDate(value: string) {
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(date);
 }
 
-function todayInput() {
-  const now = new Date();
-  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
-}
 
 function settlementSaveError(code?: string) {
   if (code === "42501") return "Only the payer, the receiver or this family’s admin can record this payment.";

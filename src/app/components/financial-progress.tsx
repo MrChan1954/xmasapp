@@ -1,5 +1,28 @@
 import { formatPennies } from "@/lib/currency";
-import { calculateFinancialProgress } from "@/lib/purchases";
+import { calculateFinancialProgress, type PurchaseProgressStatus } from "@/lib/purchases";
+import type { BadgeTone } from "./ui";
+
+/**
+ * How a budget position reads on a person: the badge word and the badge colour.
+ *
+ * The people screen and the person modal each carried their own copy of this,
+ * character for character, so Q18 gave it the one home that already owns how
+ * budget progress is presented -- the same module as the bar those badges sit
+ * beside, whose "Budget reached" wording this matches on purpose.
+ *
+ * `events-dashboard.tsx` deliberately does NOT use this. An event card is
+ * summarising a whole occasion rather than one person, so it says "Complete"
+ * where this says "Budget reached", and it tones an overspend `warning` rather
+ * than `danger` because one recipient over budget is not a failed Christmas.
+ * Two of its four states differ from these, in the word AND in the colour, so
+ * it is a second presentation of the same status -- not a second copy of this.
+ */
+export function progressPresentation(status: PurchaseProgressStatus): { label: string; tone: BadgeTone } {
+  if (status === "not_started") return { label: "Not started", tone: "neutral" };
+  if (status === "in_progress") return { label: "In progress", tone: "warning" };
+  if (status === "over_budget") return { label: "Over budget", tone: "danger" };
+  return { label: "Budget reached", tone: "success" };
+}
 
 export function FinancialProgressBar({
   actualPennies,

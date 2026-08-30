@@ -432,31 +432,34 @@ the queries are 60 lines in `harness.mjs`.
 
 ---
 
-## 10. Both lockfiles are maintained
+## 10. pnpm is the package manager
 
-`package-lock.json` **and** `pnpm-lock.yaml` are both committed and both kept
-current. Neither may be deleted to make a tool's life easier.
+**`pnpm-lock.yaml` is the only lockfile.** Cloudflare Workers Builds installs
+and builds `xmasapp` with pnpm -- its build command is `pnpm run build`, its
+deploy `pnpm run deploy` and its version command `pnpm run upload` -- so pnpm's
+resolution is what ships. A frozen install fails outright against a stale
+lockfile, so letting it drift is a broken build waiting to happen.
 
-- `node_modules` is installed with **npm**, and `npm run deploy` builds the
-  Worker locally from it — so npm's resolution is what actually ships.
-- `pnpm-lock.yaml` exists because Cloudflare/build tooling has previously used
-  pnpm with a frozen lockfile. A frozen install fails outright against a stale
-  lockfile, so letting it drift is a broken build waiting to happen.
+**When dependencies change, update two things:** `package.json` and
+`pnpm-lock.yaml` (`npx pnpm@10 install`). Do not generate a second lockfile.
 
-**When dependencies change, update all three:** `package.json`,
-`package-lock.json` (`npm install`), and `pnpm-lock.yaml`
-(`npx pnpm@10 install --lockfile-only`). Then check they agree.
-
-> **A pre-existing inconsistency, found and fixed by this migration.**
-> `lucide-react` resolved to **1.33.0** in `package-lock.json` and **1.31.0** in
-> `pnpm-lock.yaml`. Both satisfied `^1.31.0`, so neither lockfile was invalid —
-> they simply described different trees, and the pnpm one described a tree that
-> had never been built or tested. It was reconciled **onto 1.33.0**, the version
-> actually installed, built and deployed. `package.json`'s range is untouched at
-> `^1.31.0`; nothing was upgraded.
+> **Why the second one went, in Q18.** `package-lock.json` was committed
+> alongside it until Q18 and was deleted there. Two lockfiles do not merely
+> duplicate each other -- they can describe DIFFERENT TREES, and this pair
+> did: `lucide-react` resolved to **1.33.0** in one and **1.31.0** in the
+> other. Both satisfied `^1.31.0`, so neither file was invalid; they simply
+> disagreed, and the one production installed from described a tree that had
+> never been built or tested. Q16 reconciled them onto 1.33.0. Q18 removed the
+> ability for them to disagree again.
 >
 > Beware `pnpm update <pkg>`: it rewrites the **specifier** in `package.json`
-> (it moved this one to `^1.35.0`), which is an upgrade, not a reconciliation.
+> (it once moved this one to `^1.35.0`), which is an upgrade, not a
+> reconciliation.
+
+`package.json` deliberately declares **no `packageManager` field**. Cloudflare
+detects pnpm from the lockfile and builds correctly without one, and pinning an
+exact patch release nobody has chosen would change how production installs on
+the strength of whatever `npx pnpm@10` happened to resolve to that day.
 
 Dependencies this migration added:
 

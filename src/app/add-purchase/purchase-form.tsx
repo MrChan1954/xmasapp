@@ -2,12 +2,13 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { formatPennies } from "@/lib/currency";
+import { formatPennies, priceInput } from "@/lib/currency";
 import {
   INPUT_LIMITS,
   validateDateInput,
   validateEnum,
   validateOptionalText,
+  todayInput,
   validateRequiredText,
   validateUuid,
 } from "@/lib/input-validation";
@@ -634,9 +635,6 @@ export function PurchaseForm({ eventId }: { eventId: string }) {
   );
 }
 
-function priceInput(pennies: number) {
-  return (pennies / 100).toFixed(2).replace(/\.00$/, "");
-}
 
 function RecipientBudgetSummary({
   recipient,
@@ -711,11 +709,6 @@ function MoneyAllocationInput({ name, pennies, onChange }: { name: string; penni
   );
 }
 
-function todayInput() {
-  const date = new Date();
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 10);
-}
 
 function purchaseFeatureError(message: string, code?: string) {
   if (code === "42P01" || code === "42703" || code === "42883" || code === "PGRST202" || code === "PGRST204" || code === "PGRST205") {

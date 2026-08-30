@@ -11,11 +11,10 @@ import {
 import { createClient } from "@/utils/supabase/client";
 import {
   purchaseProgressStatus,
-  type PurchaseProgressStatus,
 } from "../../lib/purchases";
 import { AppShell, PageHeader } from "../components/app-shell";
 import { CompleteRibbon } from "../components/festive/celebration";
-import { FinancialProgressBar } from "../components/financial-progress";
+import { FinancialProgressBar, progressPresentation } from "../components/financial-progress";
 import { IconChevronRight, IconGift, IconPlus, IconSearch, IconSparkle } from "../components/icons";
 import {
   Badge,
@@ -33,7 +32,6 @@ import {
   Select,
   Toolbar,
   cx,
-  type BadgeTone,
 } from "../components/ui";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventNavMode } from "@/lib/events.ts";
@@ -130,7 +128,7 @@ function PeopleView({
         person.spentPennies,
         person.budgetPennies,
       );
-      return filter === statusFilterLabel(status);
+      return filter === progressPresentation(status).label;
     }),
     [filter, people, query],
   );
@@ -143,7 +141,7 @@ function PeopleView({
     for (const person of searched) {
       if ((person.ideaCount ?? 0) > 0) result["Has ideas"] += 1;
       if (person.spentPennies === null) continue;
-      result[statusFilterLabel(purchaseProgressStatus(person.spentPennies, person.budgetPennies))] += 1;
+      result[progressPresentation(purchaseProgressStatus(person.spentPennies, person.budgetPennies)).label] += 1;
     }
     return result;
   }, [people, query]);
@@ -412,17 +410,6 @@ function PersonCard({ person, onClick }: { person: Person; onClick: () => void }
       </div>
     </Button>
   );
-}
-
-function statusFilterLabel(status: PurchaseProgressStatus) {
-  return status === "not_started" ? "Not started" : status === "in_progress" ? "In progress" : status === "budget_reached" ? "Budget reached" : "Over budget";
-}
-
-function progressPresentation(status: PurchaseProgressStatus): { label: string; tone: BadgeTone } {
-  if (status === "not_started") return { label: "Not started", tone: "neutral" };
-  if (status === "in_progress") return { label: "In progress", tone: "warning" };
-  if (status === "over_budget") return { label: "Over budget", tone: "danger" };
-  return { label: "Budget reached", tone: "success" };
 }
 
 /**

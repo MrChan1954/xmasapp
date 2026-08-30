@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
-import { formatPennies } from "../../lib/currency";
+import { formatPennies, priceInput } from "../../lib/currency";
 import { INPUT_LIMITS, parseMoneyToPennies } from "../../lib/input-validation";
 import { validateRecipientAllocationSnapshot, type RecipientAllocation } from "../../lib/recipient-allocations";
-import { purchaseProgressStatus, type PurchaseProgressStatus } from "../../lib/purchases";
+import { purchaseProgressStatus } from "../../lib/purchases";
 import { useFamily, type ActiveEvent, type Person } from "../family-context";
-import { FinancialProgressBar } from "../components/financial-progress";
+import { FinancialProgressBar, progressPresentation } from "../components/financial-progress";
 import {
   Badge,
   Button,
@@ -19,7 +19,6 @@ import {
   MoneyInput,
   Notice,
   cx,
-  type BadgeTone,
 } from "../components/ui";
 import { WishlistPanel } from "../components/wishlist-panel";
 import { GiftIdeas } from "./gift-ideas";
@@ -539,16 +538,6 @@ function Metric({ label, valuePennies, warning = false }: { label: string; value
   );
 }
 
-function priceInput(pennies: number) {
-  return (pennies / 100).toFixed(2).replace(/\.00$/u, "");
-}
-
-function progressPresentation(status: PurchaseProgressStatus): { label: string; tone: BadgeTone } {
-  if (status === "not_started") return { label: "Not started", tone: "neutral" };
-  if (status === "in_progress") return { label: "In progress", tone: "warning" };
-  if (status === "over_budget") return { label: "Over budget", tone: "danger" };
-  return { label: "Budget reached", tone: "success" };
-}
 
 function Actions({ cancel, save, saving, saveDisabled = false }: { cancel: () => void; save: () => void; saving: boolean; saveDisabled?: boolean }) {
   return (

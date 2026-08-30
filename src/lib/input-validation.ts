@@ -189,6 +189,27 @@ export function validateDateInput(
   return { ok: true, value: input };
 }
 
+/**
+ * Today, as the calendar date on the DEVICE the form is open on.
+ *
+ * The default value of a `<input type="date">`, so it has to agree with the
+ * calendar the person is looking at. `toISOString` alone would answer in UTC,
+ * which is a different day for anybody east of Greenwich after their evening
+ * and west of it before their morning -- and in British Summer Time it is a
+ * different day for this family too, for one hour every night. Shifting the
+ * instant by the zone offset first makes the UTC fields of the shifted instant
+ * read as the local calendar fields of the real one.
+ *
+ * DELIBERATELY NOT `londonToday`. That one answers in the family timezone,
+ * because a birthday is a fixed calendar date wherever it is read from; this
+ * one answers in the reader timezone, because a purchase date and a payment
+ * date default to the day the person filling the form is having. For a family
+ * in the UK the two agree, and they are still not the same function.
+ */
+export function todayInput(now: Date = new Date()): string {
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+}
+
 function containsDisallowedControlCharacters(value: string, multiline: boolean) {
   return (multiline ? MULTILINE_CONTROL_CHARACTERS : SINGLE_LINE_CONTROL_CHARACTERS).test(value);
 }

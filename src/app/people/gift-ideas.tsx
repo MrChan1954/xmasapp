@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { formatPennies } from "@/lib/currency";
+import { formatPennies, priceInput } from "@/lib/currency";
 import {
   INPUT_LIMITS,
   parseMoneyToPennies,
@@ -457,9 +457,6 @@ function validateIdea(values: IdeaValues):
   };
 }
 
-function priceInput(pennies: number) {
-  return (pennies / 100).toFixed(2).replace(/\.00$/, "");
-}
 
 /**
  * What went wrong, in the product's voice.

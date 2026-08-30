@@ -1612,6 +1612,68 @@ drop function if exists public.save_purchase(uuid, uuid, text, integer, uuid, da
     suites: ["scripts/table-privileges.test.mjs", "scripts/settlement-lifecycle.test.mjs"],
   },
 
+  // -------------------------------------------------------------------------
+  // Q18: the helpers four screens used to spell out for themselves.
+  //
+  // A consolidation moves risk as well as code. Where a wrong answer used to
+  // reach one screen it now reaches every caller at once, so each of the three
+  // canonical helpers gets a defect aimed at the thing it actually decides --
+  // and Q18-4 aims at the consolidation itself, by putting a copy back.
+  // -------------------------------------------------------------------------
+  {
+    /*
+     * The money field opens on formatted money. `formatPennies` puts a symbol
+     * and a thousands separator in, so a field seeded from it cannot be
+     * submitted unedited: `parseMoneyToPennies` refuses the string it holds.
+     * This is the exact mistake that having one helper next to the other one
+     * invites, which is why the two are tested against each other.
+     */
+    name: "Q18-1. the editable money field is seeded with display money",
+    file: "src/lib/currency.ts",
+    from: `export const priceInput = (pennies: number) => (pennies / 100).toFixed(2).replace(/\\.00$/u, "");`,
+    to: `export const priceInput = (pennies: number) => formatPennies(pennies);`,
+    suites: ["src/lib/currency.test.ts"],
+  },
+  {
+    /*
+     * The date field answers in UTC. For this family that is the wrong day for
+     * one hour of every British Summer Time night, and for a reader abroad it
+     * is the wrong day for most of their evening. It was correct in both
+     * screens before Q18; a single shared copy is a single place to break it.
+     */
+    name: "Q18-2. the date field falls back to the UTC calendar day",
+    file: "src/lib/input-validation.ts",
+    from: "  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);",
+    to: "  return now.toISOString().slice(0, 10);",
+    suites: ["src/lib/input-validation.test.ts"],
+  },
+  {
+    /*
+     * Reaching a budget reads as a failure. Budgets are TARGETS, not caps, so
+     * `budget_reached` is a success everywhere it is shown; toning it `danger`
+     * would put a red badge on every person who had been planned for correctly.
+     */
+    name: "Q18-3. reaching a budget is presented as something going wrong",
+    file: "src/app/components/financial-progress.tsx",
+    from: `  return { label: "Budget reached", tone: "success" };`,
+    to: `  return { label: "Budget reached", tone: "danger" };`,
+    suites: ["scripts/canonical-paths.test.mjs"],
+  },
+  {
+    /*
+     * The consolidation comes undone. A screen keeps a private copy of a helper
+     * it now imports -- which is how all four `priceInput` copies came to exist
+     * in the first place, one screen at a time, each one correct on the day it
+     * was written.
+     */
+    name: "Q18-4. a screen grows its own copy of a canonical helper again",
+    file: "src/app/people/person-modal.tsx",
+    from: `import { purchaseProgressStatus } from "../../lib/purchases";`,
+    to: `import { purchaseProgressStatus } from "../../lib/purchases";
+function priceInput(pennies: number) { return (pennies / 100).toFixed(2); }`,
+    suites: ["scripts/canonical-paths.test.mjs"],
+  },
+
 ];
 
 function runSuite(suite) {
