@@ -1,6 +1,6 @@
 # Current State
 
-**Last updated:** 2026-08-30, after the Gift Planner brand rename.
+**Last updated:** 2026-08-30, after the Q14 system inventory.
 
 The handoff between phases. Current facts only — history lives in git.
 
@@ -9,15 +9,47 @@ The handoff between phases. Current facts only — history lives in git.
 | Fact | Value |
 | ---- | ----- |
 | Live site | `https://xmas-family.uk/` |
-| Last completed phase | **Q13 — release polish** |
-| Q13 verdict | `Q13 PASS — RELEASE POLISH COMPLETE` |
-| Next phase | **Q14 — not started; nothing outstanding requires one** |
+| Last completed phase | **Q14 — whole-system inventory** |
+| Q14 verdict | `Q14 PASS — SYSTEM INVENTORY COMPLETE` |
+| Next phase | **Q15 — zero-risk removals; scope in `docs/Q14-SYSTEM-INVENTORY.md` §11** |
 | Branch | `main` |
 | Local HEAD | this docs commit, held back |
 | origin/main | `d4bacd8` — the brand rename, carrying the held Q13 closeout |
 | Serving Worker | `ea1ccdad-247f-41f9-9486-a09b2458fd28` |
 | Product name | **Gift Planner** |
-| Migrations applied | **001–050**, immutable. **Q13 needed none.** |
+| Migrations applied | **001–050**, immutable. **Q13 and Q14 needed none.** |
+
+## Q14 — the inventory
+
+`docs/Q14-SYSTEM-INVENTORY.md` is the map later cleanup phases work from. It is
+read-on-demand; do not load it unless a phase needs it. **Q14 changed no runtime
+code, no migration and no production data** — the whole database inventory came
+from replaying the fifty committed migrations into a disposable PGlite and
+querying the resulting catalogues, so it records the end state rather than the
+sum of what the migrations say they do.
+
+Headlines: 22 tables, 1 view, 96 application functions (93 `SECURITY DEFINER`,
+25 of them trigger functions, 60 reachable over PostgREST), 37 RLS policies, 61
+triggers, 77 indexes. On the app side, 31 page routes, 13 route handlers, **no
+server actions and no middleware** — every write is an RPC or a route handler.
+172 of 174 production source files are reachable from a route.
+
+Three DB routines have no caller in the final schema —
+`is_family_contributor_member`, `save_christmas_recipient`,
+`save_recipient_contributions`. Two app files have no importer —
+`components/ui/select.tsx` and `components/use-mounted.ts`. Five starter SVGs in
+`public/` are referenced nowhere. **None of them was removed in Q14.**
+
+Four unknowns stay open on purpose, and Q15/Q16 should settle them before
+anything is deleted: whether the three `*-taylor*` operator scripts are still
+run by hand, which indexes production actually uses, whether the wide grants on
+`areas` and `birthday_wishlist_ideas` are deliberate, and whether production's
+catalogue matches the rehearsal's. The last of those is still gated on
+`docs/Q12-POST-APPLY-CHECKS.sql`, which has still never been run.
+
+**`CLAUDE.md` says the applied migration range is 001–047. It is 001–050.** Left
+uncorrected in Q14 because the phase forbade edits beyond the inventory; fix it
+deliberately at the start of Q15.
 
 Q13 closed the four product-quality gaps the final site audit left open, and
 proved on the live site the one thing Q9, Q10, Q11 and Q12 each had to record as
@@ -87,8 +119,10 @@ Being the Area's admin did not help them, which is the invariant.
 
 ## Verification state
 
-- Full regression **1,690 tests, all passing** (1,674 + 16 new).
+- Full regression **1,697 tests, all passing** — Q13's 1,690 plus the
+  brand-rename suite. Re-run at Q14's gate against unchanged runtime code.
 - Mutations **134/134 caught, zero survivors** (130 + `Q13-1`…`Q13-4`).
+  Re-run at Q14's gate; still zero survivors.
 - TypeScript, ESLint, production build and worker bundle all clean.
 - `scripts/interface-polish.test.mjs` is new and renders the bell into a real
   DOM, because a focus trap is behaviour: **12 of its 14 original assertions
