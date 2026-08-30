@@ -676,3 +676,58 @@ describe("DataTable", () => {
     assert.equal(header.getAttribute("aria-sort"), "ascending");
   });
 });
+
+// ===========================================================================
+// The one control in the top bar whose label is a breakpoint away
+// ===========================================================================
+
+const { SearchTrigger } = await import("../src/app/components/command-search.tsx");
+
+/**
+ * A CONTROL THAT IS NAMED BY ITS TEXT IS NAMED ONLY WHERE ITS TEXT IS SHOWN.
+ *
+ * The search affordance in the top bar draws three things: a magnifier, the
+ * word "Search", and a "Ctrl K" hint. The magnifier is `aria-hidden` -- it is
+ * decoration, correctly. The other two are hidden by RESPONSIVE classes:
+ * "Search" is `hidden sm:inline` and the hint is `hidden ... lg:inline`.
+ *
+ * Below 640px both are `display: none`, and display:none content takes no part
+ * in the accessible name. So on a phone the button had NO NAME AT ALL -- and
+ * `TopBar` renders on every signed-in screen, so it was every screen. Measured
+ * through CDP against the deployed site at a genuine 390x844: the full
+ * accessibility tree carried exactly one unnamed control on each of twenty
+ * routes, this one, and zero on the same routes at desktop width.
+ *
+ * It is fixed with an explicit `aria-label`, which is the only fix that holds
+ * at every width: a name that depends on a media query is not a name.
+ *
+ * WHY THIS TEST CATCHES IT WITHOUT A VIEWPORT. jsdom applies no Tailwind, so
+ * here every span is "visible" and the name computed from text would be
+ * "SearchCtrl K" -- the button's whole textContent, hint and all. Requiring the
+ * name to be exactly "Search" therefore fails on the old markup and can only be
+ * satisfied by a label the element carries itself.
+ */
+describe("the search button carries its own name", () => {
+  test("IT IS CALLED \"SEARCH\" WITHOUT HELP FROM A BREAKPOINT", async () => {
+    const view = await show(h(SearchTrigger, { onOpen: () => {} }));
+    const button = byRole(view.container, "button");
+    assert.equal(accessibleName(button), "Search",
+      "the name must come from the element, not from text a media query can hide");
+  });
+
+  test("the keyboard hint is decoration and stays out of the name", async () => {
+    const view = await show(h(SearchTrigger, { onOpen: () => {} }));
+    const button = byRole(view.container, "button");
+    // The shortcut is still drawn for sighted desktop readers...
+    assert.match(button.textContent, /Ctrl K/u);
+    // ...and is still not part of what a screen reader announces.
+    assert.doesNotMatch(accessibleName(button), /Ctrl/u);
+  });
+
+  test("it still does what it is for", async () => {
+    let opened = 0;
+    const view = await show(h(SearchTrigger, { onOpen: () => { opened += 1; } }));
+    await click(byRole(view.container, "button"));
+    assert.equal(opened, 1, "the label must not have replaced the behaviour");
+  });
+});

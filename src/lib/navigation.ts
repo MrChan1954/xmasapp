@@ -79,6 +79,13 @@ export const EVENTS_HOME = { href: "/", label: "Events" } as const;
 export const SETTINGS_HOME = { href: "/settings", label: "Settings" } as const;
 export const FAMILY_SETTINGS_HOME = { href: "/settings/family", label: "Family settings" } as const;
 const PEOPLE_HOME = { href: "/people", label: "People" } as const;
+/**
+ * The calendar of everybody's birthday, and the way back up from one person's.
+ *
+ * Exported where `PEOPLE_HOME` is not, so a test can assert the crumb against
+ * the same constant the table uses rather than against a copy of the string.
+ */
+export const BIRTHDAYS_HOME = { href: "/birthdays", label: "Birthdays" } as const;
 
 /** The name of the app itself, used only when no route below claims the path. */
 export const DEFAULT_PAGE_TITLE = "Family Gift Planner";
@@ -131,6 +138,24 @@ const TITLES: Array<{ test: RegExp; title: string; parent?: Crumb }> = [
   { test: /^\/settings\/family$/u, title: FAMILY_SETTINGS_HOME.label, parent: SETTINGS_HOME },
   { test: /^\/settings$/u, title: SETTINGS_HOME.label },
   { test: /^\/birthdays$/u, title: "Birthdays" },
+  /*
+   * ONE PERSON'S BIRTHDAY, AND THE YEARS BEFORE IT. Deeper route first, or the
+   * entry below claims both and history loses its own name.
+   *
+   * These were missing for the same reason the five above once were: the table
+   * was filled in from the routes that existed at the top level, and nothing
+   * walked the directory underneath. The sticky bar on `/birthdays/<personId>`
+   * therefore read "Family Gift Planner" with no chevron -- the application's
+   * name where the screen's name belongs, on the one screen the birthday person
+   * themself is sent to. Birthdays is not on the mobile tab bar either, so the
+   * celebrant had no marked way back to the list they arrived from.
+   *
+   * The title here is the FALLBACK. A path cannot know whose birthday it is, so
+   * a screen that has the name may still pass its own; what the table
+   * guarantees is that no screen on this route can go nameless or lead nowhere.
+   */
+  { test: /^\/birthdays\/[^/]+\/history$/u, title: "Previous birthdays", parent: BIRTHDAYS_HOME },
+  { test: /^\/birthdays\/[^/]+$/u, title: "Birthday", parent: BIRTHDAYS_HOME },
   { test: /^\/more\/family-access/u, title: "Family access", parent: FAMILY_SETTINGS_HOME },
   { test: /^\/more\/activity/u, title: "Activity", parent: FAMILY_SETTINGS_HOME },
   { test: /^\/more\/notifications/u, title: "Notifications", parent: SETTINGS_HOME },

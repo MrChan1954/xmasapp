@@ -245,7 +245,7 @@ describe("the three scopes have three screens, and do not duplicate each other",
 // 4. Q9 -- the shell says where you are, and asks before it hides a family
 // ===========================================================================
 
-const { DEFAULT_PAGE_TITLE, FAMILY_SETTINGS_HOME, SETTINGS_HOME, pageTitleFor } =
+const { BIRTHDAYS_HOME, DEFAULT_PAGE_TITLE, FAMILY_SETTINGS_HOME, SETTINGS_HOME, pageTitleFor } =
   await import("../src/lib/navigation.ts");
 
 /**
@@ -333,6 +333,65 @@ describe("a breadcrumb leads to the screen that lists it", () => {
     }
     // Birthdays is bare for the other reason: it is reached from the dashboard
     // AND from the family's settings, so any fixed parent lies half the time.
+    assert.equal(pageTitleFor("/birthdays").parent, undefined);
+  });
+});
+
+/**
+ * ONE LEVEL DEEPER THAN THE TABLE HAD BEEN FILLED IN.
+ *
+ * Q9 gave every screen OUTSIDE an event a name and a way back up, and the list
+ * it worked from was the routes that existed at the top level. `/birthdays`
+ * got both. The two screens UNDER it did not, and nothing noticed, because a
+ * missing row is exactly what the old regex-over-the-source check could not
+ * see -- the same blind spot, one directory further down.
+ *
+ * Measured on the deployed site: the sticky bar on `/birthdays/<personId>`
+ * read "Family Gift Planner", the application's own name where the screen's
+ * name belongs, with no chevron above it. That route is the one screen the
+ * birthday person themself is sent to, and Birthdays is not on the mobile tab
+ * bar -- so on a phone the celebrant had the app's name at the top, three
+ * destinations at the bottom, and no marked way back to the list they came
+ * from. `/birthdays/<personId>/history` named itself but was likewise bare.
+ *
+ * BOTH ARE FIXED IN THE TABLE, not on the pages. Patching a page at a time is
+ * how Account and Notifications drifted from Family access and Activity, which
+ * is the drift this single table exists to prevent.
+ */
+describe("a person's birthday screens name themselves and lead back", () => {
+  // Any id: the entries match the SHAPE of the route, never one record.
+  const PERSON = "/birthdays/7c9f1a30-4b2e-4d55-9a61-0f3c8e5b2d47";
+
+  test("NEITHER OF THEM READS AS THE APPLICATION", () => {
+    for (const path of [PERSON, PERSON + "/history"]) {
+      assert.notEqual(pageTitleFor(path).title, DEFAULT_PAGE_TITLE,
+        path + " still reads as the app instead of naming the screen");
+    }
+  });
+
+  test("both lead back to the list of birthdays", () => {
+    // Asserted first, and deliberately: `deepEqual(undefined, undefined)` is a
+    // pass, so without this the whole test goes green when the crumb is missing
+    // AND the constant fails to import.
+    assert.deepEqual(BIRTHDAYS_HOME, { href: "/birthdays", label: "Birthdays" });
+    for (const path of [PERSON, PERSON + "/history"]) {
+      assert.deepEqual(pageTitleFor(path).parent, BIRTHDAYS_HOME,
+        path + " sits under Birthdays and must offer the way back");
+    }
+  });
+
+  test("the history screen is not swallowed by the person's own entry", () => {
+    // First-match order: the deeper route has to be listed above the shallower
+    // one, or `/birthdays/<id>` claims both and history loses its name.
+    assert.notEqual(
+      pageTitleFor(PERSON + "/history").title,
+      pageTitleFor(PERSON).title,
+      "history and the birthday itself are different screens",
+    );
+  });
+
+  test("the list itself is untouched -- it is still reached from two places", () => {
+    assert.equal(pageTitleFor("/birthdays").title, "Birthdays");
     assert.equal(pageTitleFor("/birthdays").parent, undefined);
   });
 });

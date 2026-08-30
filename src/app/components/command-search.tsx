@@ -19,6 +19,21 @@ export function SearchTrigger({ className = "", onOpen }: { className?: string; 
     <Button
       variant="secondary"
       onClick={onOpen}
+      /*
+       * NAMED BY THE ELEMENT, NOT BY THE BREAKPOINT.
+       *
+       * Both pieces of text below are hidden by a responsive class -- "Search"
+       * under 640px, the hint under 1024px -- and `display: none` content takes
+       * no part in the accessible name. On a phone that left a button holding
+       * nothing but an `aria-hidden` magnifier, with no name at all, in the top
+       * bar of every signed-in screen. Confirmed against the deployed site at a
+       * genuine 390x844: one unnamed control on each of twenty routes, this one,
+       * and none of them at desktop width.
+       *
+       * The label also keeps "Ctrl K" out of the announcement, which is what a
+       * name computed from the text would otherwise have read out.
+       */
+      aria-label="Search"
       className={cx(
         "border-line bg-surface-2 px-3 font-normal text-ink-400 shadow-none hover:text-ink-600",
         className,
