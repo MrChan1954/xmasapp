@@ -138,8 +138,16 @@ test("the authorization migration explicitly enables RLS on every application ta
   // asserted below rather than merely described here, and the behaviour they
   // produce is proved against a real PostgreSQL in
   // `scripts/rls-permission-matrix.test.mjs`.
-  assert.equal(migrationFiles.at(-11), wishlistMigrationName);
-  assert.equal(migrationFiles.at(-12), areaAuthMigrationName);
+  //
+  // 051 IS REVIEWED AND REMOVES SECURITY SURFACE RATHER THAN ADDING ANY. It
+  // drops three routines nothing calls, and narrows `authenticated` on
+  // `areas` and `birthday_wishlist_ideas` to exactly the privileges the
+  // application issues -- taking away TRUNCATE, which row level security is
+  // never consulted for. It creates no table, defines no function, adds no
+  // policy and grants nothing to anybody. The behaviour it produces is proved
+  // against a real PostgreSQL in `scripts/table-privileges.test.mjs`.
+  assert.equal(migrationFiles.at(-12), wishlistMigrationName);
+  assert.equal(migrationFiles.at(-13), areaAuthMigrationName);
 
   // What 050 introduces, security-wise: a strictly narrower read policy.
   const birthdayPrivacyMigration = readFileSync(

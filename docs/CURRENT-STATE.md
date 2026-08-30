@@ -1,6 +1,6 @@
 # Current State
 
-**Last updated:** 2026-08-30, after the Q15 database canonical-system audit.
+**Last updated:** 2026-08-30, after migration 051 was applied to production.
 
 The handoff between phases. Current facts only — history lives in git.
 
@@ -9,19 +9,59 @@ The handoff between phases. Current facts only — history lives in git.
 | Fact | Value |
 | ---- | ----- |
 | Live site | `https://xmas-family.uk/` |
-| Last completed phase | **Q15 — database canonical-system audit** |
-| Q15 verdict | `Q15 CONDITIONAL PASS — DB CLEANUP PROPOSAL REQUIRED` |
-| Next phase | **Q16 — see `docs/Q15-DATABASE-CANONICAL-SYSTEM.md` §8 and §9** |
+| Last completed phase | **Q15 + migration 051** — audit, then the cleanup it proposed |
+| Q15 verdict | `Q15 CONDITIONAL PASS` — the proposal it required is now applied |
+| Next phase | **Q16 — see `docs/Q15-DATABASE-CANONICAL-SYSTEM.md` §9; the §8 proposal is done** |
 | Branch | `main` |
-| Local HEAD | this docs commit, held back |
-| origin/main | `d4bacd8` — the brand rename, carrying the held Q13 closeout |
+| Local HEAD | pushed — carries 051 and the three previously held docs commits |
+| origin/main | current with local `main` |
 | Serving Worker | `ea1ccdad-247f-41f9-9486-a09b2458fd28` |
 | Product name | **Gift Planner** |
-| Migrations applied | **001–050**, immutable. **Q13, Q14 and Q15 needed none.** |
+| Migrations applied | **001–051**, immutable. 051 applied manually 2026-08-30. |
 
-## Q15 — the database audit, and the one thing awaiting your decision
+## Migration 051 — applied, and verified against production
 
-`docs/Q15-DATABASE-CANONICAL-SYSTEM.md` is the audit. Read on demand.
+`supabase/migrations/202608100051_drop_superseded_routines_and_narrow_table_grants.sql`
+(SHA-256 `0760ce5d…12f369`) was applied manually in the Supabase SQL Editor on
+2026-08-30 and **verified against a production `pg_dump` taken afterwards**
+(backup run `33330291190`, 19:15:14Z).
+
+It did two things. It dropped `is_family_contributor_member`,
+`save_christmas_recipient` and `save_recipient_contributions` — three routines
+with no caller of any kind, each proved by a clean `DROP … RESTRICT` in a
+rehearsal first. And it narrowed `authenticated` on `areas` to `SELECT` and on
+`birthday_wishlist_ideas` to `SELECT, INSERT, UPDATE, DELETE`.
+
+**Why the grant half mattered.** Those two tables were the only ones in the
+schema still carrying Supabase's blanket default grant, which includes
+**TRUNCATE — and row level security is never consulted for TRUNCATE**. Measured
+in a rehearsal before the fix: an ordinary member truncated
+`birthday_wishlist_ideas` and destroyed three Areas' wishlists, including an
+Area they were not acting in. It was never reachable through PostgREST, which
+has no TRUNCATE verb, so nothing was ever at risk — but the protection was the
+client protocol rather than the grant, and `areas` was shielded only by an
+accident of its foreign keys.
+
+**Production diff, whole:** eleven `GRANT`/`REVOKE` lines. Seven belonged to the
+three dropped routines and went with them; the two blanket table grants became
+two narrow ones. Functions 96 → 93. Policies, triggers, indexes and RLS all
+unchanged. **`data_rows` 1,111 → 1,111 and `data_bytes` byte-identical** — the
+migration reads and writes no row, and the two dumps prove it.
+
+`docs/Q15-051-POST-APPLY-CHECKS.sql` is the read-only re-check (18 checks, FAIL
+rows sort to the top). `docs/Q15-051-ROLLBACK.sql` undoes it — read its header
+first: half of it deliberately re-opens the hole.
+
+**The rule that stops this recurring** is `scripts/table-privileges.test.mjs` §4.
+It names no table: it sweeps every table in `public` and fails if any of them
+hands a browser role anything beyond the four DML verbs. Mutation `051-2` puts
+that defect on a third table and is killed by that sweep.
+
+## Q15 — the database audit behind that migration
+
+`docs/Q15-DATABASE-CANONICAL-SYSTEM.md` is the audit. Read on demand. Its §8
+proposal has since been written, rehearsed, applied and verified — that is
+migration 051 above, so read §8 as history rather than as a pending decision.
 
 **Gift Planner has exactly one authoritative database system per business
 concept.** Every concept was checked — Areas, identity, membership, admin,
@@ -31,22 +71,22 @@ settlements, receipts, notifications, audit, settings, birthdays and privacy.
 subsystems (three notification tables, three contributor layers) are stages and
 layers of one system, not rivals.
 
-**AWAITING YOUR DECISION — a real security finding.** `authenticated` holds
-`TRUNCATE` on `areas` and `birthday_wishlist_ideas`, because those two tables
-alone never revoked Supabase's blanket default privilege. **RLS does not
-constrain TRUNCATE.** Measured in the rehearsal: an ordinary member truncated
-`birthday_wishlist_ideas` and destroyed three Areas' wishlists, including an
-Area they were not acting in. It is **not exploitable today** — PostgREST has no
-TRUNCATE verb — but the protection is the client protocol, not the grant, and
-`areas` is shielded only by an accident of its foreign keys.
+**The security finding it raised is now closed** by migration 051 above. Q15
+found `authenticated` holding `TRUNCATE` on `areas` and
+`birthday_wishlist_ideas`; 051 took it away and
+`scripts/table-privileges.test.mjs` now holds that shut.
 
-Migration 051 is proposed to revoke-and-re-grant both tables, and to drop three
-routines that have no caller of any kind (`is_family_contributor_member`,
-`save_christmas_recipient`, `save_recipient_contributions` — each proved by a
-clean `DROP … RESTRICT` in the rehearsal). **It has NOT been written.** Full
-proposal, rollback and post-apply plan in §8. Dropping the routines also
-requires rewriting mutation 9 in `scripts/mutation-check.mjs`, which currently
-reverts migration 039 to call one of them.
+**One Q15 claim turned out to be wrong, and the correction is worth keeping.**
+Q15 predicted that dropping `is_family_contributor_member` would make mutation 9
+die of "undefined function". It would not have. Mutation 9 edited migration
+**039**, but **047 redefines `set_person_birthday`** — so the mutant never
+reached the schema the tests query, and what killed it was 039's own apply-time
+*text* assertion, which 039 admits in its own comment is a text check because it
+"needs two Areas and a login in both, and this block creates none". The fixtures
+do create exactly that. Mutation 9 now breaks the live definition in 047 and is
+killed behaviourally by `a plain member cannot`. **The lesson generalises: a
+mutation aimed at a migration that a later migration overwrites is testing
+nothing.**
 
 Confirmed REQUIRED, not legacy: **`events.year`** carries the "one Christmas per
 family per year" unique index and two check constraints. The **`christmas_events`
@@ -83,7 +123,7 @@ stay open: whether the three `*-taylor*` operator scripts are still run by hand,
 and which indexes production actually uses. Neither can be settled without
 either asking the user or opening a read-only production connection.
 
-**`CLAUDE.md`'s migration range said 001–047. Q15 corrected it to 001–050.**
+**`CLAUDE.md`'s migration range said 001–047. It is now 001–051.**
 
 Q13 closed the four product-quality gaps the final site audit left open, and
 proved on the live site the one thing Q9, Q10, Q11 and Q12 each had to record as

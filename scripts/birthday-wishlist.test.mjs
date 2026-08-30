@@ -78,9 +78,14 @@ describe("migrations 001-038 are applied and immutable", () => {
     // nothing has been slipped in between them. The total is asserted as well,
     // so that a new migration is a deliberate edit to this line rather than
     // something that arrives unnoticed.
+    // Q15 added 051 (three superseded routines dropped, and the blanket table
+    // grant narrowed on `areas` and `birthday_wishlist_ideas`). It drops no
+    // policy and changes no wishlist behaviour: 040 still owns every policy on
+    // this table. What 051 DOES change here is the table grant, and that is
+    // asserted below rather than left implied.
     assert.equal(migrationFiles.indexOf(WISHLIST), migrationFiles.indexOf(AREA_AUTH) + 1);
     assert.equal(migrationFiles.indexOf(AREA_AUTH), 38, "039 is the thirty-ninth migration");
-    assert.equal(migrationFiles.length, 50);
+    assert.equal(migrationFiles.length, 51);
   });
 
   test("no earlier migration mentions the new ones", () => {

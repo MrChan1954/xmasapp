@@ -864,23 +864,44 @@ describe("an Area cannot be created or renamed from a browser", () => {
     assert.deepEqual(policies.map((p) => p.cmd), ["SELECT"]);
   });
 
-  test("a member holds a leftover INSERT grant -- and it buys nothing", async () => {
+  test("the leftover INSERT grant is gone, and the insert is refused before RLS is even asked", async () => {
     /*
-     * Supabase grants ALL on every new public table by default. Migration 034
-     * revoked that from `anon` and only ADDED select for `authenticated`, so the
-     * default INSERT is still there. It is untidy, and it is not a way in:
-     * with row level security on and no write policy, the insert is refused.
+     * THIS TEST USED TO SAY THE OPPOSITE, AND THE CHANGE IS THE POINT.
+     *
+     * Supabase grants ALL on every new table in `public` by default. Migration
+     * 034 revoked that from `anon` and only ADDED select for `authenticated`,
+     * so the default INSERT -- and TRUNCATE, and REFERENCES, and TRIGGER --
+     * were all still there. This test recorded that as untidy but harmless,
+     * because row level security refused the insert whatever the grant said,
+     * and it ended with "if this ever flips, the leftover grant was tidied up".
+     *
+     * Migration 051 flipped it. It was not harmless: row level security is
+     * never consulted for TRUNCATE, so the same leftover that made this insert
+     * merely untidy also let an ordinary member empty the table.
+     *
+     * So the refusal now happens one layer earlier, at the privilege check,
+     * and both layers are asserted here: the grant is gone, AND there is still
+     * no write policy behind it if it ever came back.
      */
     await asOwner(db);
-    const granted = await value(db, "select has_table_privilege('authenticated', 'public.areas', 'insert')");
+    assert.equal(
+      await value(db, "select has_table_privilege('authenticated', 'public.areas', 'insert')"),
+      false,
+      "051 took the leftover INSERT grant away",
+    );
 
     const insert = await probe(db, who(f.users.dual, f.areas.alpha),
       "insert into public.areas (name) values ('Sneaky') returning id");
-    assert.equal(insert.ok, false, "row level security must refuse the insert whatever the grant says");
-    assert.match(insert.error, /row-level security/u);
+    assert.equal(insert.ok, false, "the insert must be refused");
+    assert.match(insert.error, /permission denied/u,
+      "and refused by PRIVILEGE now, not merely by row level security");
 
-    // And the grant really is there, so the refusal above is doing the work.
-    assert.equal(granted, true, "if this ever flips, the leftover grant was tidied up");
+    // The second layer is still there. `areas` has one policy and it is a
+    // SELECT, so even handed the grant back there is nothing to insert through.
+    const writePolicies = await rows(db, `
+      select policyname from pg_policies
+      where schemaname = 'public' and tablename = 'areas' and cmd <> 'SELECT'`);
+    assert.deepEqual(writePolicies, [], "no write policy stands behind the revoked grant");
   });
 
   test("and renaming one from a browser changes nothing", async () => {

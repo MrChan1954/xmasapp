@@ -108,12 +108,43 @@ drop policy if exists "active members add gift ideas" on public.gift_ideas;`,
     suites: ["scripts/areas-and-tenancy.test.mjs"],
   },
   {
-    name: "9. set_person_birthday goes back to asking the global question",
-    file: "supabase/migrations/202608100039_area_aware_contributor_permissions.sql",
+    /*
+     * REWRITTEN FOR MIGRATION 051, AND IT WAS WRONG BEFORE THAT TOO.
+     *
+     * This used to edit migration 039 and swap the Area-aware pair for
+     * `is_app_admin() or is_family_contributor_member()`. Two things were wrong
+     * with it.
+     *
+     * First, 047 REDEFINES `set_person_birthday`. Breaking 039's copy changed a
+     * definition that a later migration overwrote, so the mutant never reached
+     * the schema the tests actually query. What killed it was 039's own
+     * end-state block noticing its text had changed -- an apply-time structural
+     * check, which the rules here do not accept as a behavioural kill. 039 says
+     * as much in its own comment: "Proved by the text, because proving it by
+     * behaviour needs two Areas and a login in both, and this block creates
+     * none." The fixtures DO create exactly that, so the suite can prove what
+     * the migration could not.
+     *
+     * Second, migration 051 drops `is_family_contributor_member`, so the old
+     * mutant would eventually have died of "function does not exist" -- the
+     * other thing that must never count as a kill.
+     *
+     * It now breaks the LIVE definition in 047, and breaks it in a way no text
+     * assertion is looking for: every identifier 039 and 047 check for is still
+     * present, and the entitlement half simply gains an escape hatch. A plain
+     * member of an Area could then edit birthdays in it. `tenancy-runtime`'s
+     * "a plain member cannot" is a real request being refused, so that is what
+     * fails -- behaviourally, on the definition that is actually installed.
+     */
+    name: "9. any signed-in member can edit a birthday, not just admins and contributors",
+    file: "supabase/migrations/202608100047_area_scoped_person_routines.sql",
     from: `      public.is_area_admin(target_area)
-      or public.is_area_contributor_member(target_area)`,
-    to: `      public.is_app_admin()
-      or public.is_family_contributor_member()`,
+      or public.is_area_contributor_member(target_area)
+    ) then`,
+    to: `      public.is_area_admin(target_area)
+      or public.is_area_contributor_member(target_area)
+      or public.is_active_app_member()
+    ) then`,
     suites: DB_SUITES,
   },
   {
@@ -1436,6 +1467,69 @@ export function EventSettingsScreen(`,
     from: `{saving ? "Recording…" : "Record as confirmed"}`,
     to: `{saving ? "Recording..." : "Record as confirmed"}`,
     suites: ["scripts/interface-polish.test.mjs"],
+  },
+
+  // -------------------------------------------------------------------------
+  // MIGRATION 051: the blanket table grant, and the three routines it dropped.
+  //
+  // Row level security is never consulted for TRUNCATE. That is the whole
+  // reason this family exists: a table can have four correct policies and still
+  // be emptied in one statement by anybody holding the privilege, for every
+  // family at once. Before 051, an ordinary member really could truncate
+  // `birthday_wishlist_ideas` -- measured, three Areas' rows gone at once.
+  // -------------------------------------------------------------------------
+  {
+    /*
+     * Killed by migration 051's OWN end-state block, which reads `aclexplode`
+     * and `has_table_privilege` against the live catalogue and raises. That is
+     * a real privilege assertion executed by PostgreSQL -- not a checksum, not
+     * a parse error -- but it does stop the chain, so 051-2 below exists to
+     * prove the behavioural suite catches a wide grant with no migration guard
+     * standing in front of it at all.
+     */
+    name: "051-1. the wishlist keeps Supabase's blanket grant, TRUNCATE and all",
+    file: "supabase/migrations/202608100051_drop_superseded_routines_and_narrow_table_grants.sql",
+    from: "revoke all on table public.birthday_wishlist_ideas from public, anon, authenticated;",
+    to: "revoke all on table public.birthday_wishlist_ideas from public, anon;",
+    suites: ["scripts/table-privileges.test.mjs"],
+  },
+  {
+    /*
+     * THE ONE THAT MATTERS, and it deliberately does not touch 051.
+     *
+     * `item_photos` is a table 051 never mentions, so nothing downstream
+     * re-narrows it and no migration end-state block asks about it. Dropping
+     * `authenticated` from migration 017's revoke leaves it carrying Supabase's
+     * project default -- exactly the defect `areas` and `birthday_wishlist_ideas`
+     * arrived with, on a third table, with no guard in the way.
+     *
+     * What kills it is the general sweep in `table-privileges.test.mjs` §4,
+     * which names no table and fails if ANY of them has handed a browser role
+     * something beyond the four DML verbs. That sweep is the thing standing
+     * between this schema and the next table arriving broken, so it is the
+     * thing that has to be proved.
+     */
+    name: "051-2. a third table arrives carrying the blanket grant nobody revoked",
+    file: "supabase/migrations/202608100017_add_item_photos.sql",
+    from: "revoke all privileges on table public.item_photos from public, anon, authenticated;",
+    to: "revoke all privileges on table public.item_photos from public, anon;",
+    suites: ["scripts/table-privileges.test.mjs"],
+  },
+  {
+    /*
+     * The other direction: 051 sweeping up a routine that is NOT redundant.
+     * `save_purchase` looks exactly like the two dropped beside it and is the
+     * one thing separating a purchase from its allocations -- migration 047's
+     * own notes group all three together, which is precisely how this mistake
+     * would get made. Every purchase in the application goes through it.
+     */
+    name: "051-3. migration 051 also drops save_purchase, which is still called",
+    file: "supabase/migrations/202608100051_drop_superseded_routines_and_narrow_table_grants.sql",
+    from: "drop function if exists public.save_recipient_contributions(uuid, jsonb) restrict;",
+    to: `drop function if exists public.save_recipient_contributions(uuid, jsonb) restrict;
+
+drop function if exists public.save_purchase(uuid, uuid, text, integer, uuid, date, text, text, text, text, uuid, jsonb) restrict;`,
+    suites: ["scripts/table-privileges.test.mjs", "scripts/settlement-lifecycle.test.mjs"],
   },
 
 ];

@@ -83,6 +83,7 @@
   "test:shadcn-ui": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/dom/tsx-hook-register.mjs --test scripts/shadcn-ui.test.mjs",
   "test:polish": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/dom/tsx-hook-register.mjs --test scripts/interface-polish.test.mjs",
     "test:brand": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/app-brand.test.mjs",
+    "test:privileges": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/table-privileges.test.mjs",
     "test:all": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/dom/tsx-hook-register.mjs --test scripts/*.test.mjs scripts/qa/*.test.mjs src/lib/*.test.ts"
   },
   "dependencies": {
