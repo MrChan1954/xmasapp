@@ -21,16 +21,40 @@ type AuditEntry = {
 
 const PAGE_SIZE = 300;
 
-/** Table names are an implementation detail; these are what the family calls them. */
+/**
+ * Table names are an implementation detail; these are what the family calls them.
+ *
+ * BOTH PLACES THIS IS READ FALL BACK TO THE RAW COLUMN, so a kind that is
+ * missing here does not go blank -- it prints the database's own word for it.
+ * The screen shipped that way: the filter row along the top read
+ *
+ *     ... | Contributors | events | Gift ideas | item_photos | people_birthday | ...
+ *
+ * with three table names, two of them underscored, among the English. The map
+ * was written against the nine tables migration 015 audits and never caught up
+ * with the ones that came after: 017's photos, and the four later migrations
+ * that write an entry themselves -- an event being archived, restored or
+ * deleted, and `people_birthday`, which is not a table at all but the name the
+ * birthday trigger gives its own kind.
+ *
+ * `scripts/tenancy-runtime.test.mjs` now derives the full list from the
+ * migrations and fails if this map is short of it, so the next one is caught
+ * when it is written rather than when somebody reads the screen.
+ */
 const KINDS = {
   purchases: "Purchases",
   purchase_allocations: "Purchase splits",
   gift_ideas: "Gift ideas",
+  item_photos: "Photos",
   settlements: "Payments",
   contributors: "Contributors",
   recipient_contributions: "Planned amounts",
   christmas_recipients: "People on the list",
   people: "People",
+  // The person, and the date on them: `people` covers somebody joining or
+  // leaving the family, this covers their birthday being set or changed.
+  people_birthday: "Birthdays",
+  events: "Events",
   app_members: "Accounts",
 } as const;
 

@@ -279,14 +279,24 @@ union all
 
 -- 045 hardened sixteen routines and 046 added its own. 047 adds none, so this
 -- count must be exactly what it was before 047 was pasted in.
+--
+-- 21 BECAME 22 WITH MIGRATION 049, AND NOT BECAUSE A ROUTINE WAS GUARDED.
+--   This counts routines whose SOURCE mentions the guard, which is a proxy for
+--   "still guarded" and cannot tell a call from a comment. 049 replaced
+--   `stamp_audit_area` -- a BEFORE INSERT trigger function on `audit_log`, which
+--   nothing calls directly and which guards nothing -- and its commentary
+--   explains that the acting Area it reads is the same one `require_acting_area`
+--   has already enforced. That sentence is what the twenty-second match is.
+--   The check keeps its value either way: a count BELOW this means a routine
+--   really has lost its guard.
 select 4731, '001-046 unchanged',
        '045''s cohort still carries require_acting_area',
        (case when (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-                   where n.nspname = 'public' and p.prosrc like '%require_acting_area%') = 21
+                   where n.nspname = 'public' and p.prosrc like '%require_acting_area%') = 22
              then 'PASS' else 'REVIEW' end),
        (select count(*)::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where n.nspname = 'public' and p.prosrc like '%require_acting_area%')
-       || ' routines mention require_acting_area (21 expected on 001-047)'
+       || ' routines mention require_acting_area (22 expected on 001-049)'
 
 union all
 

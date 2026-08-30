@@ -113,12 +113,22 @@ test("the authorization migration explicitly enables RLS on every application ta
   // purpose, so a schema change cannot land without this file being reviewed
   // and its checks extended to whatever the migration introduced.
   // Q2 added 041-043 on top; Q3 added 044 and 045; Q5 added 046; Q6 added
-  // 047. What this
+  // 047; Q10 added 048; Q11 added 049. What this
   // file pins is that Phase 5's and Q1's security migrations are still there,
   // and still in order -- every offset moves together, so nothing about them
   // has changed.
-  assert.equal(migrationFiles.at(-9), wishlistMigrationName);
-  assert.equal(migrationFiles.at(-10), areaAuthMigrationName);
+  //
+  // 049 IS REVIEWED AND ADDS NO SECURITY SURFACE. It is one
+  // `create or replace function public.stamp_audit_area()` and nothing else:
+  // no table, column, index, policy, grant or trigger, and no existing row
+  // updated. It changes only how `audit_log.area_id` is FILLED, adding
+  // `acting_area()` -- which `claim_active_area` and `act_in_area` both refuse
+  // to set unless `is_area_member` passes -- between the record lookup and the
+  // single-membership fallback. The refusal to choose between several
+  // memberships is unchanged, and `area-mutation-security` still proves a
+  // caller with several families and no Area claimed is refused.
+  assert.equal(migrationFiles.at(-10), wishlistMigrationName);
+  assert.equal(migrationFiles.at(-11), areaAuthMigrationName);
   assert.ok(migrationFiles.includes(actingMigrationName), "the acting-Area migration is still present");
   assert.ok(migrationFiles.includes(membershipMigrationName), "the membership guard migration is still present");
   assert.ok(migrationFiles.includes(peopleMigrationName), "the People directory migration is still present");

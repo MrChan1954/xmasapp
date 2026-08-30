@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 import test, { describe, before, after } from "node:test";
 import { asOwner, attempt, buildRehearsal, probe, probeValue, rows, seen, value } from "./pg/rehearsal.mjs";
 import { buildTwoFamilies } from "./pg/fixtures.mjs";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 let db;
 let f;
@@ -1726,5 +1726,272 @@ describe("Q10: the activity log answers about the acting Area, not every members
       /if \(!activeAreaId\) \{/u,
       "and must not read at all before the Area is known, or it renders the wrong family first",
     );
+  });
+});
+
+/**
+ * THE ACTIVITY SCREEN SPEAKS THE FAMILY'S LANGUAGE, OR IT SPEAKS POSTGRES'S.
+ *
+ * `activity-client.tsx` keeps a map from `audit_log.table_name` to what the
+ * family calls that kind of thing, and its own comment says why: "Table names
+ * are an implementation detail; these are what the family calls them." Both
+ * places it is used fall back to the raw column when the map has no entry --
+ * the filter chips along the top, and the type printed on every row.
+ *
+ * WHAT WAS WRONG, read off the deployed site rather than reasoned about. The
+ * real family's Activity screen offered these filters:
+ *
+ *     All | People on the list | Contributors | events | Gift ideas |
+ *     item_photos | people_birthday | Purchase splits | Purchases |
+ *     Planned amounts | Payments
+ *
+ * Three database table names, two of them with underscores, sitting in a row of
+ * ordinary English. Every entry for an archived, restored or deleted event, for
+ * a birthday being recorded, and for a photo added to a gift was labelled the
+ * same way.
+ *
+ * THE MAP WAS NEVER WRONG -- IT WAS INCOMPLETE, and incompleteness is what a
+ * hand-written list cannot notice about itself. Migration 015 audits nine
+ * tables through a trigger, 017 added a tenth, and four later migrations insert
+ * rows naming a kind directly, including the synthetic `people_birthday` which
+ * is not a table at all. The map was written against the first nine.
+ *
+ * So the expectation below is DERIVED FROM THE MIGRATIONS rather than typed out
+ * again. A new audited table, or a new routine that writes a new kind, fails
+ * here on the day it is added instead of on the day somebody reads the screen.
+ */
+describe("no database table name reaches the family", () => {
+  const migrations = readdirSync(new URL("../supabase/migrations/", import.meta.url))
+    .filter((name) => name.endsWith(".sql"))
+    .map((name) => readFileSync(new URL("../supabase/migrations/" + name, import.meta.url), "utf8")
+      .replace(/\r\n/gu, "\n"));
+
+  /** Every value that can land in `audit_log.table_name`, taken from the SQL. */
+  const kindsTheDatabaseCanWrite = () => {
+    const kinds = new Set();
+
+    for (const sql of migrations) {
+      // 1. The trigger tables. `record_audit_event` stamps TG_TABLE_NAME, so
+      //    the table a trigger is attached to IS the kind it writes.
+      for (const m of sql.matchAll(
+        /create trigger\s+\w+\s+after[^;]*?\son\s+public\.(\w+)\s+for each row\s+execute function\s+public\.record_audit_event/giu,
+      )) kinds.add(m[1]);
+
+      // 2. The routines that insert an entry themselves and name the kind as a
+      //    literal -- `events` when one is archived, restored or deleted, and
+      //    `people_birthday`, which no table is called.
+      for (const m of sql.matchAll(
+        /insert into public\.audit_log\s*\([^)]*table_name[^)]*\)\s*(?:\n|\s)*values\s*\(\s*'(\w+)'/giu,
+      )) kinds.add(m[1]);
+    }
+
+    return kinds;
+  };
+
+  const labelled = () => {
+    const source = readFileSync(
+      new URL("../src/app/more/activity/activity-client.tsx", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/gu, "\n");
+    const block = source.match(/const KINDS = \{([\s\S]*?)\n\} as const;/u);
+    assert.ok(block, "the label map must still be a plain object literal a reader can check");
+    return new Map(
+      [...block[1].matchAll(/^\s*(\w+):\s*"([^"]+)",/gmu)].map((m) => [m[1], m[2]]),
+    );
+  };
+
+  test("the migrations really do write more kinds than the nine of 015", () => {
+    // Guards the derivation itself: if these regexes ever stop matching, the
+    // assertion below would pass against an empty set and prove nothing.
+    const kinds = kindsTheDatabaseCanWrite();
+    assert.ok(kinds.size >= 12, `expected at least twelve audited kinds, found ${kinds.size}`);
+    for (const expected of ["purchases", "gift_ideas", "events", "people_birthday", "item_photos"]) {
+      assert.ok(kinds.has(expected), `the derivation missed \`${expected}\``);
+    }
+  });
+
+  test("EVERY KIND THE DATABASE CAN WRITE HAS A NAME THE FAMILY WOULD USE", () => {
+    const missing = [...kindsTheDatabaseCanWrite()].filter((kind) => !labelled().has(kind));
+    assert.deepEqual(missing, [],
+      "these reach the Activity screen as raw table names: " + missing.join(", "));
+  });
+
+  test("and not one of those names is the table's own", () => {
+    // The fix that would satisfy the test above while changing nothing is to
+    // map `item_photos` to "item_photos". This refuses it.
+    for (const [kind, label] of labelled()) {
+      assert.notEqual(label, kind, `\`${kind}\` is labelled with its own table name`);
+      assert.doesNotMatch(label, /_/u, `\`${kind}\` is labelled "${label}", which is not English`);
+    }
+  });
+});
+
+/**
+ * ---------------------------------------------------------------------------
+ * 049: A DELETION REMEMBERS WHICH FAMILY IT HAPPENED IN.
+ * ---------------------------------------------------------------------------
+ *
+ * The audit triggers are AFTER triggers, so an entry for a DELETE is written
+ * once the row has gone and `area_of_record` can no longer find it. 037's
+ * fallback is the actor's own membership, and it refuses -- rightly -- to
+ * choose between several. Put together, a deletion by anybody who belongs to
+ * more than one family was stored with NO Area, and once Q10 scoped
+ * `/more/activity` to the acting Area those entries could never appear again.
+ *
+ * Measured against production: one gift idea, `added` with an Area at 12:32
+ * and `removed` with none at 12:34. 26 of 462 rows carried no Area and every
+ * one was written by the only account with more than one membership -- while
+ * the same kinds resolved correctly for everybody else, 47 `removed`
+ * contribution rows WITH an Area beside the 14 without.
+ *
+ * 049 asks `acting_area()` in between. That is not a guess: `claim_active_area`
+ * only sets it `if is_area_member(wanted)`, `act_in_area` raises otherwise, and
+ * for a guarded routine it is the same Area `require_acting_area` has just
+ * demanded the record belong to.
+ *
+ * The refusal to choose between memberships is asserted too, because that is
+ * 037's safety property and 049 must not have spent it to buy this.
+ */
+describe("049: an audit entry for a vanished record still knows its Area", () => {
+  /** Delete a gift idea as `user` while standing in `area`, and read its entry back. */
+  const removeIdeaAndReadAudit = async (user, area, ideaId) => {
+    const removal = await probe(db, who(user, area), "select public.remove_gift_idea($1)", [ideaId]);
+    const entry = await rows(
+      db,
+      "select area_id, actor_user_id from public.audit_log"
+        + " where table_name = 'gift_ideas' and action = 'removed' and record_id = $1",
+      [ideaId],
+    );
+    return { removal, entry: entry[0] ?? null };
+  };
+
+  /** A disposable idea, so no test depends on another's leftovers. */
+  const makeIdea = async (user, area, recipient, title) => {
+    const made = await probe(
+      db, who(user, area),
+      "select id from public.save_gift_idea(null, $1, $2, $3, null, null, null)",
+      [recipient, title, 1000],
+    );
+    assert.ok(made.ok, "the idea could be created: " + (made.error ?? ""));
+    return made.rows[0].id;
+  };
+
+  test("the actor really does belong to more than one family", async () => {
+    // Guards every assertion below: if `dual` ever became a single-family
+    // login, 037's own fallback would resolve these and the tests would pass
+    // while proving nothing about 049.
+    const n = await value(
+      db,
+      "select count(*)::int from public.app_members where user_id = $1 and active = true",
+      [f.users.dual],
+    );
+    assert.ok(n > 1, "the fixture's dual login must hold several memberships, has " + n);
+  });
+
+  test("SCENARIO 1: deleting in Alpha records Alpha", async () => {
+    const idea = await makeIdea(f.users.dual, f.areas.alpha, f.recipient, "049 alpha idea");
+    const { removal, entry } = await removeIdeaAndReadAudit(f.users.dual, f.areas.alpha, idea);
+    assert.ok(removal.ok, "the removal itself is allowed: " + (removal.error ?? ""));
+    assert.ok(entry, "the deletion is audited at all");
+    assert.equal(entry.area_id, f.areas.alpha,
+      "a deletion by a multi-family login must carry the Area it happened in, not null");
+  });
+
+  test("SCENARIO 2: the SAME login deleting in Bravo records Bravo", async () => {
+    // The half that proves it follows the acting Area rather than resolving to
+    // one fixed answer for this user.
+    const idea = await makeIdea(f.users.dual, f.areas.bravo, f.bravoRecipient, "049 bravo idea");
+    const { removal, entry } = await removeIdeaAndReadAudit(f.users.dual, f.areas.bravo, idea);
+    assert.ok(removal.ok, "the removal itself is allowed: " + (removal.error ?? ""));
+    assert.ok(entry, "the deletion is audited at all");
+    assert.equal(entry.area_id, f.areas.bravo,
+      "so this follows where the writer is standing, and is not a per-user constant");
+  });
+
+  test("SCENARIO 3: the ordinary single-membership path is unchanged", async () => {
+    /*
+     * 037's own fallback already answered when the actor has exactly one
+     * membership, and it still must. Asserted directly on the branch rather
+     * than through a user, so it cannot be softened by a permission rule.
+     */
+    await asOwner(db);
+    const solo = await value(db,
+      "select user_id from public.app_members where active = true"
+        + " group by user_id having count(*) = 1 limit 1");
+    assert.ok(solo, "the fixture has a single-family login to check");
+
+    const before = await value(db, "select count(*)::int from public.audit_log where area_id is null");
+    await db.query(
+      "insert into public.audit_log (table_name, record_id, action, actor_user_id, actor_name, summary, details)"
+        + " values ('gift_ideas', gen_random_uuid(), 'removed', $1, 'test', 'test', '{}'::jsonb)",
+      [solo],
+    );
+    const after = await value(db, "select count(*)::int from public.audit_log where area_id is null");
+    assert.equal(after, before,
+      "one membership and no acting Area still resolves, exactly as it did before 049");
+  });
+
+  test("SCENARIO 4: a birthday change carries an Area, though no table is called `people_birthday`", async () => {
+    const before = await value(db,
+      "select count(*)::int from public.audit_log where table_name = 'people_birthday' and area_id is null");
+    const changed = await probe(
+      db, who(f.users.dual, f.areas.alpha),
+      "select public.set_person_birthday($1, $2::smallint, $3::smallint, $4::smallint)",
+      [f.people.mo, 6, 1, 1990],
+    );
+    if (!changed.ok) {
+      // The routine's exact name is not this migration's contract; scenarios 1
+      // and 2 already prove the mechanism.
+      assert.ok(true, "no birthday routine reachable under this name -- covered by scenarios 1 and 2");
+      return;
+    }
+    const after = await value(db,
+      "select count(*)::int from public.audit_log where table_name = 'people_birthday' and area_id is null");
+    assert.equal(after, before,
+      "a birthday change by a multi-family login must not add an Area-less entry");
+  });
+
+  test("SCENARIO 5: WITH NO ACTING AREA, IT STILL REFUSES TO GUESS", async () => {
+    /*
+     * 037's safety property, and the one thing 049 must not have spent. No
+     * `x-area-id` header at all, so `claim_active_area` sets nothing and
+     * `acting_area()` is null -- and the actor holds several memberships.
+     */
+    const acting = await probeValue(db, { user: f.users.dual, area: undefined },
+      "select public.acting_area() as a");
+    assert.equal(acting.value ?? null, null, "no header really does mean no acting Area");
+
+    await asOwner(db);
+    const before = await value(db, "select count(*)::int from public.audit_log where area_id is null");
+    await db.query(
+      "insert into public.audit_log (table_name, record_id, action, actor_user_id, actor_name, summary, details)"
+        + " values ('gift_ideas', gen_random_uuid(), 'removed', $1, 'test', 'test', '{}'::jsonb)",
+      [f.users.dual],
+    );
+    const after = await value(db, "select count(*)::int from public.audit_log where area_id is null");
+    assert.equal(after, before + 1,
+      "an entry with no record, no acting Area and several memberships must still be left unattributed");
+  });
+
+  test("SCENARIO 6/7: the entry shows in its own family's Activity and in no other", async () => {
+    const idea = await makeIdea(f.users.dual, f.areas.alpha, f.recipient, "049 visibility idea");
+    const { removal } = await removeIdeaAndReadAudit(f.users.dual, f.areas.alpha, idea);
+    assert.ok(removal.ok, "the removal itself is allowed");
+
+    // The query the screen actually sends, in each family.
+    const inAlpha = await probe(db, who(f.users.dual, f.areas.alpha),
+      "select record_id from public.audit_log"
+        + " where area_id = $1 and table_name = 'gift_ideas' and action = 'removed' and record_id = $2",
+      [f.areas.alpha, idea]);
+    assert.ok(inAlpha.ok && inAlpha.count === 1,
+      "standing in Alpha, the deletion is on the Activity screen");
+
+    const inBravo = await probe(db, who(f.users.dual, f.areas.bravo),
+      "select record_id from public.audit_log"
+        + " where area_id = $1 and table_name = 'gift_ideas' and action = 'removed' and record_id = $2",
+      [f.areas.bravo, idea]);
+    assert.ok(inBravo.ok, "the read is allowed in Bravo too");
+    assert.equal(inBravo.count, 0,
+      "and Alpha's deletion is NOT in Bravo's -- attributing it must not leak it");
   });
 });

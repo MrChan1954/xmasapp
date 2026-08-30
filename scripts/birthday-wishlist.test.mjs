@@ -68,15 +68,17 @@ function policyBody(sql, name) {
 
 describe("migrations 001-038 are applied and immutable", () => {
   test("039 and 040 are where they were, with Q2's work above them", () => {
-    // Q2 added 041-043, Q3 added 044 and 045, Q5 added 046, Q6 added 047, and
-    // Q10 added 048 (a grant revoke; it defines no function and no policy).
+    // Q2 added 041-043, Q3 added 044 and 045, Q5 added 046, Q6 added 047,
+    // Q10 added 048 (a grant revoke; it defines no function and no policy), and
+    // Q11 added 049 (one `create or replace` on the audit-log Area stamper; no
+    // table, policy, grant or trigger).
     // What matters here is POSITIONAL: that 039 and 040 have not moved and
     // nothing has been slipped in between them. The total is asserted as well,
     // so that a new migration is a deliberate edit to this line rather than
     // something that arrives unnoticed.
     assert.equal(migrationFiles.indexOf(WISHLIST), migrationFiles.indexOf(AREA_AUTH) + 1);
     assert.equal(migrationFiles.indexOf(AREA_AUTH), 38, "039 is the thirty-ninth migration");
-    assert.equal(migrationFiles.length, 48);
+    assert.equal(migrationFiles.length, 49);
   });
 
   test("no earlier migration mentions the new ones", () => {
