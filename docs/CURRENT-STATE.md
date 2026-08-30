@@ -1,88 +1,58 @@
 # Current State
 
-**Last updated:** 2026-08-30, at the end of Q9 (settings, navigation, mobile, PWA)
-and its closeout (birthday budget display, 390x844 proof).
+**Last updated:** 2026-08-30, after the pre-Q10 context cleanup.
 
-This file is the handoff between phases. Update it at the end of every phase and
-keep it short — it is meant to be read in full at the start of the next session.
+The handoff between phases. Current facts only — history lives in git.
 
 ## Where the project stands
 
 | Fact | Value |
 | ---- | ----- |
+| Live site | `https://xmas-family.uk/` |
 | Last completed phase | **Q9** |
 | Q9 verdict | `Q9 PASS — READY FOR Q10` |
 | Next phase | **Q10 — not started** |
-| App commit | `846faca06eb9c7697b27d2c7fe9470ccb784c53f` ("Say what a birthday is budgeted, without telling the birthday person") |
-| Branch | `main`, clean, pushed. |
-| Serving Worker version | `f8f136f0-208b-48ca-8299-816b0e0b41e9` |
-| Migrations applied | **001–047**, immutable. No 048 exists, and Q9 needed none. |
-| Live site | `xmas-family.uk` |
+| Branch | `main` |
+| Local HEAD | the context-cleanup commit, on top of `73c1c8f` (Q9 closeout) |
+| origin/main | `846faca` — the latest **pushed runtime** commit |
+| Ahead of origin | 2 commits, **docs/tooling only**, deliberately unpushed |
+| Serving Worker | `f8f136f0-208b-48ca-8299-816b0e0b41e9` |
+| Migrations applied | **001–047**, immutable. No 048 exists; Q9 needed none. |
 
-## What the last phases established
+Pushing `main` auto-deploys production through Cloudflare Workers Builds, so the
+two local commits are held back: a docs-only push would trigger a pointless
+Worker build. **The first legitimate Q10 runtime push should carry them.**
 
-- **Q6** — migration 047 (`area_scoped_person_routines`) applied; post-apply
-  checks 17/17. Editing a person now asks which family you are standing in.
-- **Q6 (fix)** — the pre-hydration theme bootstrap. Wrangler's esbuild
-  `keep_names` injected `__name(...)` into `next-themes`' *serialised* script.
-  Fixed by `keep_names: false` in `wrangler.jsonc`. **Do not turn it back on.**
-- **Q7** — settlement lifecycle proven against a real PostgreSQL.
-- **Q8** — notification jobs are *run*, not merely read. The bell is
-  **account-global** (it spans every Area the account belongs to) which is
-  correct; fanout stays Area-scoped. The **8 protected notification rows are the
-  historic Q4 leak — keep them.**
-- **Q9** — the shell. Four defects, all found by measuring the deployed site:
+## Verification state
 
-  1. **Documents were storable.** Every rendered page is `force-dynamic`,
-     personalised and Area-scoped, and every one came back `Cache-Control:
-     no-cache` with **no ETag, no Last-Modified, and a `Vary` that did not list
-     `Cookie`**. With no validator there is nothing to revalidate with, so a
-     history navigation reused the stored copy outright. Switching family and
-     pressing Back put the previous family's event back on screen — named and
-     dated — while the server, asked directly, returned 404. Documents are
-     **`no-store`** now, which also keeps them out of the back/forward cache.
-     Hashed build output, `/sw.js`, `/icons` and the manifest keep their own
-     rules (verified against a real wrangler bundle and again live).
-  2. **The sticky bar named the app, not the screen** on `/settings`,
-     `/settings/family`, `/people`, `/birthdays` and `/areas/new`, and
-     `/settings/family` had no way back up to `/settings`.
-  3. **Family access and Activity breadcrumbed to the events dashboard**, though
-     both are Area settings catalogued on `/settings/family`.
-  4. **Archiving a whole family did not confirm**, while archiving one event
-     did. It now uses the shared `ConfirmDialog`.
+- Q1–Q9 complete. Q9 passed every gate: focused tests, full regression, mutation
+  suite, TypeScript, ESLint, production build and worker bundle.
+- The regression suite was last reported at roughly **1,595 tests, all passing**
+  at the Q9 final gate. This cleanup pass did **not** re-run it — it changed only
+  documentation and Claude tooling — so treat that as last-known, not re-proven.
+- **Cross-Area integrity = 0**, confirmed at the Q9 post-QA fingerprint.
 
-  Plus: the shadcn `Switch` was a 32×18 touch target; it keeps that appearance
-  and gains a 44×44 hit area.
+## Protected baseline
 
-  **Closeout** — an Upcoming card on `/birthdays` now carries the budget for
-  the birthday that is coming: `Budget £40`, or `Budget not set`. The figure is
-  the celebrant's own `christmas_recipients.budget_pennies`, the same row Event
-  Home and the dashboard read, through `formatPennies`. **£0 is a budget**, so
-  `BirthdayPlanning` gained `budgetIsSet` — `budgetPennies` alone could not tell
-  "£0 chosen" from "recipient archived", because both sum to zero. The
-  celebrant's own card carries **no budget line at all**: `birthdayBudgetLabel`
-  asks `birthdayCardState` first, which answers `self_private` before it reads
-  any planning, so no arrangement of budget or absence changes the answer and
-  the SHAPE of what renders cannot carry the secret either. Third lock, on top
-  of migration 031's RLS and the explicit `continue` in `loadFamilyBirthdays`.
+| Field | Value |
+| ----- | ----- |
+| `realFamilyNotifications` | **37** (includes the historic 8 leaked Q4 rows) |
+| `people` / `appMembers` | **19 / 4** |
+| Christmas 2026 | active, 19 recipients |
+| `crossAreaTotal` | **0** |
 
-  ESLint also ignores `.wrangler/**` now. Previewing the Worker locally leaves
-  bundled scratch there and the lint gate went red with 21,456 problems in
-  generated code — the failure the `.open-next/**` ignore beside it exists for.
+`events` and `recipients` moved during Q9 (14→15 and 34→35). That was **not QA**:
+`audit_log` attributes the writes to the family's everyday account in ordinary
+use. QA made no writes. Take the pre-deploy fingerprint as close to deployment as
+possible, and expect these two to drift if the family is awake.
 
-  `pageTitleFor` and the route-title table **moved from
-  `src/app/components/nav-items.ts` to `src/lib/navigation.ts`** as part of the
-  fix. In `nav-items` it could only be checked by matching a regex against the
-  source, which cannot notice routes that were never added; next door it is a
-  function the tests now call directly.
+## Accepted state and open risks
 
-## Known, accepted state
-
-- The bell spanning Areas is intended behaviour, not a leak.
-- The 8 protected notification rows are historic evidence and must not be
-  cleaned up.
+- Nothing blocking Q10.
+- The notification bell spanning Areas is intended, not a leak. The 8 protected
+  notification rows are historic evidence; do not clean them up.
 - `rls_auto_enable` is a Supabase platform event-trigger function that no
-  migration creates. It is benign. **Do not drop or adopt it.**
+  migration creates. Benign — **do not drop or adopt it**.
 - **Recovery from a lost `gp_area` cookie is deterministic, not a prompt.**
   `ensureAreaChosen` picks `resolveActiveArea` — live families before archived,
   then alphabetically — and writes it. For an account in several families that
@@ -90,61 +60,17 @@ keep it short — it is meant to be read in full at the start of the next sessio
   family. Decided in Q2 (the alternative locked people out) and unchanged.
   Nothing is *written* under a guessed Area: `getCurrentMember` still refuses to
   resolve a membership when there are several and no cookie matches.
-- **Edge will not size a WINDOW below ~516px outer / 492px inner.** Resizing is
-  therefore not how to reach a phone viewport. Use CDP instead: start Edge with
-  `--remote-debugging-port=9222`, connect Playwright with `connectOverCDP`, and
-  send `Emulation.setDeviceMetricsOverride` — which gives a true 390x844 CSS
-  viewport at DPR 3 with touch, inside the already-signed-in session. Proven in
-  the Q9 closeout. `playwright-core` 1.62.1 is resolvable from the npx cache at
-  `%LOCALAPPDATA%/npm-cache/_npx/e41f203b7505f1fb/node_modules`; `channel:
-  msedge` needs no browser download. Edge must be fully closed before the flag
-  takes effect, so this needs the user to relaunch it.
-
-## Q9 fingerprint note — read before comparing counts
-
-The protected fingerprint moved during Q9 and **it was not QA**:
-
-| field | pre | post |
-| ----- | --- | ---- |
-| `realFamilyNotifications` | 37 | **37** |
-| `people` / `appMembers` | 19 / 4 | **19 / 4** |
-| Christmas 2026 | active, 19 recipients | **active, 19 recipients** |
-| `crossAreaTotal` | 0 | **0** |
-| `events` | 14 | 15 |
-| `recipients` | 34 | 35 |
-
-A birthday event, its recipient, its contributors and its contributions were
-created in the real family at `2026-08-29T23:32:04Z`, with a contribution edit
-41 seconds earlier. `audit_log` attributes all of it to actor `285861da…`,
-which has **386 entries going back to 2026-08-12** — the family's everyday
-account, in ordinary use. QA made **no writes at all** this phase: every browser
-action was a navigation or a read, plus one confirmation dialog opened and
-cancelled.
-
-This is the expected consequence of QA running against the live app with no
-staging environment. **Take the pre-deploy fingerprint as close to deployment as
-possible**, and expect `events`/`recipients` to move if the family is awake.
-
-## Tooling state
-
-- `.claude/settings.json` registers a `PreToolUse` hook,
-  `.claude/hooks/quiet-command.mjs`, which wraps noisy commands. Full raw output
-  goes to `.claude/logs/` (git-ignored). Run noisy commands **bare**.
-- The Q8 usage-optimisation commit `9e458f7` is now pushed, bundled with Q9.
+- **`no-store` on documents means every back/forward navigation refetches.** That
+  is the intended trade — correctness over a saved round trip — but it changes how
+  the app feels on a slow connection. Q10 should look at it with fresh eyes.
+- Two output-reduction hooks are active: the project's
+  `.claude/hooks/quiet-command.mjs` and a global one outside this repo. The
+  project hook wins. Harmless, but worth knowing if wrapping behaves oddly.
 
 ## Starting Q10
 
-In a **fresh** Claude session:
+In a **fresh** Claude session (Opus 5, High):
 
-> Read `docs/PROJECT-CONSTITUTION.md`, `docs/SECURITY-INVARIANTS.md`,
-> `docs/QA-RULES.md`, `docs/CURRENT-STATE.md` and `docs/PHASE-GATES.md`, then
-> execute this phase. \<phase prompt\>
-
-## Open risks
-
-- Nothing blocking Q10.
-- Pushing `main` auto-deploys. Any change reaching `main` is live within minutes.
-- `no-store` on documents means every back/forward navigation refetches the
-  page. That is the intended trade — correctness over a saved round trip — but
-  it is a real change to how the app feels on a slow connection, and Q10's audit
-  should look at it with fresh eyes.
+> Read `CLAUDE.md` (loaded automatically) and `docs/CURRENT-STATE.md`. Read
+> `docs/SECURITY-AND-QA.md` if this phase touches security, data or live QA.
+> Then execute this phase. \<phase prompt\>
