@@ -13,9 +13,9 @@ The handoff between phases. Current facts only — history lives in git.
 | Q16 verdict | `Q16 PASS — SHADCN/RADIX IS THE CANONICAL PRIMITIVE SYSTEM` |
 | Next phase | **Q17 — the repository-wide dead-code audit** |
 | Branch | `main` |
-| Local HEAD | pushed — carries Q16 |
-| origin/main | current with local `main` |
-| Serving Worker | see §Q16 below |
+| Local HEAD | one commit ahead of `origin/main` — this closeout, **held back deliberately** (docs only) |
+| origin/main | `9f5551c` — Q16's runtime work, deployed |
+| Serving Worker | `7797eb98-1ff1-4f49-9108-d749a146a949` |
 | Product name | **Gift Planner** |
 | Migrations applied | **001–051**, immutable. 051 applied manually 2026-08-30. |
 
@@ -65,6 +65,26 @@ native `Select`, and one raw `<button>` in `global-error.tsx`.
 **Handed to Q17:** the five unreferenced starter SVGs in `public/`, and the
 still-open Q14 question of whether the three `*-taylor*` operator scripts are
 run by hand.
+
+**Live QA on Worker `7797eb98`, Edge, entirely read-only.** Desktop 1440×900:
+seven screens, no horizontal overflow, one `h1` each, **zero controls without an
+accessible name**. The migrated Family-name field wraps its input, is named
+exactly "Family name" — the policy paragraph correctly stays out of that name —
+and is 48px tall at 16px. The account menu opens with 8 items and **zero
+unhidden SVGs**, which is the `aria-hidden` fix visible in production. Q13's
+bell is untouched: `aria-modal="true"`, named "Notifications", 352×448, focus
+inside, **0 escapes in 12 Tabs**, Escape returns focus to the bell.
+
+Mobile 390×844 at DPR 3, `mobile: true`, 5 touch points, coarse pointer: seven
+screens with no overflow, the field still 48px/16px and inside the viewport, the
+bottom nav 390 wide with three 125×51 targets, and the bell opened by a genuine
+`Input.dispatchTouchEvent` as a 390×633 bottom sheet, full width, bottom flush,
+fully on screen, focus inside, scrim over the viewport. Identical to Q13's
+numbers.
+
+**Protected fingerprint taken before and after: identical, and identical to the
+baseline** — notifications 37, people 19, events 15, appMembers 4, recipients
+35, Christmas 2026 active with 19 recipients, `crossAreaTotal` 0.
 
 ## Migration 051 — applied, and verified against production
 
