@@ -128,6 +128,21 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <ShadcnInput {...props} />;
 }
 
+/**
+ * A REAL `<select>`, not a listbox pretending to be one.
+ *
+ * The name used to be ambiguous, because a vendored Radix `ui/select.tsx` sat
+ * beside this one with no importer. Q16 deleted it, so `Select` now means
+ * exactly one thing in this codebase and there is nothing to disambiguate it
+ * from. `scripts/ui-primitives.test.mjs` holds that: it renders this and fails
+ * unless a native `<select>` comes out.
+ *
+ * Native is the deliberate choice, not the lazy one — see `Field` above. It
+ * opens the OS picker on a phone, it is a real form control inside the `<label>`
+ * that `Field` wraps around it, and it cannot be positioned off-screen. If a
+ * screen ever genuinely needs rich option content, add the registry's Radix
+ * Select back under its own name rather than widening this one.
+ */
 export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   const { size: _size, ...rest } = props;
   void _size;

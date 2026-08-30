@@ -26,7 +26,7 @@ src/app/components/ui/
   button.tsx  input.tsx  textarea.tsx  native-select.tsx  label.tsx
   badge.tsx   card.tsx   alert.tsx     skeleton.tsx       table.tsx
   dialog.tsx  alert-dialog.tsx  sheet.tsx  dropdown-menu.tsx
-  popover.tsx select.tsx  checkbox.tsx  switch.tsx
+  popover.tsx checkbox.tsx      switch.tsx
   index.tsx   <- the product layer; every screen imports THIS
 ```
 
@@ -229,9 +229,15 @@ because:
   wraps around it, and submits with the form;
 - it cannot be positioned off-screen.
 
-Radix `Select` (`select.tsx`) is kept as the **documented escape hatch** for
-what the native control cannot express — rich option content, grouped options
-with icons. It is not used yet.
+**Radix `Select` is not vendored, and `Select` therefore means exactly one
+thing.** It was kept for three phases as a documented escape hatch for what the
+native control cannot express — rich option content, grouped options with
+icons — and in that time nothing ever imported it, while the product layer
+exported an unrelated `Select` that is a native `<select>`. Two things by one
+name, one of them never rendered, is a worse guide than no second thing at all.
+**Q16 deleted it**, which resolved the ambiguity without touching any of the
+eleven call sites. If a screen ever needs rich option content, add it back with
+`get_add_command_for_items` and give it its own name.
 
 ### Field — implicit label association
 
@@ -384,6 +390,16 @@ which is exactly the change this migration made.
 
 Run it with `npm run test:shadcn-ui`; the whole suite is `npm run test:all`.
 
+`scripts/ui-primitives.test.mjs` (Q16, `npm run test:ui-primitives`) asks the
+*other* question — not "does this primitive behave" but "**has a second generic
+primitive system grown back beside it**". It holds four invariants: Radix is
+imported only inside `components/ui/`; nothing outside the registry-backed
+`Modal`/`ConfirmDialog`/`Sheet` declares `role="dialog"` or `aria-modal`, and no
+file hand-rolls a Tab or Escape handler; `Select` renders a real `<select>` and
+the deleted Radix one is not referenced; and every lucide glyph carries
+`aria-hidden`. Each was proved to fail against the defect it forbids before it
+was trusted.
+
 Infrastructure, all under `scripts/dom/`:
 
 | File | Job |
@@ -468,27 +484,55 @@ Every one of these is deliberate.
 | `ui/index.tsx` — `MoneyInput` | a bare `<input>` inside a styled wrapper | the wrapper holds the £ prefix **and wears the focus ring**; left to itself the input rings *itself*, starting after the £, which reads as a box inside a box |
 | `command-search.tsx` | a borderless `<input>` | it is the palette's own search line, not a form field; a bordered box inside the dialog would be wrong |
 | `photo-picker.tsx`, `photo-gallery.tsx` | `<input type="file" className="sr-only">` ×4 | a file input is triggered by a real `Button` next to it; there is no registry component for the hidden input itself |
-| `notification-bell.tsx` | hand-rolled panel + `aria-hidden` scrim | it is two shapes at once (anchored on desktop, sheet on mobile) with its own Escape and focus-return; the scrim carries **no handler** — the document-level pointerdown already dismisses |
 | `festive/*` | ornaments, garland, snow | product illustration |
 
-Census after migration: **52 raw `<button>` → 1**; the raw inputs above are the
-only ones left; **0 raw `<select>`** outside the primitive.
+> **`notification-bell.tsx` used to be on this list and is not any more.** It
+> was described here as a hand-rolled panel with its own Escape and
+> focus-return. **Q13 rebuilt it on the shared Radix `Dialog`** — the trap,
+> `aria-modal`, Escape and focus return all come from one place now — and this
+> row survived the rebuild by four phases. Q16 removed it. The bell is a product
+> composition over a canonical primitive, which is category C, not an exception.
+
+Census, re-counted in Q16: **1 raw `<button>`** (`global-error.tsx`); **1 raw
+`<select>`** (`native-select.tsx`, the primitive itself); the raw inputs above
+are the only ones left. `scripts/ui-primitives.test.mjs` now holds all three
+counts, so the next drift is a failing test rather than a stale paragraph.
 
 ### Not installed, deliberately
 
-`radio-group`, `scroll-area`, `separator`, `spinner`, `tabs` and `tooltip` were
-added by the CLI and then removed: nothing uses them, and a vendored file with
-no reader is debt, not a head start. They are one
+`radio-group`, `scroll-area`, `separator`, `spinner`, `tabs`, `tooltip` and —
+since Q16 — `select` were added by the CLI and then removed: nothing uses them,
+and a vendored file with no reader is debt, not a head start. They are one
 `get_add_command_for_items` call away when a screen actually needs one.
 
-**`select.tsx` is the one deliberate exception to that rule**, and it is worth
-being explicit about because it looks like an oversight. It has no importer: the
-product uses `NativeSelect` everywhere, for the reasons in §6. It is kept anyway
-because the *choice* between the two is a live design decision this app will
-face again, and a reader who needs rich option content should find the answer
-vendored, tokenised and ready rather than have to rediscover why the native
-control was preferred. If it is still unused when the next component audit
-comes round, delete it — the reasoning above survives in this document.
+**There is now no exception to that rule.** `select.tsx` was the one, for the
+reasons in §6, and Q16 closed it. The reasoning it was kept for survives in this
+document, which is where it was always doing the useful work — a paragraph
+explaining why the native control wins costs nothing to keep and does not
+mislead a reader into thinking a second `Select` is live.
+
+### Icons — one source, one catalogue over it
+
+Q14 reported "two icon systems coexist". **There is one: `lucide-react`.**
+`components/icons.tsx` imports from it and re-exports the app's shared glyphs
+under `Icon*` names with the product's defaults baked in — 20px, 1.8 stroke,
+always `aria-hidden`. It draws nothing itself; the only non-lucide glyphs it
+exports are the four festive ornaments, which have no lucide equivalent.
+
+So the rule is:
+
+- a glyph used across many screens as part of the app's vocabulary goes in the
+  catalogue, so its size and weight are decided once;
+- a **local, one-off** glyph imports from `lucide-react` directly, because
+  pinning it to the catalogue's defaults would cost it the optical sizing its
+  one call site actually wants (these range 13–28px and 1.6–2.2 stroke, all
+  deliberate).
+
+**What is NOT optional either way is `aria-hidden`.** Icons in this app are
+decorative and the control beside them carries the name; an unhidden glyph
+injects its component name into that name. `scripts/ui-primitives.test.mjs`
+checks every lucide element in `src/` and **found six missing it** — all inside
+stock registry files that had never been through this rule. They carry it now.
 
 ---
 

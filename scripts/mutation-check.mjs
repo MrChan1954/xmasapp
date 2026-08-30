@@ -1470,6 +1470,49 @@ export function EventSettingsScreen(`,
   },
 
   // -------------------------------------------------------------------------
+  // Q16: ONE GENERIC PRIMITIVE SYSTEM.
+  //
+  // Q16 found no duplicate primitive to remove -- the consolidation had already
+  // happened. What it could not find was anything STOPPING one growing back, so
+  // these four are the interesting case: three of them put back a defect that
+  // was never present, rather than one that was. That is the point. A rule with
+  // nothing testing it is a paragraph, and this repository already had four
+  // phases of evidence that paragraphs go stale (`SHADCN-UI.md` described the
+  // notification bell as hand-rolled for four phases after Q13 rebuilt it on
+  // Radix).
+  //
+  // Q16-3 is the exception: it puts back a real defect Q16 found and fixed.
+  // -------------------------------------------------------------------------
+  {
+    name: "Q16-1. a screen reaches past the wrappers and imports Radix directly",
+    file: "src/app/components/top-bar.tsx",
+    from: `import { ChevronLeft, Gift } from "lucide-react";`,
+    to: `import { ChevronLeft, Gift } from "lucide-react";\nimport { Tooltip } from "radix-ui";`,
+    suites: ["scripts/ui-primitives.test.mjs"],
+  },
+  {
+    name: "Q16-2. a hand-rolled dialog claims a focus trap it does not have",
+    file: "src/app/components/account-menu.tsx",
+    from: `import { Check, Home, LogOut, Plus, Settings, ShieldCheck, Snowflake, User } from "lucide-react";`,
+    to: `import { Check, Home, LogOut, Plus, Settings, ShieldCheck, Snowflake, User } from "lucide-react";\nconst Panel = () => <div role="dialog" aria-modal="true" />;`,
+    suites: ["scripts/ui-primitives.test.mjs"],
+  },
+  {
+    name: "Q16-3. a decorative menu marker is announced to a screen reader again",
+    file: "src/app/components/ui/dropdown-menu.tsx",
+    from: `<CheckIcon aria-hidden className="size-4" />`,
+    to: `<CheckIcon className="size-4" />`,
+    suites: ["scripts/ui-primitives.test.mjs"],
+  },
+  {
+    name: "Q16-4. the product's Select stops being a real <select>",
+    file: "src/app/components/ui/index.tsx",
+    from: `  return <NativeSelect {...rest} />;`,
+    to: `  return <button {...rest} />;`,
+    suites: ["scripts/ui-primitives.test.mjs"],
+  },
+
+  // -------------------------------------------------------------------------
   // MIGRATION 051: the blanket table grant, and the three routines it dropped.
   //
   // Row level security is never consulted for TRUNCATE. That is the whole

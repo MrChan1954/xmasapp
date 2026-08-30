@@ -5,7 +5,7 @@ import { useState } from "react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { validateAreaName } from "@/lib/areas.ts";
 import { AppShell, PageHeader } from "../../components/app-shell";
-import { Button, Input, Notice } from "../../components/ui";
+import { Button, Field, Input, Notice } from "../../components/ui";
 
 /**
  * The first screen of a brand new account, and the way an existing one starts a
@@ -57,8 +57,6 @@ export function CreateAreaForm({ first }: { first: boolean }) {
     }
   };
 
-  const field = "mt-2";
-
   return (
     <AppShell width="narrow">
       <PageHeader
@@ -72,32 +70,29 @@ export function CreateAreaForm({ first }: { first: boolean }) {
       />
 
       <form onSubmit={submit} className="mt-6 max-w-lg">
-        <label className="block text-sm font-semibold text-ink-700">
-          Family name
+        <Field label="Family name">
           <Input
-            className={field}
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="The Taylors"
             autoComplete="off"
             maxLength={80}
           />
-        </label>
+        </Field>
 
-        <label className="mt-5 block text-sm font-semibold text-ink-700">
-          Your name
+        <Field
+          label="Your name"
+          className="mt-5"
+          hint={<>You will be this family&rsquo;s first person and its administrator.</>}
+        >
           <Input
-            className={field}
             value={personName}
             onChange={(event) => setPersonName(event.target.value)}
             placeholder="How the family should see you"
             autoComplete="name"
             maxLength={80}
           />
-          <span className="mt-1.5 block text-xs font-normal text-ink-500">
-            You will be this family&rsquo;s first person and its administrator.
-          </span>
-        </label>
+        </Field>
 
         {error && <Notice tone="warning" className="mt-5">{error}</Notice>}
 

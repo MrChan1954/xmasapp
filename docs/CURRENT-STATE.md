@@ -1,6 +1,6 @@
 # Current State
 
-**Last updated:** 2026-08-30, after migration 051 was applied to production.
+**Last updated:** 2026-08-30, after Q16 closed.
 
 The handoff between phases. Current facts only — history lives in git.
 
@@ -9,15 +9,62 @@ The handoff between phases. Current facts only — history lives in git.
 | Fact | Value |
 | ---- | ----- |
 | Live site | `https://xmas-family.uk/` |
-| Last completed phase | **Q15 + migration 051** — audit, then the cleanup it proposed |
-| Q15 verdict | `Q15 CONDITIONAL PASS` — the proposal it required is now applied |
-| Next phase | **Q16 — see `docs/Q15-DATABASE-CANONICAL-SYSTEM.md` §9; the §8 proposal is done** |
+| Last completed phase | **Q16 — the UI primitive audit and cleanup** |
+| Q16 verdict | `Q16 PASS — SHADCN/RADIX IS THE CANONICAL PRIMITIVE SYSTEM` |
+| Next phase | **Q17 — the repository-wide dead-code audit** |
 | Branch | `main` |
-| Local HEAD | pushed — carries 051 and the three previously held docs commits |
+| Local HEAD | pushed — carries Q16 |
 | origin/main | current with local `main` |
-| Serving Worker | `ea1ccdad-247f-41f9-9486-a09b2458fd28` |
+| Serving Worker | see §Q16 below |
 | Product name | **Gift Planner** |
 | Migrations applied | **001–051**, immutable. 051 applied manually 2026-08-30. |
+
+## Q16 — shadcn/Radix is the canonical UI primitive system
+
+`docs/Q16-SHADCN-CANONICALIZATION.md` is the audit and the primitive matrix.
+Read on demand. **No database change; migrations still end at 051.**
+
+**No duplicate generic primitive was found — the count is zero.** Every
+Radix import in the repository (11 files) is inside `src/app/components/ui/`;
+not one screen or product component reaches past the wrappers. There is one
+focus-trap mechanism, Radix's, and one Escape mechanism. The one global keydown
+listener in the app is the command palette's ⌘K.
+
+**What Q16 actually removed was stale documentation, not a parallel system.**
+`SHADCN-UI.md` had described `notification-bell.tsx` as a hand-rolled panel with
+its own focus-return for four phases after **Q13 rebuilt it on the shared Radix
+`Dialog`**. Two of Q14's three UI findings were also wrong: the "two icon
+systems" are one — `icons.tsx` imports from `lucide-react` and is a named
+catalogue over it, not a rival — and the `Select` naming collision dissolved
+when the unused half was deleted.
+
+Changes, all UI-only:
+
+- **Deleted `ui/select.tsx`** (zero importers of any kind; `SHADCN-UI.md` §11
+  had said to delete it at the next audit) and **`use-mounted.ts`** (zero
+  importers since Q13). Deleting the first leaves exactly one `Select` in the
+  codebase, so **no rename was needed and 11 call sites were left alone.**
+- **Three hand-spelled form fields became `Field`** — two in `create-area-form`,
+  one in `family-settings-screen`, each of which was reproducing `Field`'s own
+  markup down to its `mt-2` spacing. Their labels move `text-ink-700` →
+  `text-ink-900`, converging on every other form label in the app.
+- **Six lucide glyphs gained `aria-hidden`**, all in stock registry files
+  vendored after that convention was written. Found by the new test, not by eye.
+
+**`scripts/ui-primitives.test.mjs` is what stops it growing back** — 13 tests
+holding four invariants: Radix only inside `components/ui/`; no hand-written
+`role="dialog"`/`aria-modal` and no hand-rolled Tab or Escape handler; `Select`
+renders a real `<select>`; every lucide glyph carries `aria-hidden`. Mutations
+`Q16-1`…`Q16-4` put each defect back and all four are killed behaviourally.
+
+Kept deliberately, with reasons in the audit: `FinancialProgressBar` (domain
+state, not a `Progress` duplicate), `BottomTabs` (navigation, not a tablist),
+`components/popover.tsx` (a wrapper that keeps `Menu` and `Popover` apart), the
+native `Select`, and one raw `<button>` in `global-error.tsx`.
+
+**Handed to Q17:** the five unreferenced starter SVGs in `public/`, and the
+still-open Q14 question of whether the three `*-taylor*` operator scripts are
+run by hand.
 
 ## Migration 051 — applied, and verified against production
 
@@ -112,9 +159,10 @@ server actions and no middleware** — every write is an RPC or a route handler.
 
 Three DB routines have no caller in the final schema —
 `is_family_contributor_member`, `save_christmas_recipient`,
-`save_recipient_contributions`. Two app files have no importer —
-`components/ui/select.tsx` and `components/use-mounted.ts`. Five starter SVGs in
-`public/` are referenced nowhere. **None of them was removed in Q14.**
+`save_recipient_contributions` — **all three dropped by migration 051**. Two app
+files have no importer, `components/ui/select.tsx` and
+`components/use-mounted.ts` — **both deleted by Q16**. Five starter SVGs in
+`public/` are referenced nowhere and are **still there, for Q17**.
 
 Of Q14's four unknowns, **Q15 settled two**: the wide grants are Supabase
 default-privilege residue and are broader than needed, and the Q12 post-apply
@@ -193,10 +241,10 @@ Being the Area's admin did not help them, which is the invariant.
 
 ## Verification state
 
-- Full regression **1,697 tests, all passing** — Q13's 1,690 plus the
-  brand-rename suite. Re-run at Q14's gate against unchanged runtime code.
-- Mutations **134/134 caught, zero survivors** (130 + `Q13-1`…`Q13-4`).
-  Re-run at Q14's gate; still zero survivors.
+- Full regression **1,725 tests, all passing** — Q15's 1,712 plus Q16's 13.
+- Mutations **141/141 caught, zero survivors** (137 + `Q16-1`…`Q16-4`). Every
+  Q16 kill was behavioural and named the intended assertion; none was a build
+  or parse failure.
 - TypeScript, ESLint, production build and worker bundle all clean.
 - `scripts/interface-polish.test.mjs` is new and renders the bell into a real
   DOM, because a focus trap is behaviour: **12 of its 14 original assertions

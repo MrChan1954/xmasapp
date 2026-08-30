@@ -8,7 +8,7 @@ import { scopeReminder, settingsFor } from "@/lib/settings-scopes.ts";
 import { AppShell, PageHeader } from "../../components/app-shell";
 import { IconCake, IconHistory, IconPeople, IconSettings } from "../../components/icons";
 import { SettingsGroup, SettingsRow } from "../../components/settings-list";
-import { Button, ConfirmDialog, Input, Notice, Select } from "../../components/ui";
+import { Button, ConfirmDialog, Field, Input, Notice, Select } from "../../components/ui";
 
 const ICONS: Record<string, React.ReactNode> = {
   "family-access": <IconPeople size={20} />,
@@ -126,16 +126,20 @@ function RenameFamily({ areaId, current }: { areaId: string; current: string }) 
     <section className="mt-8">
       <h2 className="text-xs font-semibold tracking-eyebrow text-gold uppercase">Name</h2>
       <form onSubmit={save} className="mt-3 rounded-2xl border border-line bg-surface p-5 shadow-card">
-        <label className="block text-sm font-semibold text-ink-700">
-          Family name
+        <Field label="Family name">
           <Input
-            className="mt-2"
             value={name}
             onChange={(event) => { setName(event.target.value); setState("idle"); }}
             maxLength={80}
             autoComplete="off"
           />
-        </label>
+        </Field>
+        {/*
+          * Deliberately a sibling of the Field rather than its `hint`. `Field`
+          * renders the hint INSIDE the <label>, which wraps the control — so a
+          * hint joins the input's accessible name. That is right for a short
+          * instruction and wrong for two sentences of policy prose.
+          */}
         <p className="mt-2 text-xs leading-5 text-ink-500">
           Only this family sees the change. Nobody in another family is told, because nobody in
           another family knows this one exists.
