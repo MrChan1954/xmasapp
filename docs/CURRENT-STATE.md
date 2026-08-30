@@ -1,6 +1,6 @@
 # Current State
 
-**Last updated:** 2026-08-30, after Q17 closed.
+**Last updated:** 2026-08-30, after Q18 closed.
 
 The handoff between phases. Current facts only — history lives in git.
 
@@ -9,15 +9,165 @@ The handoff between phases. Current facts only — history lives in git.
 | Fact | Value |
 | ---- | ----- |
 | Live site | `https://xmas-family.uk/` |
-| Last completed phase | **Q17 — the dead-code, duplicate-code and dependency audit** |
-| Q17 verdict | `Q17 CONDITIONAL PASS — UNCERTAIN CANDIDATES DOCUMENTED` |
-| Next phase | **Q18 — consolidating the live duplicates Q17 mapped** |
+| Last completed phase | **Q18 — the architecture consolidation and single-path refactor** |
+| Q18 verdict | `Q18 CONDITIONAL PASS — JUSTIFIED DUPLICATE PATHS REMAIN` |
+| Next phase | **Q19 — see the two candidates Q18 deferred, below** |
 | Branch | `main` |
 | Local HEAD | one commit ahead of `origin/main` — this closeout, **held back deliberately** (docs only) |
-| origin/main | `8195581` — Q17's cleanup, deployed. It carried Q16's held docs commit `1009bcf`. |
-| Serving Worker | `fa57b868-c025-45e0-89c4-af2c64e5d062` |
+| origin/main | `d36d47d` — Q18's consolidation, deployed. It carried Q17's held docs commit `e38e8a2`. |
+| Serving Worker | **not read this phase** — `wrangler deployments list` was blocked by the sandbox. The push deployed and the live site was verified end-to-end at both viewports; the version id is unrecorded. |
 | Product name | **Gift Planner** |
 | Migrations applied | **001–051**, immutable. 051 applied manually 2026-08-30. |
+
+## Q18 — one implementation per concept
+
+`docs/Q18-CANONICAL-APPLICATION-PATHS.md` is the record. Read on demand.
+**No database change; migrations still end at 051.** Everything here is
+behaviour-preserving.
+
+**The three duplicates Q17 handed over are gone, each to the module that already
+owned its concept** — not to a new one, and not to a generic utility layer.
+
+- **`priceInput`, four copies → `src/lib/currency.ts`**, beside `formatPennies`.
+  All four were already identical (two spelled the regex `/\.00$/` and two
+  `/\.00$/u`, which is the same pattern). 13 call sites migrated. Putting the
+  two functions together is also what makes their difference legible: a field
+  seeded from `formatPennies` carries a `£` and a thousands separator and
+  **cannot be submitted unedited**, because `parseMoneyToPennies` refuses it.
+- **`todayInput`, two copies → `src/lib/input-validation.ts`**, beside
+  `validateDateInput`, so the value a date field opens on and the check it faces
+  on the way back in now sit together. It takes an optional `Date` so the
+  timezone behaviour can be tested at a fixed instant rather than mocked.
+- **`progressPresentation`, two copies → `financial-progress.tsx`**, beside the
+  bar whose "Budget reached" wording it matches. **A third copy of the label half
+  turned up on the way**: `people-screen`'s `statusFilterLabel` returned the same
+  four strings for the filter chips, and is gone — the chips now read
+  `progressPresentation(status).label`, so the chip clicked and the badge read
+  can no longer drift apart.
+
+**The product-wording question Q17 raised is answered, and the tones answer it
+more strongly than the words.** `events-dashboard.tsx` has its own `statusLabel`
+and `statusTone`, and **two of the four states differ in the colour as well as
+the word** — `in_progress` is `gold` there and `warning` on a person,
+`over_budget` is `warning` there and `danger` on a person. It was never one
+helper copied twice; it is a second presentation of the same status, and it
+stays. A test asserts the dashboard still says "Complete", still tones
+`in_progress` `gold`, and does **not** import the shared helper.
+
+**A fourth duplicate no name-based audit would have found.**
+`payment-log-server.ts` carried a private `londonDateInput()` whose body was
+identical to `birthdays-server.ts`'s exported `londonToday()` — same
+`Intl.DateTimeFormat`, same `Europe/London`, different name. It is gone; the
+family's timezone is now written in exactly one file. It stays distinct from
+`todayInput`, which answers in the **reader's device** timezone: a birthday is a
+fixed calendar date wherever it is read from, while a purchase or payment date
+defaults to the day the person filling the form is having. For a UK family the
+two agree, which is exactly why merging them would look safe and be wrong.
+
+**The three `*-taylor*` operator scripts are deleted**, the user having
+confirmed they are not wanted. Repository safety was then proved, not assumed:
+no `package.json` script, neither workflow (neither installs node modules at
+all), no `src/` import, no test — only history documents and each other.
+`admin-account-target.mjs` existed solely to hold the other two's email out of
+the repository and went with them.
+
+**Q17's "nothing supersedes them" was wrong, and that is why they could go.**
+`claim_app_member()` is the canonical path that attaches a login to an
+`app_members` row; migration 042 documents it and it runs on **every** auth
+callback and in account setup, RLS-guarded and deliberately narrow.
+`setup-taylor.mjs` did the same `UPDATE` with the service role, which bypasses
+both RLS and the write barrier — removing it removes a bypass, not a capability.
+**And its `--verify-only` was not read-only**: the write ran before the branch
+was reached, so an operator "just checking" would have written to production.
+
+**pnpm is the package manager and `pnpm-lock.yaml` is the only lockfile.**
+The user confirmed Cloudflare Workers Builds runs `pnpm run build`,
+`pnpm run deploy` and `pnpm run upload` from `/` on `main`.
+`package-lock.json` is deleted: nothing required it, no workflow installs node
+modules, no script invokes npm, there is no `.npmrc`. Two lockfiles were not
+merely redundant — **they had already disagreed**, resolving `lucide-react` to
+1.33.0 and 1.31.0, so production once installed a tree nobody had built.
+Validated in a scratch directory, leaving the working `node_modules` untouched:
+`pnpm install --frozen-lockfile` under **pnpm v10.34.5** succeeded and
+`pnpm-lock.yaml` is **byte-identical afterwards** (SHA-256 `9dfeb23c…d72ae4`).
+`pnpm run build` — the exact Cloudflare command — succeeds in the repository.
+**No `packageManager` field was added**, deliberately: there is no evidence of
+an exact version the repo expects, and pinning whatever `npx pnpm@10` resolved
+to would change how production installs on no authority. `SHADCN-UI.md` §10 has
+been rewritten; it used to instruct that both lockfiles be kept.
+
+**The wider sweep says the three were not symptoms of a cluster.** Every
+top-level definition in `src/` was grouped by name: 28 names repeat, and all but
+two are false positives (`submit` in 10 files, `save` in 6 — local handlers),
+framework requirements (`GET`/`POST`/`PUT`), registry-primitive-plus-wrapper
+pairs (`Badge`, `Card`, `Input`… — `ui/index.tsx` imports the stock file and
+wraps it, which is Q16's architecture), one-per-runtime pairs (`createClient`,
+`rememberedAreaId` — and `AREA_COOKIE` itself is defined **once**), or two
+screens calling one canonical RPC (`voidPayment` → `void_settlement`).
+
+**Two duplicates are left standing on purpose, and both are Q19's business:**
+
+- **`signOut`** is byte-identical in `account/page.tsx` and `account-menu.tsx`.
+  Four lines, and a real hazard — if sign-out ever needs to clear the Area
+  cookie, one copy gets it and the other does not. **Not done here because
+  verifying it means signing the family out on the live site, which the QA rules
+  forbid**, and shipping an unverifiable change to the auth path is worse than
+  the duplication.
+- **`createAdminClient`** in `family-access-admin.ts` and
+  `notifications-server.ts` each build a service-role client and throw their own
+  domain error type. Merging needs a shared error or an injected constructor, on
+  the most security-sensitive client in the app. Separate architectural work.
+
+`pad` (`String(value).padStart(2, "0")`) is in two lib modules and stays
+inlined: two identical lines with no decision in them are an idiom, not a
+concept.
+
+**The four route shims are unchanged and are compatibility paths, not duplicate
+business systems.** `/owed` is not even legacy — `notification-content.ts`
+writes `OWED_URL = "/owed"` as the `url` of every money notification today.
+
+**`scripts/canonical-paths.test.mjs` is what stops it growing back** — 13 tests
+that **count definitions rather than filenames**, so moving a helper is free and
+copying one is not. Proved to fail: a `priceInput` copy added back to
+`person-modal.tsx` turns it red. Mutations `Q18-1`…`Q18-4` put back the four
+defects the consolidation now makes reachable from everywhere at once, and all
+four are killed by a named behavioural test.
+
+**One harness lesson worth keeping.** `Q18-1`'s `from` string was first written
+inside a template literal, where `\.` evaluates to `.` — so the pattern searched
+for was not the one in the file and the run reported
+`COULD NOT APPLY — the code it breaks has moved. Inconclusive.` That is the
+harness working: an unapplied mutation is never counted as caught. **A regex in
+a mutation's `from` needs its backslash doubled.**
+
+**Live QA on Edge over CDP against `xmas-family.uk`, entirely read-only, acting
+in QA Charlie.** Ten screens at desktop 1440×900 and at a genuine 390×844, DPR 3,
+`mobile: true`, 5 touch points, coarse pointer: home, People, Birthdays, Events,
+Settings, the event, its people, add-purchase, owed and payment log. **All 200,
+one `h1` each, no horizontal overflow at either width, and zero failed
+requests.**
+
+The three helpers were read off the live page rather than inferred:
+
+- **`todayInput`** — the add-purchase date field holds `2026-08-30`, the local
+  calendar date, at both widths.
+- **`priceInput`** — Sam QA Charlie's 1500-penny budget opens the edit field on
+  exactly `"15"`: no symbol, no separator, no trailing `.00`. 46px tall at 16px,
+  inside the viewport at 390.
+- **`progressPresentation`** — the event people screen draws "Budget reached" ×1
+  and "Not started" ×2, and **the filter chips read "Not started 2 · In progress
+  0 · Budget reached 1 · Over budget 0"** — the folded `statusFilterLabel`, with
+  counts matching the badges. The person modal shows three "Budget reached".
+
+The modal was opened at 390 by a genuine `Input.dispatchTouchEvent`: full width
+390, bottom flush at 844, 793 tall, entirely on screen, `aria-modal="true"`,
+named "Sam QA Charlie", focus inside, Escape closes it. Bottom nav 390 wide, 68
+tall, five 75px targets. **Nothing was submitted and nothing was saved.**
+
+**Protected fingerprint taken before deployment and again after all QA:
+identical, and identical to the baseline** — notifications 37, people 19, events
+15, appMembers 4, recipients 35, Christmas 2026 active with 19 recipients,
+`crossAreaTotal` 0.
 
 ## Q17 — what nothing runs, and four mutations that proved nothing
 
@@ -344,10 +494,10 @@ Being the Area's admin did not help them, which is the invariant.
 
 ## Verification state
 
-- Full regression **1,725 tests, all passing**. Q17 removed no test.
-- Mutations **141/141 caught, zero survivors**. **126 are killed by a named
-  failing test** (Q17 moved four there) and 15 by a migration's own end-state
-  block — and after Q17 every one of those 15 edits an object that is actually
+- Full regression **1,749 tests, all passing**. Q18 added 24 and removed none.
+- Mutations **145/145 caught, zero survivors**. **130 are killed by a named
+  failing test** (Q18's four are all behavioural) and 15 by a migration's own
+  end-state block — and after Q17 every one of those 15 edits an object that is actually
   installed, so the block is querying the resulting schema rather than comparing
   a migration with its own text. **Zero mutations target a superseded
   definition**; Q17 re-checked all 141 and re-pointed the four that did.
@@ -457,14 +607,16 @@ eyebrow is source-verified only: `/login` redirects an authenticated session to
 - `no-store` on documents means every back/forward navigation refetches.
 - Twelve trigger functions still carry `anon` EXECUTE from the platform default.
   Harmless: PostgreSQL refuses to invoke a trigger function directly (`0A000`).
-- Both `package-lock.json` and `pnpm-lock.yaml` are committed and resolve
-  identically. **Q17 could not settle which is canonical and kept both.**
-  `package.json` declares no `packageManager`, neither workflow installs node
-  modules, and `node_modules/.package-lock.json` shows npm installed this
-  working copy — but production is built by Cloudflare Workers Builds, whose
-  package-manager detection lives in its dashboard. **To close it, read the
-  install command for `xmasapp` there, delete the other lockfile, and prove a
-  clean install and build before pushing.**
+- **The lockfile question is closed.** pnpm is the package manager,
+  `pnpm-lock.yaml` is the only lockfile, and `package-lock.json` is deleted —
+  see Q18 above. This working copy's `node_modules` was installed by **npm**
+  and was deliberately not reinstalled; it resolves the same `lucide-react`
+  1.33.0 the frozen pnpm install does. A future `pnpm install` here is safe but
+  was not needed to prove the lockfile.
+- **The serving Worker version for Q18 is unrecorded.**
+  `wrangler deployments list` was blocked by the sandbox classifier, so the
+  version id could not be read. The push deployed and the live site was verified
+  end-to-end; if the id matters, read it from the Cloudflare dashboard.
 - `birthday-wishlist.test.mjs:194` still asserts the body of
   `is_family_contributor_member`, which **migration 051 dropped**. It reads
   immutable migration text so it cannot fail, and `table-privileges.test.mjs`
@@ -484,9 +636,6 @@ In a **fresh** Claude session (Opus 5, High):
 **Push the closeout commit with the next phase's work.** It is docs-only and on
 its own would trigger a production build that changes nothing.
 
-**Two questions only the user can answer**, both from Q17 and neither blocking:
-
-1. Which package manager does **Cloudflare Workers Builds** use for `xmasapp`?
-   Its install command decides which of the two lockfiles is redundant.
-2. Have the `*-taylor*` scripts been run by hand since the family went live, and
-   is that admin-account recovery path still wanted?
+**Q17's two open questions are both answered and closed** — pnpm is the package
+manager, and the `*-taylor*` scripts were unwanted and are deleted. Q18 leaves
+no question that only the user can answer.
