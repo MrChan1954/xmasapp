@@ -1,4 +1,4 @@
-# Family Gift Planner
+# Gift Planner
 
 A private gift-and-occasion planner for one family: people, events (Christmas and
 birthdays), gift ideas, purchases, contributions and who owes whom.

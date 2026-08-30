@@ -58,7 +58,7 @@ export function PeopleDirectoryScreen({
   return (
     <AppShell width="default">
       <PageHeader
-        eyebrow="Family gift planner"
+        eyebrow="Gift planner"
         title="People"
         description="Everybody the family plans for. Open somebody to see their birthday and everything that has been bought for them."
         actions={isAdmin ? (

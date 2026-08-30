@@ -1,4 +1,4 @@
-# Family Gift Planner
+# Gift Planner
 
 A private gift-and-occasion planner used by one real family. Next.js (App
 Router) / TypeScript / Supabase Postgres / Cloudflare Workers via OpenNext

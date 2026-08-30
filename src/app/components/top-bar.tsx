@@ -32,7 +32,7 @@ export function TopBar({
           0 in a browser and on desktop. */}
       <header className="sticky top-0 z-30 border-b border-line bg-ground/85 pt-[env(safe-area-inset-top)] backdrop-blur-md">
         <div className="flex h-16 items-center gap-3 px-4 sm:px-6 lg:h-[72px] lg:px-8">
-          <Link href="/" className="flex shrink-0 items-center gap-2.5 lg:hidden" aria-label="Family Gift Planner home">
+          <Link href="/" className="flex shrink-0 items-center gap-2.5 lg:hidden" aria-label="Gift Planner home">
             {/* Matches the desktop rail mark in `icon-rail.tsx`: glyph only, no
                 filled tile, so the logo is the same at every breakpoint.
 

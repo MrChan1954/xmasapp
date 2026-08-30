@@ -134,7 +134,7 @@ test("a malformed or empty push still shows something", async () => {
     const worker = loadServiceWorker();
     await dispatchPush(worker, payload);
     assert.equal(worker.shown.length, 1);
-    assert.equal(worker.shown[0].title, "Family Gift Planner");
+    assert.equal(worker.shown[0].title, "Gift Planner");
     assert.equal(worker.shown[0].options.data.url, "/");
   }
 });

@@ -612,7 +612,7 @@ function CreateAccountDialog({
         <div className="mt-4 rounded-xl border border-line bg-surface-2 p-4">
           <p className="text-xs font-medium text-ink-600">Role</p>
           <p className="mt-1 font-semibold">User</p>
-          <p className="mt-1 text-xs leading-5 text-ink-600">They can use the Christmas app but cannot manage family accounts.</p>
+          <p className="mt-1 text-xs leading-5 text-ink-600">They can use Gift Planner but cannot manage family accounts.</p>
         </div>
 
         {validation && <p className="mt-4 text-sm font-semibold text-berry">{validation}</p>}

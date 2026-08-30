@@ -216,7 +216,7 @@ function DeviceState({
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm leading-6 text-ink-600">
           <li>Tap the Share button at the bottom of Safari.</li>
           <li>Choose <span className="font-semibold text-ink-900">Add to Home Screen</span>.</li>
-          <li>Open Family Gift Planner from your Home Screen, then come back here.</li>
+          <li>Open Gift Planner from your Home Screen, then come back here.</li>
         </ol>
       </div>
     );
@@ -240,7 +240,7 @@ function DeviceState({
         <h3 className="font-display text-lg font-semibold">Blocked by your device</h3>
         <p className="mt-1 text-sm leading-6 text-ink-600">
           Notifications are switched off for this app in your browser or device settings. We cannot
-          turn them back on from here — allow notifications for Family Gift Planner in those settings,
+          turn them back on from here — allow notifications for Gift Planner in those settings,
           then return to this page.
         </p>
       </div>

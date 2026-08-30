@@ -18,8 +18,8 @@ export default function manifest(): MetadataRoute.Manifest {
     // `id` is the app's identity and stays "/". Renaming with the id fixed
     // relabels the existing installation rather than offering a second one.
     id: "/",
-    name: "Family Gift Planner",
-    short_name: "Family Gift Planner",
+    name: "Gift Planner",
+    short_name: "Gift Planner",
     description: "Plan and share the cost of Christmas, birthdays and every other family occasion.",
     start_url: "/",
     scope: "/",

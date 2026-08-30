@@ -88,7 +88,7 @@ const PEOPLE_HOME = { href: "/people", label: "People" } as const;
 export const BIRTHDAYS_HOME = { href: "/birthdays", label: "Birthdays" } as const;
 
 /** The name of the app itself, used only when no route below claims the path. */
-export const DEFAULT_PAGE_TITLE = "Family Gift Planner";
+export const DEFAULT_PAGE_TITLE = "Gift Planner";
 
 const EVENT_SECTION_TITLES: Record<EventSection, string> = {
   home: "Overview",
@@ -111,10 +111,10 @@ const EVENT_SECTION_TITLES: Record<EventSection, string> = {
  *   1. NO ENTRY MEANT THE APP'S OWN NAME. `pageTitleFor` falls back to
  *      `DEFAULT_PAGE_TITLE`, so the sticky bar on `/settings`,
  *      `/settings/family`, `/people`, `/birthdays` and `/areas/new` read
- *      "Family Gift Planner" -- the application's name where the screen's name
- *      belongs. On a phone that bar and the tab bar are the whole of the
- *      chrome, and one of the two was saying nothing. `/settings/family` had no
- *      way back up to `/settings` at all except the browser's own Back button.
+ *      the application's own name where the screen's name belongs. On a phone
+ *      that bar and the tab bar are the whole of the chrome, and one of the two
+ *      was saying nothing. `/settings/family` had no way back up to `/settings`
+ *      at all except the browser's own Back button.
  *
  *   2. THE FAMILY'S OWN SETTINGS LED TO THE DASHBOARD. Family access and
  *      Activity are Area-scoped settings catalogued on `/settings/family`, and
@@ -145,8 +145,8 @@ const TITLES: Array<{ test: RegExp; title: string; parent?: Crumb }> = [
    * These were missing for the same reason the five above once were: the table
    * was filled in from the routes that existed at the top level, and nothing
    * walked the directory underneath. The sticky bar on `/birthdays/<personId>`
-   * therefore read "Family Gift Planner" with no chevron -- the application's
-   * name where the screen's name belongs, on the one screen the birthday person
+   * therefore read the application's own name with no chevron -- the app's name
+   * where the screen's name belongs, on the one screen the birthday person
    * themself is sent to. Birthdays is not on the mobile tab bar either, so the
    * celebrant had no marked way back to the list they arrived from.
    *

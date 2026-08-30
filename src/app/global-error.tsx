@@ -44,7 +44,7 @@ export default function GlobalError({ error }: { error: Error & { digest?: strin
           }}
         >
           <p style={{ margin: 0, fontSize: "0.75rem", letterSpacing: "0.16em", textTransform: "uppercase", color: "#8a6b18", fontWeight: 600 }}>
-            Family Gift Planner
+            Gift Planner
           </p>
           <h1 style={{ margin: "0.75rem 0 0", fontSize: "1.75rem", fontFamily: "ui-serif, Georgia, serif", fontWeight: 600 }}>
             The app failed to start

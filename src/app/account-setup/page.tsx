@@ -118,7 +118,7 @@ export default function AccountSetupPage() {
       const claim = await supabase.rpc("claim_app_member");
       if (claim.error) {
         await supabase.auth.signOut();
-        setMessage("This account is not approved for the Christmas app. Ask your family’s admin for help.");
+        setMessage("This account is not approved for Gift Planner. Ask your family’s admin for help.");
         setStage("error");
         return;
       }
@@ -136,7 +136,7 @@ export default function AccountSetupPage() {
 
       if (membership.error || !membership.data?.active || !membership.data.person_id) {
         await supabase.auth.signOut();
-        setMessage("This account is not approved for the Christmas app. Ask your family’s admin for help.");
+        setMessage("This account is not approved for Gift Planner. Ask your family’s admin for help.");
         setStage("error");
         return;
       }

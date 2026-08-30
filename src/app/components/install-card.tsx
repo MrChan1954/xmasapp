@@ -31,8 +31,8 @@ export function InstallCard() {
           <h3 className="font-display text-lg font-semibold">Install the app</h3>
           <p className="mt-1 text-sm leading-6 text-ink-600">
             {isIosSafari
-              ? "Tap Share, then Add to Home Screen, to open Family Gift Planner like an app."
-              : "Add Family Gift Planner to your device for a full-screen app window."}
+              ? "Tap Share, then Add to Home Screen, to open Gift Planner like an app."
+              : "Add Gift Planner to your device for a full-screen app window."}
           </p>
         </div>
         {canPrompt && (

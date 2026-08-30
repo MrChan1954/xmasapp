@@ -28,7 +28,7 @@ const fraunces = Fraunces({
 });
 
 export const metadata: Metadata = {
-  title: "Family Gift Planner",
+  title: "Gift Planner",
   description: "Plan and share the cost of Christmas, birthdays and every other family occasion.",
   manifest: "/manifest.webmanifest",
   /**
@@ -49,7 +49,7 @@ export const metadata: Metadata = {
    */
   appleWebApp: {
     capable: true,
-    title: "Family Gift Planner",
+    title: "Gift Planner",
     statusBarStyle: "default",
   },
 };

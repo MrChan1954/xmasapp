@@ -97,7 +97,7 @@ export default function LoginPage() {
     <AuthScreen>
       <form onSubmit={submit}>
         <AuthHeading
-          eyebrow="Family gift planner"
+          eyebrow="Gift planner"
           title="Welcome back"
           description="Sign in with your private family account."
         />

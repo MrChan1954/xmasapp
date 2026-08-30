@@ -43,7 +43,7 @@ export function IconRail() {
             <Gift size={28} strokeWidth={1.6} aria-hidden />
           </span>
           <span className="min-w-0 opacity-0 transition-opacity duration-200 group-hover/rail:opacity-100 group-has-focus-visible/rail:opacity-100">
-            <span className="block truncate font-display text-base font-semibold text-ink-900">Family Budget</span>
+            <span className="block truncate font-display text-base font-semibold text-ink-900">Gift Planner</span>
             {/* Which event the reader is inside, so a Christmas gift cannot be
                 added to a birthday by accident. Blank on the dashboard, where
                 there is no active event to name. */}
