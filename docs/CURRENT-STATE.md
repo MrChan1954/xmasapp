@@ -1,6 +1,6 @@
 # Current State
 
-**Last updated:** 2026-08-30, after the Q14 system inventory.
+**Last updated:** 2026-08-30, after the Q15 database canonical-system audit.
 
 The handoff between phases. Current facts only — history lives in git.
 
@@ -9,15 +9,51 @@ The handoff between phases. Current facts only — history lives in git.
 | Fact | Value |
 | ---- | ----- |
 | Live site | `https://xmas-family.uk/` |
-| Last completed phase | **Q14 — whole-system inventory** |
-| Q14 verdict | `Q14 PASS — SYSTEM INVENTORY COMPLETE` |
-| Next phase | **Q15 — zero-risk removals; scope in `docs/Q14-SYSTEM-INVENTORY.md` §11** |
+| Last completed phase | **Q15 — database canonical-system audit** |
+| Q15 verdict | `Q15 CONDITIONAL PASS — DB CLEANUP PROPOSAL REQUIRED` |
+| Next phase | **Q16 — see `docs/Q15-DATABASE-CANONICAL-SYSTEM.md` §8 and §9** |
 | Branch | `main` |
 | Local HEAD | this docs commit, held back |
 | origin/main | `d4bacd8` — the brand rename, carrying the held Q13 closeout |
 | Serving Worker | `ea1ccdad-247f-41f9-9486-a09b2458fd28` |
 | Product name | **Gift Planner** |
-| Migrations applied | **001–050**, immutable. **Q13 and Q14 needed none.** |
+| Migrations applied | **001–050**, immutable. **Q13, Q14 and Q15 needed none.** |
+
+## Q15 — the database audit, and the one thing awaiting your decision
+
+`docs/Q15-DATABASE-CANONICAL-SYSTEM.md` is the audit. Read on demand.
+
+**Gift Planner has exactly one authoritative database system per business
+concept.** Every concept was checked — Areas, identity, membership, admin,
+contributors, events, recipients, budgets, gift ideas, purchases, allocations,
+settlements, receipts, notifications, audit, settings, birthdays and privacy.
+**No competing or duplicate active path was found anywhere.** The multi-object
+subsystems (three notification tables, three contributor layers) are stages and
+layers of one system, not rivals.
+
+**AWAITING YOUR DECISION — a real security finding.** `authenticated` holds
+`TRUNCATE` on `areas` and `birthday_wishlist_ideas`, because those two tables
+alone never revoked Supabase's blanket default privilege. **RLS does not
+constrain TRUNCATE.** Measured in the rehearsal: an ordinary member truncated
+`birthday_wishlist_ideas` and destroyed three Areas' wishlists, including an
+Area they were not acting in. It is **not exploitable today** — PostgREST has no
+TRUNCATE verb — but the protection is the client protocol, not the grant, and
+`areas` is shielded only by an accident of its foreign keys.
+
+Migration 051 is proposed to revoke-and-re-grant both tables, and to drop three
+routines that have no caller of any kind (`is_family_contributor_member`,
+`save_christmas_recipient`, `save_recipient_contributions` — each proved by a
+clean `DROP … RESTRICT` in the rehearsal). **It has NOT been written.** Full
+proposal, rollback and post-apply plan in §8. Dropping the routines also
+requires rewriting mutation 9 in `scripts/mutation-check.mjs`, which currently
+reverts migration 039 to call one of them.
+
+Confirmed REQUIRED, not legacy: **`events.year`** carries the "one Christmas per
+family per year" unique index and two check constraints. The **`christmas_events`
+view** is a `security_invoker` read convenience over `events` with no independent
+state — not a second source of truth. **`app_members.contributor_id`** is legacy
+but live: frozen since migration 004, five readers, every one with a `person_id`
+fallback.
 
 ## Q14 — the inventory
 
@@ -40,16 +76,14 @@ Three DB routines have no caller in the final schema —
 `components/ui/select.tsx` and `components/use-mounted.ts`. Five starter SVGs in
 `public/` are referenced nowhere. **None of them was removed in Q14.**
 
-Four unknowns stay open on purpose, and Q15/Q16 should settle them before
-anything is deleted: whether the three `*-taylor*` operator scripts are still
-run by hand, which indexes production actually uses, whether the wide grants on
-`areas` and `birthday_wishlist_ideas` are deliberate, and whether production's
-catalogue matches the rehearsal's. The last of those is still gated on
-`docs/Q12-POST-APPLY-CHECKS.sql`, which has still never been run.
+Of Q14's four unknowns, **Q15 settled two**: the wide grants are Supabase
+default-privilege residue and are broader than needed, and the Q12 post-apply
+checks had in fact already been run and passed — Q14 was wrong about that. Two
+stay open: whether the three `*-taylor*` operator scripts are still run by hand,
+and which indexes production actually uses. Neither can be settled without
+either asking the user or opening a read-only production connection.
 
-**`CLAUDE.md` says the applied migration range is 001–047. It is 001–050.** Left
-uncorrected in Q14 because the phase forbade edits beyond the inventory; fix it
-deliberately at the start of Q15.
+**`CLAUDE.md`'s migration range said 001–047. Q15 corrected it to 001–050.**
 
 Q13 closed the four product-quality gaps the final site audit left open, and
 proved on the live site the one thing Q9, Q10, Q11 and Q12 each had to record as
@@ -216,9 +250,10 @@ eyebrow is source-verified only: `/login` redirects an authenticated session to
   asking for anybody's password or signing the user into a synthetic account.
   Not a blocker: Q12 proved settlement authorization at the database layer,
   including that the Area admin is explicitly refused as a confirmer.
-- **`docs/Q12-POST-APPLY-CHECKS.sql` has still not been run against
-  production.** It is read-only and ready; run it in the SQL Editor to confirm
-  050 in place.
+- **`docs/Q12-POST-APPLY-CHECKS.sql` HAS been run against production**, in the
+  SQL Editor after migration 050, and every check passed. Q14 recorded the
+  opposite; that was Q14's error and Q15 corrected it. Results in
+  `docs/Q15-DATABASE-CANONICAL-SYSTEM.md` §2. No re-run needed.
 - The notification bell is deliberately **account-global** and stays that way.
 - The 8 protected notification rows are historic Q4 evidence. Do not clean up.
 - The 26 Area-less audit rows stay Area-less. Do not backfill them.

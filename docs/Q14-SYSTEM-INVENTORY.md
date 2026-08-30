@@ -401,12 +401,16 @@ confirming production's `relacl` matches the rehearsal's.
 would break Area creation or wishlist editing in production, with no staging.
 
 **UNKNOWN-4 — whether production's catalogue matches the rehearsal's.**
-*Why uncertain:* the rehearsal is a faithful replay, but production has had
-`rls_auto_enable` and other platform state applied outside the migration chain,
-and `docs/Q12-POST-APPLY-CHECKS.sql` **has still never been run**.
-*What would settle it:* running that read-only file in the SQL Editor.
-*Risk:* everything in §1 is "what fifty migrations produce", which is the right
-baseline but is not the same statement as "what production holds".
+**CORRECTED IN Q15 — THIS WAS WRONG WHEN WRITTEN.**
+`docs/Q12-POST-APPLY-CHECKS.sql` **had already been run** against production in
+the Supabase SQL Editor after migration 050, and every check passed. Q14 stated
+the opposite; the error was Q14's, not the record's. See
+`docs/Q15-DATABASE-CANONICAL-SYSTEM.md` §2 for the recorded results.
+
+What remains genuinely open is narrower than Q14 claimed: those checks proved
+migration 050's own objects, guards, stamping and backfill, not the *whole*
+catalogue. Grants and index statistics were outside their scope, so UNKNOWN-2
+and UNKNOWN-3 stand on their own.
 
 **UNKNOWN-5 — the twelve trigger functions still carrying `anon` EXECUTE.**
 Carried forward from `CURRENT-STATE.md`. Confirmed still present in the
@@ -552,11 +556,12 @@ this file rather than editing the immutable migration. Confirm with a test that
 nothing imported the deleted files. **No database change, no migration.**
 
 **Q16 — settle the unknowns, read-only.**
-Run `docs/Q12-POST-APPLY-CHECKS.sql`. Read `pg_stat_user_indexes` and
-`pg_proc.proacl` from production, and diff production's catalogue against the
-rehearsal's — that closes UNKNOWN-2, UNKNOWN-3 and UNKNOWN-4 in one sitting and
-turns §1 from "what the migrations produce" into "what production holds". Ask
-the user about the `*-taylor*` scripts (UNKNOWN-1). **Still no writes.**
+Read `pg_stat_user_indexes` and `pg_proc.proacl` / `pg_class.relacl` from
+production and diff production's catalogue against the rehearsal's — that closes
+UNKNOWN-2 and UNKNOWN-3 and turns §1 from "what the migrations produce" into
+"what production holds". Ask the user about the `*-taylor*` scripts (UNKNOWN-1).
+**Still no writes.** (`docs/Q12-POST-APPLY-CHECKS.sql` needs no re-run — it was
+already run and passed; see the correction under UNKNOWN-4.)
 
 **Q17 — the DB legacy surface, and the first migration since 050.**
 With Q16's evidence, decide on `is_family_contributor_member`,

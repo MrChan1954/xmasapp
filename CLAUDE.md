@@ -51,7 +51,7 @@ Break one and the phase fails, whatever else it achieved. Reasoning lives in
 ## Migrations
 
 - Applied migrations are **immutable**; `supabase/migrations/` is append-only.
-- Applied range: **001–047**.
+- Applied range: **001–050**.
 - If a new migration seems genuinely needed, **STOP for explicit user review**
   before writing or applying it, unless the phase prompt says otherwise.
 - Production migrations are applied **manually**.
