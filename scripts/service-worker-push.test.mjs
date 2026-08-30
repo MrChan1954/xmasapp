@@ -120,7 +120,10 @@ test("a push renders the notification the server sent", async () => {
   assert.equal(worker.shown[0].options.data.url, "/people?person=abc");
   // Repeats replace rather than re-alert.
   assert.equal(worker.shown[0].options.renotify, false);
-  assert.match(worker.shown[0].options.badge, /badge-96\.png$/);
+  // The name carries a version because the icon set was replaced; what matters
+  // to this test is that a badge is sent at all, and that it is the badge asset
+  // rather than the full-colour icon.
+  assert.match(worker.shown[0].options.badge, /\/icons\/badge-96(-v\d+)?\.png$/);
 });
 
 test("a malformed or empty push still shows something", async () => {

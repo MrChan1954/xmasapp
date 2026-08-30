@@ -117,8 +117,11 @@ function isCacheableAsset(url) {
  * that could be minutes old. Realtime keeps its own job of updating open tabs.
  * =========================================================================== */
 
-const NOTIFICATION_ICON = "/icons/icon-192.png";
-const NOTIFICATION_BADGE = "/icons/badge-96.png";
+// `-v2`: the app's icon changed from the Christmas tree to the gift-and-
+// checklist tile, and these paths are not content-hashed. A new name is what
+// gets a new picture past a cache; see the note in `src/app/manifest.ts`.
+const NOTIFICATION_ICON = "/icons/icon-192-v2.png";
+const NOTIFICATION_BADGE = "/icons/badge-96-v2.png";
 
 /**
  * Reduce a payload's `url` to an in-app path, or fall back to the home route.
