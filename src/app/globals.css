@@ -657,6 +657,40 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   background-color: var(--ink-600);
 }
 
+/*
+ * A 44x44 hit area around a control whose VISIBLE text must stay small.
+ *
+ * The top bar's breadcrumb is the case this exists for: 12px semibold text and
+ * a 14px chevron, so the anchor's own box came out about 16px tall -- under
+ * WCAG 2.2's 24px minimum, and well under the 44px this product uses
+ * everywhere else (see the `min-h-11` in `ui/button.tsx`). Making the text
+ * bigger would fight the design: the breadcrumb is deliberately quieter than
+ * the title beneath it.
+ *
+ * So the TARGET grows and the TEXT does not. The pseudo-element is centred on
+ * the control and takes no part in layout, which is why nothing around it
+ * moves. `width: 100%` with a 44px floor means a long label keeps its own
+ * width and a short one is padded out to the minimum.
+ *
+ * The element must establish a containing block, hence `position: relative`
+ * here rather than a separate utility -- that also puts it above the static
+ * text it overlaps, so the pseudo-element wins the hit test.
+ */
+.touch-target {
+  position: relative;
+}
+
+.touch-target::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+  width: 100%;
+  min-width: 44px;
+  height: 44px;
+}
+
 /* One-shot celebration specks; the component unmounts itself on animation end. */
 .burst-speck {
   animation: burst 900ms cubic-bezier(0.15, 0.7, 0.3, 1) forwards;

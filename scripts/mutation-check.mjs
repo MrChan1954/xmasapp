@@ -1398,6 +1398,38 @@ export function EventSettingsScreen(`,
     suites: ["scripts/rls-permission-matrix.test.mjs"],
   },
 
+  // -------------------------------------------------------------------------
+  // Q13 POLISH: the four limitations carried forward since the site audit.
+  // Three of these are behaviour a person meets with a keyboard or a thumb, and
+  // the fourth is the copy they read. Each mutation puts back exactly the
+  // defect that was recorded, so a survivor means the fix is unprotected rather
+  // than merely undone.
+  // -------------------------------------------------------------------------
+  {
+    name: "Q13-1. the Notification Centre stops trapping focus",
+    file: "src/app/components/notification-bell.tsx",
+    from: "<Dialog open={open} onOpenChange={setOpen}>",
+    to: "<Dialog open={open} onOpenChange={setOpen} modal={false}>",
+    suites: ["scripts/interface-polish.test.mjs"],
+  },
+  {
+    name: "Q13-2. the breadcrumb's hit area shrinks back under the minimum",
+    file: "src/app/globals.css",
+    from: `  width: 100%;
+  min-width: 44px;
+  height: 44px;`,
+    to: `  width: 100%;
+  min-width: 16px;
+  height: 16px;`,
+    suites: ["scripts/interface-polish.test.mjs"],
+  },
+  {
+    name: "Q13-3. the Person page's admin cards go back to skipping a heading level",
+    file: "src/app/people/[id]/person-admin-panel.tsx",
+    from: `<h2 className="font-display text-lg font-semibold text-ink-900">{title}</h2>`,
+    to: `<h3 className="font-display text-lg font-semibold text-ink-900">{title}</h3>`,
+    suites: ["scripts/interface-polish.test.mjs"],
+  },
 ];
 
 function runSuite(suite) {

@@ -45,9 +45,15 @@ export function TopBar({
 
           <div className="min-w-0 flex-1">
             {parent && (
+              /* `touch-target` grows the HIT AREA to the 44x44 this product
+                 uses everywhere else, without touching the type. The anchor's
+                 own box is about 16px tall here, which is under WCAG 2.2's
+                 24px floor; the breadcrumb is meant to be quieter than the
+                 title below it, so the answer is a bigger target, not bigger
+                 words. Nothing moves: the extra area is a pseudo-element. */
               <Link
                 href={parent.href}
-                className="-ml-1 inline-flex items-center gap-0.5 text-xs font-semibold text-ink-600 hover:text-ink-900"
+                className="touch-target -ml-1 inline-flex items-center gap-0.5 text-xs font-semibold text-ink-600 hover:text-ink-900"
               >
                 <ChevronLeft aria-hidden size={14} strokeWidth={2} />
                 {parent.label}

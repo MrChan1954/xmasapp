@@ -39,6 +39,21 @@ const log = read("src", "lib", "notification-log.ts");
 const inboxRoute = read("src", "app", "api", "notifications", "inbox", "route.ts");
 const testRoute = read("src", "app", "api", "notifications", "test", "route.ts");
 const bell = read("src", "app", "components", "notification-bell.tsx");
+
+/**
+ * The phone branch of the bell, as source text.
+ *
+ * The two shapes are two arms of one ternary now rather than two sibling
+ * elements, so "is this class on the sheet or on the dropdown" has to be asked
+ * of the right arm. Slicing on the portal tags is what keeps an assertion about
+ * the sheet from being satisfied by the dropdown.
+ */
+const phonePortal = (source) => {
+  const from = source.indexOf("<DialogPrimitive.Portal>");
+  const to = source.indexOf("</DialogPrimitive.Portal>");
+  assert.ok(from > 0 && to > from, "the phone sheet must be inside a Radix portal");
+  return source.slice(from, to);
+};
 const inboxHook = read("src", "app", "components", "use-notification-inbox.ts");
 
 test("migration 018 is left exactly as applied", () => {
@@ -276,9 +291,19 @@ test("unread state and mark-all are supported end to end", () => {
 test("the bell renders an unread badge and both panel shapes", () => {
   assert.match(bell, /unreadCount > 9 \? "9\+" : unreadCount/);
   assert.match(bell, /aria-label=\{unreadCount > 0 \? `Notifications, \$\{unreadCount\} unread` : "Notifications"\}/);
-  // Bottom sheet on a phone, anchored dropdown from `sm:` up.
+  // Bottom sheet on a phone, anchored dropdown from `sm:` up. The breakpoint is
+  // now read in JavaScript rather than applied with a `sm:` class, because only
+  // ONE of the two shapes may exist: each is a `Dialog.Content`, and a second
+  // copy of that -- hidden or not -- is a second dialog with its own focus trap.
   assert.match(bell, /fixed inset-x-0 bottom-0/);
-  assert.match(bell, /absolute right-0 top-\[calc\(100%\+0\.5rem\)\][^"]*sm:flex/);
+  assert.match(bell, /absolute right-0 top-\[calc\(100%\+0\.5rem\)\]/);
+  assert.match(bell, /const WIDE_QUERY = "\(min-width: 40rem\)";/, "Tailwind's `sm`, in JS");
+  assert.match(bell, /useSyncExternalStore\(\s*subscribeWide/);
+  // In a className, not in the prose above it -- the comment explains why the
+  // `sm:` pair was removed and must stay readable.
+  const classNames = [...bell.matchAll(/className=(?:"([^"]*)"|\{cx\(([^)]*)\))/g)]
+    .map((match) => match[1] ?? match[2]).join(" ");
+  assert.doesNotMatch(classNames, /sm:flex|sm:hidden/, "neither shape may be built and then hidden");
   // Safe-area padding so the sheet clears a home indicator in an installed app.
   assert.match(bell, /env\(safe-area-inset-bottom\)/);
 });
@@ -320,37 +345,38 @@ test("the phone sheet escapes the header's backdrop-filter containing block", ()
   assert.match(topBar, /<NotificationBell \/>/, "and the bell is rendered inside it");
 
   // The fix: the phone sheet is portalled to <body>, where `fixed` means the
-  // viewport again.
-  assert.match(bell, /import \{ createPortal \} from "react-dom";/);
-  assert.match(bell, /createPortal\(/);
-  assert.match(bell, /document\.body,/);
-
-  // The portal is guarded so it does not run during SSR.
-  assert.match(bell, /const mounted = useMounted\(\);/);
-  assert.match(bell, /\{mounted && createPortal\(/);
+  // viewport again. `DialogPrimitive.Portal` is what does it now -- the same
+  // move the hand-written `createPortal` made, taken from the dialog primitive
+  // the rest of the app already uses, and SSR-safe for the same reason Radix's
+  // other portals are.
+  assert.match(bell, /<DialogPrimitive\.Portal>/);
+  assert.doesNotMatch(bell, /createPortal|useMounted/, "no second portal implementation");
 
   // The scrim goes with it, or it would cover only the header strip and leave
   // the page behind looking live.
-  const portal = bell.slice(bell.indexOf("{mounted && createPortal("), bell.indexOf("document.body,"));
+  const portal = phonePortal(bell);
   assert.match(portal, /fixed inset-0 z-40 bg-scrim/);
   assert.match(portal, /fixed inset-x-0 bottom-0 z-50/);
 });
 
 test("a tap inside the portalled sheet does not dismiss it", () => {
-  // The sheet is no longer a descendant of the bell's wrapper, so the
-  // outside-click handler has to know about it explicitly. Without this every
-  // tap on a notification would register as an outside click and close the
-  // panel before the tap could land.
-  assert.match(bell, /const sheet = useRef<HTMLDivElement>\(null\);/);
-  assert.match(
-    bell,
-    /if \(root\.current\?\.contains\(target\) \|\| sheet\.current\?\.contains\(target\)\) return;/,
-  );
-  assert.match(bell, /ref=\{sheet\}/);
+  // The sheet is not a descendant of the bell's wrapper, so "did the tap land
+  // inside the panel" cannot be answered by looking at that wrapper. The
+  // hand-written version answered it with a second ref and a document-level
+  // pointerdown listener, and every tap on a notification depended on that ref
+  // being wired up. It is answered structurally now: the overlay and the sheet
+  // are the SAME Radix dismissable layer, so a tap on the sheet is inside the
+  // layer by construction and there is no handler left to forget.
+  const portal = phonePortal(bell);
+  assert.match(portal, /DialogPrimitive\.Overlay/, "the scrim is Radix's, not a bare div");
+  assert.match(portal, /DialogPrimitive\.Content/, "and the sheet is the layer's content");
+  assert.doesNotMatch(bell, /addEventListener\("pointerdown"|onPointerDown =/,
+    "no hand-rolled outside-click handling");
+  assert.doesNotMatch(bell, /event\.key === "Escape"/, "and no hand-rolled Escape handling");
 });
 
 test("the phone sheet fits the visible viewport and scrolls inside itself", () => {
-  const portal = bell.slice(bell.indexOf("{mounted && createPortal("), bell.indexOf("document.body,"));
+  const portal = phonePortal(bell);
 
   // `dvh`, not `vh`: on iOS `vh` is the large viewport and includes browser
   // chrome, so 75vh can be taller than what is actually on screen.
@@ -437,20 +463,26 @@ test("the renderer is kind-agnostic, with a fallback that is never a bare timest
 });
 
 test("the desktop dropdown is unchanged and is not portalled", () => {
-  // Anchored under the bell, inside the trigger's own `relative` wrapper, so it
-  // was never affected by the header's containing block and must stay put.
+  // Anchored under the bell, inside the trigger's own `relative` wrapper -- a
+  // nearer positioned ancestor than the header -- so it was never affected by
+  // the header's containing block and must stay put.
   assert.match(
     bell,
-    /absolute right-0 top-\[calc\(100%\+0\.5rem\)\] z-50 hidden max-h-\[28rem\] w-\[22rem\][^"]*sm:flex/,
+    /absolute right-0 top-\[calc\(100%\+0\.5rem\)\] z-50 flex max-h-\[28rem\] w-\[22rem\]/,
   );
   // It sits before the portal in the tree and is not inside it.
   const desktopAt = bell.indexOf("absolute right-0 top-[calc(100%+0.5rem)]");
-  const portalAt = bell.indexOf("{mounted && createPortal(");
+  const portalAt = bell.indexOf("<DialogPrimitive.Portal>");
   assert.ok(desktopAt > 0 && portalAt > desktopAt, "the desktop panel is not inside the portal");
   // Still a dropdown, not a sheet: no full-width fixed positioning on desktop.
   const desktop = bell.slice(desktopAt, portalAt);
   assert.doesNotMatch(desktop, /fixed inset-x-0/);
   assert.doesNotMatch(desktop, /rounded-t-3xl/);
+  // And no scrim on this shape. In Radix's Dialog the SCROLL LOCK lives on the
+  // overlay, so an overlay here would stop the page behind scrolling -- which
+  // this shape never did. Dismissing does not need one: the content's own
+  // dismissable layer listens on the document.
+  assert.doesNotMatch(desktop, /Overlay/, "the desktop dropdown never had a scrim");
 });
 
 test("both shapes render the same list from one component", () => {
@@ -459,9 +491,12 @@ test("both shapes render the same list from one component", () => {
   assert.match(bell, /function InboxPanel\(/);
   assert.equal((bell.match(/\{panel\}/g) ?? []).length, 2, "desktop and phone render the same panel");
   assert.match(bell, /const panel = \(\s*<InboxPanel/);
-  // Only one is ever visible.
-  assert.match(bell, /hidden max-h-\[28rem\][^"]*sm:flex/, "desktop hidden below sm");
-  assert.match(bell, /<div className="sm:hidden">/, "phone hidden from sm up");
+  // Only one is ever BUILT -- not built and hidden. Two `Dialog.Content`s in
+  // the tree would be two dialogs, each with its own focus trap, and `display:
+  // none` does not make the second one stop existing.
+  assert.match(bell, /\{wide\s*\n?\s*\? \(/, "the shape is a ternary, not a pair of classes");
+  assert.equal((bell.match(/<DialogPrimitive\.Content/g) ?? []).length, 2,
+    "one Content per arm, and no third");
 });
 
 test("opening a notification still marks it read and routes internally", () => {

@@ -59,11 +59,20 @@ export function PersonAdminPanel({
   );
 }
 
-/** The shared shell, so four different jobs do not become four different cards. */
+/**
+ * The shared shell, so four different jobs do not become four different cards.
+ *
+ * The heading is an `h2` because of WHERE THESE CARDS SIT, not because of how
+ * big the words are. They are the first sections under the page's `h1`, so an
+ * `h3` -- which is what this was -- made the outline read h1 then h3, and a
+ * screen reader's heading list lost a level with nothing in it. The size stays
+ * `text-lg`: the LEVEL answers "what is this a subsection of", the CLASS
+ * answers "how loud is it", and those are not the same question.
+ */
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-2xl border border-line bg-surface p-5 shadow-card">
-      <h3 className="font-display text-lg font-semibold text-ink-900">{title}</h3>
+      <h2 className="font-display text-lg font-semibold text-ink-900">{title}</h2>
       {children}
     </section>
   );
