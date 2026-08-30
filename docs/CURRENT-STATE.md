@@ -1,6 +1,7 @@
 # Current State
 
-**Last updated:** 2026-08-30, at the end of Q9 (settings, navigation, mobile, PWA).
+**Last updated:** 2026-08-30, at the end of Q9 (settings, navigation, mobile, PWA)
+and its closeout (birthday budget display, 390x844 proof).
 
 This file is the handoff between phases. Update it at the end of every phase and
 keep it short — it is meant to be read in full at the start of the next session.
@@ -12,9 +13,9 @@ keep it short — it is meant to be read in full at the start of the next sessio
 | Last completed phase | **Q9** |
 | Q9 verdict | `Q9 PASS — READY FOR Q10` |
 | Next phase | **Q10 — not started** |
-| App commit | `1f1d559a2bb2a0bd995aea0ff3005a355512582f` ("Stop a switched-away family coming back on the Back button") |
+| App commit | `846faca06eb9c7697b27d2c7fe9470ccb784c53f` ("Say what a birthday is budgeted, without telling the birthday person") |
 | Branch | `main`, clean, pushed. |
-| Serving Worker version | `5b3ce060-ba95-4618-9a00-07ec036c076e` |
+| Serving Worker version | `f8f136f0-208b-48ca-8299-816b0e0b41e9` |
 | Migrations applied | **001–047**, immutable. No 048 exists, and Q9 needed none. |
 | Live site | `xmas-family.uk` |
 
@@ -53,6 +54,22 @@ keep it short — it is meant to be read in full at the start of the next sessio
   Plus: the shadcn `Switch` was a 32×18 touch target; it keeps that appearance
   and gains a 44×44 hit area.
 
+  **Closeout** — an Upcoming card on `/birthdays` now carries the budget for
+  the birthday that is coming: `Budget £40`, or `Budget not set`. The figure is
+  the celebrant's own `christmas_recipients.budget_pennies`, the same row Event
+  Home and the dashboard read, through `formatPennies`. **£0 is a budget**, so
+  `BirthdayPlanning` gained `budgetIsSet` — `budgetPennies` alone could not tell
+  "£0 chosen" from "recipient archived", because both sum to zero. The
+  celebrant's own card carries **no budget line at all**: `birthdayBudgetLabel`
+  asks `birthdayCardState` first, which answers `self_private` before it reads
+  any planning, so no arrangement of budget or absence changes the answer and
+  the SHAPE of what renders cannot carry the secret either. Third lock, on top
+  of migration 031's RLS and the explicit `continue` in `loadFamilyBirthdays`.
+
+  ESLint also ignores `.wrangler/**` now. Previewing the Worker locally leaves
+  bundled scratch there and the lint gate went red with 21,456 problems in
+  generated code — the failure the `.open-next/**` ignore beside it exists for.
+
   `pageTitleFor` and the route-title table **moved from
   `src/app/components/nav-items.ts` to `src/lib/navigation.ts`** as part of the
   fix. In `nav-items` it could only be checked by matching a regex against the
@@ -73,10 +90,15 @@ keep it short — it is meant to be read in full at the start of the next sessio
   family. Decided in Q2 (the alternative locked people out) and unchanged.
   Nothing is *written* under a guessed Area: `getCurrentMember` still refuses to
   resolve a membership when there are several and no cookie matches.
-- **Edge will not size a window below ~516px outer / 492px inner**, so browser
-  QA measures the phone layout at 492 CSS px, not 390. Both the `sm` (640) and
-  `lg` (1024) breakpoints are below that, so the phone layout is genuinely
-  exercised; a 390px-only overflow would not be.
+- **Edge will not size a WINDOW below ~516px outer / 492px inner.** Resizing is
+  therefore not how to reach a phone viewport. Use CDP instead: start Edge with
+  `--remote-debugging-port=9222`, connect Playwright with `connectOverCDP`, and
+  send `Emulation.setDeviceMetricsOverride` — which gives a true 390x844 CSS
+  viewport at DPR 3 with touch, inside the already-signed-in session. Proven in
+  the Q9 closeout. `playwright-core` 1.62.1 is resolvable from the npx cache at
+  `%LOCALAPPDATA%/npm-cache/_npx/e41f203b7505f1fb/node_modules`; `channel:
+  msedge` needs no browser download. Edge must be fully closed before the flag
+  takes effect, so this needs the user to relaunch it.
 
 ## Q9 fingerprint note — read before comparing counts
 
