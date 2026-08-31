@@ -1,9 +1,138 @@
 # Current State
 
-**Last updated:** 2026-08-31, after roadmap Phase 4C closed out migration 053
-and removed the accidental rollback table.
+**Last updated:** 2026-08-31, after roadmap Phase 5A built the family-admin
+invitation runtime. **The commit is local and has NOT been pushed** — see the
+open item at the top of the next section.
 
 The handoff between phases. Current facts only — history lives in git.
+
+## READ THIS FIRST — Phase 5A is written, tested, and undeployed
+
+Phase 5A's runtime is committed on local `main` and **deliberately not pushed**,
+because pushing `main` auto-deploys production and one final gate could not be
+run on this machine:
+
+| Gate | Result |
+| ---- | ------ |
+| TypeScript `npx tsc --noEmit` | PASS |
+| ESLint | PASS — 0 errors (2 pre-existing warnings in `scripts/family-invitations.test.mjs`) |
+| `npm run build` | PASS |
+| `npm run test:all` | PASS — 2166 tests, 293 suites, 0 fail |
+| `git diff --check` | PASS |
+| **`npx opennextjs-cloudflare build` → `npm run check:worker-bundle`** | **NOT RUN** |
+
+**Why the Worker bundle check could not run.** OpenNext picks its package
+manager from the lockfile, sees `pnpm-lock.yaml`, and `execSync`s `pnpm build`.
+`pnpm` is not installed on this machine — not on `PATH`, not in
+`node_modules/.bin`, not resolvable from PowerShell — and `.open-next/` holds
+only `.build`, so there is no worker output for `check:worker-bundle` to read
+either. A shim on `PATH` did not reach OpenNext's `cmd.exe` child.
+
+**What that gate protects, and why it is not optional.** It is the check that
+caught the `__name` theme-bootstrap failure: wrangler's esbuild injects helpers
+into serialised inline scripts, and the failure appears only in the bundled
+Worker — never in `next build`. Deploying without it is deploying an unbundled
+guess.
+
+**What the next session must do, in order.** Install pnpm (`npm i -g pnpm`),
+run `npx opennextjs-cloudflare build` then `npm run check:worker-bundle` bare,
+and only then push. After the push: confirm the Cloudflare deployment, do the
+read-only live smoke on Family Access, and re-take the protected fingerprint
+with `scripts/qa/fingerprint.mjs`. None of those four has happened.
+
+## Roadmap Phase 5A — the family admin can invite, and learns nothing by doing it
+
+**The requirement.** A family administrator may invite any address they can
+type. They may **not** find out whether that address already has a Gift Planner
+account. Everything below is that sentence or a consequence of it.
+
+**One press, two private branches, one answer.** `Give access` → email →
+submit → `Invitation created.` Underneath:
+
+| The address | What happens | What the admin is told |
+| ----------- | ------------ | ---------------------- |
+| already has an account | the invitation is created and left for the invitee's Phase 5B screen. **No signup or setup email.** | `Invitation created.` |
+| has no account | the invitation is created **and** the Supabase/Resend account-setup email is sent | `Invitation created.` |
+
+Both answers are `200` with the same two fields and the same sentence, and
+`scripts/family-invitation-runtime.test.mjs` compares them with `deepEqual` and
+by serialised body rather than asserting each separately.
+
+**The branch is the attempt, not a lookup.** Nothing asks Auth whether an
+address is registered. `inviteUserByEmail` refuses an already-registered address
+*before* it sends anything, and that refusal is the only signal —
+`classifySetupEmailError` folds it into `ready` and it never leaves the server.
+No `listUsers`, no `listAllAuthUsers`, no `getUserById`, and a sweep over every
+file in `src/` proves it.
+
+**Where the code lives.**
+
+| File | What it is |
+| ---- | ---------- |
+| `src/lib/family-invitations.ts` | the decision. Holds no client, no key, no session — the four privileged operations are passed in, which is what lets the tests run the real decision with the branch chosen by a fake. |
+| `src/app/api/admin/family-access/route.ts` | the adapter. Calls `grant_area_access`, `record_invitation_delivery` and `list_area_access` on the **administrator's own session**, never the service role, because those routines authorise themselves from `auth.uid()`. |
+| `src/lib/family-access.ts` | six states, derived from 053's row shape. |
+| `src/app/more/family-access/family-access-client.tsx` | the screen. |
+
+**Six states, and two labels deleted.** `Awaiting sign-up` is gone: it existed to
+say the address had no account, on a badge. `invited` / **Invitation pending**
+replaces it and reads identically on both branches. `declined` is new — 053's
+`declined_at`, asked *before* `revoked` because the CHECK constraint makes a
+declined row `active = false` too, so asking the other way round makes every
+decline read as the administrator's own doing.
+
+| State | Label |
+| ----- | ----- |
+| `no_access` | No access |
+| `invited` | Invitation pending |
+| `awaiting_global_approval` | Waiting for Gift Planner approval |
+| `active` | Active |
+| `declined` | Declined |
+| `revoked` | Revoked |
+
+**Two actions were deleted, and that is the security work.**
+
+- `send-invite` was a *second* press, offered only on a seat labelled "Awaiting
+  sign-up". The two-step was an oracle with a state machine around it. Creating
+  the invitation and delivering it are one act now, so there is no intermediate
+  state to read the answer off.
+- `copy-setup-link` minted `generateLink({ type: "invite" })`, which GoTrue
+  **refuses** for an address that already has an account — a link for a
+  stranger, an error for a member. That was the cleanest account-existence
+  oracle in the application. There is no version of it that keeps the
+  convenience and loses the disclosure, so it is not there. **This is a product
+  capability that was removed**; a family that cannot receive email reliably has
+  no setup-link path until something better is designed.
+
+`copy-reset-link` survives, for a seat that is already **claimed** — no
+existence question arises, and `recovery` vs `magiclink` now comes from
+`list_area_access`'s own `email_confirmed`, so the route reads no table at all.
+
+**The failure sentence names nothing.** Only the no-account branch can fail to
+send, so "the email did not go out" would be the oracle by the long route. A
+failed send and a refused audit write both answer with one string that mentions
+neither email, account, sign-up nor provider — and says the true, useful part:
+the invitation exists, try again. The invitation is never lost, and a failed
+send activates no membership.
+
+**The audit is 053's, unchanged.** `record_invitation_delivery(person, outcome)`
+with the closed vocabulary `ready` / `undelivered`, called with the
+administrator's session. Both success branches write `ready`. No address, no
+domain, no body, no link, no token.
+
+**Re-invite works and stays consent-based.** `grant_area_access` clears
+`declined_at` and sets `active = true`, and never writes `user_id` — so a
+reissue restores an *invitation*, not a membership. The invitee must accept
+again in Phase 5B.
+
+**No migration.** 053 supports all of this as designed. There is still no 054.
+
+### Phase 5B still owns everything the invitee sees
+
+Not built, deliberately: the `/invitations` route, the Accept and Decline
+buttons, global pending-invitation cards, notification-bell integration, the
+Area-chooser refresh after Accept. `claim_app_member()` remains 053's
+`select false` no-op and no new silent auto-claim helper was created.
 
 ## Where the project stands
 

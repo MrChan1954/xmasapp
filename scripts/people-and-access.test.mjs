@@ -650,9 +650,20 @@ describe("no screen or route can quietly become Area-blind again", () => {
      * never writes `user_id`, which is the takeover `linkMembership` could
      * have performed and this cannot.
      */
+    assert.match(route, /session\.rpc\("grant_area_access", \{\s*\n\s*p_person_id: person,/u,
+      "access is granted for the person the administrator chose, and by the routine");
+    assert.ok(!route.includes("p_user_id"), "there is no way to name a login from here");
+
+    /*
+     * PHASE 5A MOVED THE CALL from the browser into the route, so that creating
+     * the invitation and delivering it are one act -- the two-step version had
+     * an intermediate state that told the administrator whether the address
+     * already had an account. It did NOT move it to the service role: it runs
+     * on `session`, the administrator's own, which is what leaves
+     * `require_acting_area` and `is_area_admin` in charge.
+     */
     const screen = withoutComments(read("src/app/more/family-access/family-access-client.tsx"));
-    assert.match(screen, /rpc\("grant_area_access", \{\s*\n\s*p_person_id: row\.person_id,/u,
-      "access is granted for the person the administrator chose");
+    assert.match(screen, /personId: row\.person_id/u, "for the person the administrator chose");
     assert.ok(!screen.includes("user_id"), "and nothing on this screen writes a login onto a seat");
   });
 

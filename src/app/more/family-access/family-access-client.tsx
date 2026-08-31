@@ -7,6 +7,7 @@ import {
   AREA_ACCESS_LABELS,
   areaAccessStatus,
   canGrantAccess,
+  canReissueInvitation,
   canRevokeAccess,
   isAdminSeat,
   type AreaAccessRow,
@@ -57,20 +58,43 @@ import { useRealtimeRefresh } from "../../components/use-realtime-refresh";
  *                                      empty it.
  *
  * WHY `grant_area_access` NOT WRITING `user_id` IS THE IMPORTANT ONE. Attaching
- * a login to an invitation is `claim_app_member`'s job and nothing else's,
- * because only the claimant can prove which login is theirs. An administrator
- * who could write `user_id` could hand any family seat to any account.
+ * a login to an invitation is `accept_family_invitation`'s job and nothing
+ * else's, because only the invitee can prove which login is theirs and only
+ * they can consent. An administrator who could write `user_id` could hand any
+ * family seat to any account.
  *
- * THE THREE THINGS THAT STILL GO THROUGH THE SERVER ROUTE are the three the
- * Supabase Admin API is the only way to do: send an invitation email, mint a
- * setup link, mint a recovery link. No SQL routine can send an email.
+ * WHAT STILL GOES THROUGH THE SERVER ROUTE is what the Supabase Admin API is
+ * the only way to do -- talk to Auth. No SQL routine sends an email or mints a
+ * link.
  *
- * FIVE STATUSES, NOT FOUR, AND THE NEW ONE IS THE POINT.
  * `awaiting_global_approval` is somebody who HAS claimed their seat and whose
  * Gift Planner account has not been approved. The family administrator can do
  * nothing about it, and this screen says so plainly -- otherwise they resend
  * the invitation, change the address, and eventually ask the person to sign up
  * again, none of which can possibly help.
+ *
+ * ==========================================================================
+ *  INVITING IS ONE PRESS, AND THE SCREEN IS NOT TOLD WHAT HAPPENED (053).
+ * ==========================================================================
+ *
+ * It used to be two. `grant_area_access` from here, then a SECOND button --
+ * "Send invitation" -- offered only on a seat this screen had labelled
+ * "Awaiting sign-up", which is a label that exists to say the address has no
+ * account. The two-step was an account-existence oracle with a state machine
+ * around it.
+ *
+ * Now: type the address, press once, read `Invitation created.` The browser
+ * posts to `/api/admin/family-access`, which creates the invitation and does
+ * whatever that address needs behind a trusted boundary -- an account-setup
+ * email if there is no account, and NOTHING AT ALL if there is one, because
+ * that person will be offered the invitation inside the app. The response is
+ * the same sentence, the same status and the same two fields either way, and
+ * this file could not tell the branches apart if it tried.
+ *
+ * SO THE GRANT LEFT THE BROWSER, and only the grant. Reading, revoking and the
+ * contributor pool are still RPCs called through the caller's own session,
+ * because none of them needs anything the browser must not have. The invitation
+ * does: it needs to talk to Auth, and it needs the answer thrown away.
  */
 
 type PersonFlags = { isFamilyContributor: boolean };
@@ -82,25 +106,24 @@ type Filter = "all" | AreaAccessStatus;
 const FILTERS: Array<{ value: Filter; label: string }> = [
   { value: "all", label: "All" },
   { value: "no_access", label: AREA_ACCESS_LABELS.no_access },
-  { value: "awaiting_signup", label: AREA_ACCESS_LABELS.awaiting_signup },
+  { value: "invited", label: AREA_ACCESS_LABELS.invited },
   { value: "awaiting_global_approval", label: "Waiting for approval" },
   { value: "active", label: AREA_ACCESS_LABELS.active },
+  { value: "declined", label: AREA_ACCESS_LABELS.declined },
   { value: "revoked", label: AREA_ACCESS_LABELS.revoked },
 ];
 
 const STATUS_TONES: Record<AreaAccessStatus, BadgeTone> = {
   no_access: "neutral",
-  awaiting_signup: "warning",
+  invited: "warning",
   awaiting_global_approval: "gold",
   active: "success",
+  declined: "danger",
   revoked: "danger",
 };
 
-/** The three actions that still need the Supabase Admin API. */
-type LinkAction = "send-invite" | "copy-setup-link" | "copy-reset-link";
-
 type DialogState =
-  | { kind: "grant"; row: Row }
+  | { kind: "invite"; row: Row }
   | { kind: "revoke"; row: Row }
   | { kind: "unlink"; row: Row }
   | null;
@@ -179,9 +202,10 @@ export function FamilyAccessClient() {
     const result: Record<Filter, number> = {
       all: rows.length,
       no_access: 0,
-      awaiting_signup: 0,
+      invited: 0,
       awaiting_global_approval: 0,
       active: 0,
+      declined: 0,
       revoked: 0,
     };
     for (const row of rows) result[areaAccessStatus(row)] += 1;
@@ -202,26 +226,40 @@ export function FamilyAccessClient() {
 
   const closeDialog = () => setDialog(null);
 
-  /** `grant_area_access` — creates or restores an invitation. Never `user_id`. */
-  const grantAccess = async (row: Row, email: string) => {
-    setBusy(`grant:${row.person_id}`);
+  /**
+   * ONE PRESS. THE BROWSER LEARNS NOTHING ABOUT THE ADDRESS IT JUST SENT.
+   *
+   * The server creates the invitation with `grant_area_access` -- through the
+   * administrator's own session, so the database still decides -- and then does
+   * whatever that address needs without saying which. The notice below is
+   * whatever the server sent, and the server sends one sentence for both
+   * branches on purpose. Nothing here inspects it, and nothing here should
+   * start to.
+   */
+  const invite = async (row: Row, email: string) => {
+    setBusy(`invite:${row.person_id}`);
     setError(null);
     setNotice(null);
     try {
-      const result = await createClient().rpc("grant_area_access", {
-        p_person_id: row.person_id,
-        p_email: email,
+      const response = await fetch("/api/admin/family-access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "invite", personId: row.person_id, email }),
       });
-      if (result.error) {
-        setError(describeSupabaseError(result.error, "That access could not be given."));
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; message?: string; error?: string }
+        | null;
+      if (!response.ok) {
+        setError(payload?.error ?? "That invitation could not be created.");
+        await load(true);
         return false;
       }
-      setNotice(`${row.person_name} can be signed in to with ${email}.`);
+      setNotice(payload?.message ?? "Invitation created.");
       closeDialog();
       await load(true);
       return true;
     } catch (thrown) {
-      setError(describeThrown(thrown, "That access could not be given. Check your connection and try again."));
+      setError(describeThrown(thrown, "That invitation could not be created. Check your connection and try again."));
       return false;
     } finally {
       setBusy(null);
@@ -254,16 +292,22 @@ export function FamilyAccessClient() {
     }
   };
 
-  /** The three that still need the Admin API, through the server route. */
-  const runLinkAction = async (action: LinkAction, row: Row) => {
-    setBusy(`${action}:${row.person_id}`);
+  /**
+   * The one link the Admin API still mints, for a seat that ALREADY has a login
+   * on it. There is no setup link any more: `generateLink({ type: "invite" })`
+   * is refused by GoTrue for an address that already has an account, so it
+   * answered with a link for a stranger and an error for a member — an
+   * account-existence oracle wearing a convenience feature's clothes.
+   */
+  const copyResetLink = async (row: Row) => {
+    setBusy(`copy-reset-link:${row.person_id}`);
     setError(null);
     setNotice(null);
     try {
       const response = await fetch("/api/admin/family-access", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, personId: row.person_id }),
+        body: JSON.stringify({ action: "copy-reset-link", personId: row.person_id }),
       });
       const payload = (await response.json().catch(() => null)) as
         | { ok?: boolean; message?: string; link?: string; error?: string }
@@ -271,10 +315,8 @@ export function FamilyAccessClient() {
       if (!response.ok) {
         throw new Error(payload?.error ?? "That Family Access change could not be saved.");
       }
-      if (action !== "send-invite") {
-        if (!payload?.link) throw new Error("Supabase did not return a link.");
-        await copySensitiveLink(payload.link);
-      }
+      if (!payload?.link) throw new Error("Supabase did not return a link.");
+      await copySensitiveLink(payload.link);
       setNotice(payload?.message ?? "Done.");
     } catch (thrown) {
       setError(describeThrown(thrown, "That Family Access change could not be saved."));
@@ -349,7 +391,7 @@ export function FamilyAccessClient() {
       <section className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="Access summary">
         <Summary label="Family" value={counts.all} />
         <Summary label="Active" value={counts.active} accent />
-        <Summary label="Awaiting sign-up" value={counts.awaiting_signup} />
+        <Summary label="Invitation pending" value={counts.invited} />
         <Summary label="Waiting for approval" value={counts.awaiting_global_approval} />
       </section>
 
@@ -399,21 +441,21 @@ export function FamilyAccessClient() {
               key={row.person_id}
               row={row}
               busy={busy}
-              onGrant={() => setDialog({ kind: "grant", row })}
+              onInvite={() => setDialog({ kind: "invite", row })}
               onRevoke={() => setDialog({ kind: "revoke", row })}
               onUnlink={() => setDialog({ kind: "unlink", row })}
-              onLinkAction={(action) => void runLinkAction(action, row)}
+              onCopyResetLink={() => void copyResetLink(row)}
             />
           ))}
         </div>
       )}
 
-      {dialog?.kind === "grant" && (
-        <GrantAccessDialog
+      {dialog?.kind === "invite" && (
+        <InviteDialog
           row={dialog.row}
           busy={busy !== null}
           onClose={closeDialog}
-          onGrant={(email) => grantAccess(dialog.row, email)}
+          onInvite={(email) => invite(dialog.row, email)}
         />
       )}
 
@@ -552,17 +594,17 @@ function ContributorPool({
 function AccessCard({
   row,
   busy,
-  onGrant,
+  onInvite,
   onRevoke,
   onUnlink,
-  onLinkAction,
+  onCopyResetLink,
 }: {
   row: Row;
   busy: string | null;
-  onGrant: () => void;
+  onInvite: () => void;
   onRevoke: () => void;
   onUnlink: () => void;
-  onLinkAction: (action: LinkAction) => void;
+  onCopyResetLink: () => void;
 }) {
   const status = areaAccessStatus(row);
   const working = busy?.endsWith(`:${row.person_id}`) ?? false;
@@ -617,19 +659,27 @@ function AccessCard({
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-2">
-              {canGrantAccess(row) && (
-                <ActionButton disabled={working} onClick={onGrant} primary>Give access</ActionButton>
-              )}
-
-              {status === "awaiting_signup" && (
-                <>
-                  <ActionButton disabled={working} onClick={() => onLinkAction("send-invite")}>Send invitation</ActionButton>
-                  <ActionButton disabled={working} onClick={() => onLinkAction("copy-setup-link")}>Copy setup link</ActionButton>
-                </>
+              {/* ONE BUTTON, AND ITS LABEL IS NEUTRAL BY CONSTRUCTION.
+                  "Resend the email" would be a guess about which branch this
+                  invitation took, made on a screen that is not allowed to know.
+                  It asks once more; the server decides what "again" means for
+                  that address, and does not say. */}
+              {(canGrantAccess(row) || canReissueInvitation(row)) && (
+                <ActionButton
+                  disabled={working}
+                  onClick={onInvite}
+                  primary={canGrantAccess(row)}
+                >
+                  {status === "no_access"
+                    ? "Give access"
+                    : status === "revoked"
+                      ? "Give access back"
+                      : "Invite again"}
+                </ActionButton>
               )}
 
               {status === "active" && (
-                <ActionButton disabled={working} onClick={() => onLinkAction("copy-reset-link")}>Copy reset link</ActionButton>
+                <ActionButton disabled={working} onClick={onCopyResetLink}>Copy reset link</ActionButton>
               )}
 
               {canRevokeAccess(row) && (
@@ -652,16 +702,25 @@ function AccessCard({
   );
 }
 
-function GrantAccessDialog({
+/**
+ * TYPE THE ADDRESS, PRESS ONCE.
+ *
+ * THE HINT IS THE CAREFUL PART. It used to say "If they have not signed up yet,
+ * the invitation waits for them" -- which invites the administrator to wonder
+ * which of those this is, and the old screen then told them. This one describes
+ * what is true of BOTH branches and offers no way to find out which: an
+ * invitation is made, the person is asked, and the answer is theirs.
+ */
+function InviteDialog({
   row,
   busy,
   onClose,
-  onGrant,
+  onInvite,
 }: {
   row: Row;
   busy: boolean;
   onClose: () => void;
-  onGrant: (email: string) => Promise<boolean>;
+  onInvite: (email: string) => Promise<boolean>;
 }) {
   const [email, setEmail] = useState(row.email ?? "");
   const [validation, setValidation] = useState<string | null>(null);
@@ -671,15 +730,15 @@ function GrantAccessDialog({
     const normalized = validateEmail(email);
     if (!normalized.ok) { setValidation(normalized.error); return; }
     setValidation(null);
-    await onGrant(normalized.value);
+    await onInvite(normalized.value);
   };
 
   return (
     <Modal labelledBy="family-access-dialog-title" onClose={onClose} size="md" surface="white" dismissible={!busy}>
       <ModalHeader
         id="family-access-dialog-title"
-        title={`Give ${row.person_name} access`}
-        description="They sign in with this address. Giving access does not create an account — they sign up for one themselves, or follow an invitation."
+        title={`Invite ${row.person_name}`}
+        description="They are asked whether they want to join this family, and they answer for themselves. Nobody is added until they accept."
         onClose={onClose}
       />
       <div className="px-5 pb-6 sm:px-7 sm:pb-7">
@@ -688,7 +747,7 @@ function GrantAccessDialog({
             label="Email address"
             required
             error={validation}
-            hint="It has to be the address on their Gift Planner account. If they have not signed up yet, the invitation waits for them."
+            hint="Gift Planner sends them whatever this address needs, and does not report back which. Use the address they will sign in with."
           >
             <Input
               autoFocus
@@ -703,7 +762,7 @@ function GrantAccessDialog({
           </Field>
           <div className="mt-6 grid grid-cols-2 gap-3">
             <Button variant="secondary" size="lg" disabled={busy} onClick={onClose}>Cancel</Button>
-            <Button type="submit" size="lg" disabled={busy}>{busy ? "Saving…" : "Give access"}</Button>
+            <Button type="submit" size="lg" disabled={busy}>{busy ? "Saving…" : "Invite"}</Button>
           </div>
         </form>
       </div>

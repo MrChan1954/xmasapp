@@ -467,10 +467,27 @@ describe("Family access is one family's, even though it runs as the service role
      * session, where `is_area_admin(acting_area())` is checked by the routine.
      */
     assert.match(screen, /rpc\("list_area_access"\)/u);
-    assert.match(screen, /rpc\("grant_area_access"/u);
     assert.match(screen, /rpc\("revoke_area_access"/u);
     assert.ok(screen.includes('"/api/admin/family-access"'),
-      "and the three Admin-API actions still go through the route");
+      "and the Admin-API actions still go through the route");
+
+    /*
+     * PHASE 5A MOVED THE GRANT, AND ONLY THE GRANT, BEHIND THE ROUTE -- and it
+     * is still not the route's write. `grant_area_access` runs there with the
+     * ADMINISTRATOR'S OWN SESSION, so `require_acting_area` and
+     * `is_area_admin` still decide; handing it the service role would remove
+     * the only thing checking it.
+     *
+     * Why it had to move: inviting was two presses, and the second one was
+     * offered only on a seat the screen had labelled "Awaiting sign-up" -- a
+     * label that exists to say the address has no Gift Planner account. Making
+     * the invitation and delivering it one act is what removes the
+     * intermediate state an administrator could read the answer off.
+     */
+    assert.ok(!withoutComments(screen).includes('rpc("grant_area_access"'));
+    assert.match(route, /session\.rpc\("grant_area_access"/u);
+    assert.ok(!route.includes('admin.rpc("grant_area_access"'),
+      "the service role must never call a routine that authorises itself from auth.uid()");
   });
 
   test("AND THE ROUTE WRITES NOTHING AT ALL ANY MORE", () => {
@@ -509,39 +526,61 @@ describe("Family access is one family's, even though it runs as the service role
     assert.ok(!withoutComments(screen).includes("listUsers"));
   });
 
-  test("every read the route makes is narrowed to it", () => {
-    // NOTHING UNDERNEATH WILL DO THIS. The service role bypasses row level
-    // security, and migration 037's write barrier exempts a caller with no
-    // `auth.uid()` -- which is exactly what the service role is. Scoping here
-    // is the only scoping there is.
-    const queries = route.split('.from("').slice(1).map((chunk) => chunk.slice(0, chunk.indexOf('"')));
-    assert.deepEqual(queries, ["people", "app_members"],
-      "the two reads in loadTarget are the whole of this route's table access");
-    const scoped = [...route.matchAll(/\.eq\("area_id", areaId\)/gu)];
-    assert.equal(scoped.length, 2, "and both of them name the Area");
+  test("THE SERVICE ROLE READS NO TABLE AT ALL ANY MORE", () => {
+    /*
+     * IT USED TO READ TWO, AND SCOPE THEM BY HAND. Nothing underneath will do
+     * that: the service role bypasses row level security, and migration 037's
+     * write barrier exempts a caller with no `auth.uid()` -- which is exactly
+     * what the service role is. Scoping there was the only scoping there was,
+     * and an `.eq("area_id", areaId)` that goes missing in an edit is a family
+     * reading another family's rows.
+     *
+     * Phase 5A deleted the problem instead of guarding it. Every read is
+     * `list_area_access()` through the administrator's own session, and that
+     * routine TAKES NO AREA PARAMETER -- so there is no filter left to forget
+     * and nothing to point elsewhere.
+     */
+    assert.deepEqual(route.split('.from("').slice(1), [], "no table access in this route");
+    assert.ok(!route.includes('.eq("area_id"'), "and no hand-written Area filter to lose");
+    assert.match(route, /session\.rpc\("list_area_access"\)/u);
   });
 
   test("a person from another family is not found rather than refused", () => {
-    // Both actions reach their person through `loadTarget`, so scoping that
-    // one query scopes both -- and the answer is the same 404 an id that names
-    // nobody gets, which tells a caller nothing about another family.
-    const gateway = route.slice(route.indexOf("async function loadTarget("));
-    assert.match(gateway, /\.eq\("id", personId\)\s*\n\s*\.eq\("area_id", areaId\)/u);
-    assert.match(gateway, /This family member was not found/u);
+    /*
+     * They are ABSENT from `list_area_access()`'s answer, because it returns
+     * the acting Area's people and nothing else. Every caller here treats
+     * absent as the same 404 an id that names nobody gets, which tells the
+     * caller nothing about another family.
+     */
+    assert.match(route, /\.find\(\(candidate\) => candidate\.person_id === personId\)/u);
+    assert.match(route, /This family member was not found/u);
+
+    const runtime = read("src/lib/family-invitations.ts");
+    assert.match(runtime, /rows\.find\(\(candidate\) => candidate\.person_id === request\.personId\) \?\? null/u);
+    assert.match(runtime, /return \{ ok: false, status: 404, message: NOT_IN_THIS_FAMILY \}/u);
   });
 
-  test("THE ADDRESS COMES FROM THE SEAT, NEVER FROM THE REQUEST", () => {
+  test("THE ADDRESS IS CHECKED TWICE, AND THE DATABASE HAS THE LAST WORD", () => {
     /*
-     * The old route took an `email` in the body and would create or re-address
-     * an account from it. Sending an invitation to an address the request chose
-     * is sending somebody a way into this family; sending it to the address the
-     * SEAT already names cannot be, because `grant_area_access` is where an
-     * administrator types one and where the database checks it.
+     * `email` came back into the body in Phase 5A, because inviting is one
+     * press again and the administrator types the address in the same act. It
+     * is not trusted for being there: `validateEmail` checks its shape in the
+     * runtime, and `grant_area_access` checks it again in the database, where
+     * the unique index on `(area_id, lower(email))` and the refusal to
+     * re-address a CLAIMED seat are the rules that actually bind.
+     *
+     * `delivery` and `role` stay gone. There is no account to create from a
+     * request body and no role to choose.
      */
     const body = route.slice(route.indexOf("async function readBody("));
-    assert.match(body, /const allowedKeys = new Set\(\["action", "personId"\]\);/u);
-    assert.ok(!route.includes("normalizeEmail"), "there is no address to normalise here any more");
-    assert.match(route, /membership\.email as string/u, "the address is read off the seat");
+    assert.match(body, /const allowedKeys = new Set\(\["action", "personId", "email"\]\);/u);
+    assert.ok(!body.includes('"role"'), "no role may be chosen from a request");
+    assert.ok(!body.includes('"delivery"'));
+
+    const runtime = read("src/lib/family-invitations.ts");
+    assert.match(runtime, /const email = validateEmail\(request\.email\);/u);
+    assert.match(runtime, /if \(!email\.ok\) return \{ ok: false, status: 400/u,
+      "and a malformed address never reaches Auth or the database");
   });
 });
 

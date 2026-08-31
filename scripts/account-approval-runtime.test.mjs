@@ -782,8 +782,28 @@ describe("family access, as five states", () => {
     assert.equal(areaAccessStatus(seat({ app_member_id: null, email: null, role: null, active: null, claimed: null, account_status: null, email_confirmed: null })), "no_access");
   });
 
-  test("an unclaimed invitation is `awaiting_signup`", () => {
-    assert.equal(areaAccessStatus(seat({ claimed: false, account_status: null, email_confirmed: null })), "awaiting_signup");
+  test("AN UNCLAIMED INVITATION IS `invited`, AND SAYS NOTHING ELSE", () => {
+    /*
+     * IT USED TO BE `awaiting_signup`, and that word was an account-existence
+     * oracle: it told the family administrator that the address they typed had
+     * no Gift Planner account. One word replaces it, and it reads the same
+     * whether the invitee already had an account or has just been sent a setup
+     * email. Migration 053's own contract is what keeps that true -- for an
+     * unclaimed seat, every account-shaped column `list_area_access` returns is
+     * null EITHER WAY, because all of them are reached only through
+     * `m.user_id`.
+     */
+    assert.equal(areaAccessStatus(seat({ claimed: false, account_status: null, email_confirmed: null })), "invited");
+  });
+
+  test("and a declined one is its own state, which is what 053 added", () => {
+    // Before `declined_at`, "they said no" was byte-identical to "I switched
+    // them off". Declined is asked BEFORE revoked because the CHECK constraint
+    // makes a declined row `active = false` as well.
+    assert.equal(
+      areaAccessStatus(seat({ claimed: false, active: false, account_status: null, email_confirmed: null, declined_at: "2026-08-30T10:00:00Z" })),
+      "declined",
+    );
   });
 
   test("A CLAIMED SEAT WITH AN UNAPPROVED ACCOUNT IS ITS OWN STATE", () => {
@@ -815,10 +835,14 @@ describe("family access, as five states", () => {
 
   test("the labels are the phase's, verbatim", () => {
     assert.equal(AREA_ACCESS_LABELS.no_access, "No access");
-    assert.equal(AREA_ACCESS_LABELS.awaiting_signup, "Awaiting sign-up");
+    assert.equal(AREA_ACCESS_LABELS.invited, "Invitation pending");
     assert.equal(AREA_ACCESS_LABELS.awaiting_global_approval, "Waiting for Gift Planner approval");
     assert.equal(AREA_ACCESS_LABELS.active, "Active");
+    assert.equal(AREA_ACCESS_LABELS.declined, "Declined");
     assert.equal(AREA_ACCESS_LABELS.revoked, "Revoked");
+    // The two that told an administrator whether an address had an account.
+    assert.ok(!("awaiting_signup" in AREA_ACCESS_LABELS));
+    assert.ok(!Object.values(AREA_ACCESS_LABELS).includes("Awaiting sign-up"));
   });
 
   test("and the sentence that stops an administrator chasing the wrong thing", () => {
@@ -846,10 +870,22 @@ describe("family access, as five states", () => {
   test("the screen reads and writes through the routines and nothing else", () => {
     const screen = read("src/app/more/family-access/family-access-client.tsx");
     assert.match(screen, /rpc\("list_area_access"\)/u);
-    assert.match(screen, /rpc\("grant_area_access"/u);
     assert.match(screen, /rpc\("revoke_area_access"/u);
     assert.ok(!screen.includes('from("app_accounts")'));
     assert.ok(!screen.includes('from("app_members")'), "membership rows come from the routine");
+
+    /*
+     * `grant_area_access` LEFT THE BROWSER IN PHASE 5A, and it is the only one
+     * that did. Inviting used to be two presses -- grant here, then a separate
+     * "Send invitation" offered only on a seat labelled "Awaiting sign-up" --
+     * and that second button existed to be offered when the address had no
+     * account. The grant and the delivery are one act now, behind the route, so
+     * there is no intermediate state for the screen to read the answer off.
+     * The routine still runs as the ADMINISTRATOR'S OWN SESSION there; see
+     * `scripts/family-invitation-runtime.test.mjs`.
+     */
+    assert.ok(!withoutComments(screen).includes('rpc("grant_area_access"'));
+    assert.match(screen, /action: "invite"/u);
   });
 
   test("NO PROJECT-WIDE AUTH ENUMERATION ANYWHERE IN FAMILY ACCESS", () => {
@@ -875,11 +911,22 @@ describe("family access, as five states", () => {
     assert.deepEqual(survivors, []);
   });
 
-  test("the three retained elevated actions are the three Auth alone can do", () => {
+  test("the retained elevated actions are the ones Auth alone can do", () => {
+    /*
+     * TWO NOW, NOT THREE. `copy-setup-link` minted
+     * `generateLink({ type: "invite" })`, which GoTrue REFUSES for an address
+     * that already has an account -- so it answered with a link for a stranger
+     * and an error for a member. That is the cleanest account-existence oracle
+     * the application had, and there is no version of it that keeps the
+     * convenience and loses the disclosure. `send-invite` went with it: sending
+     * is part of inviting now, so there is no second press to observe.
+     */
     const route = read("src/app/api/admin/family-access/route.ts");
-    assert.match(route, /const actions = new Set<Action>\(\["send-invite", "copy-setup-link", "copy-reset-link"\]\);/u);
+    assert.match(route, /const actions = new Set<Action>\(\["invite", "copy-reset-link"\]\);/u);
     assert.match(route, /inviteUserByEmail/u);
     assert.match(route, /generateLink/u);
+    assert.ok(!withoutComments(route).includes('"send-invite"'));
+    assert.ok(!withoutComments(route).includes('"copy-setup-link"'));
     // Ordinary password reset is a public Auth call the browser makes for
     // itself, so routing it through the service role added a privilege and no
     // capability. The CODE, not the commentary that explains its removal.
