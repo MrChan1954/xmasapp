@@ -1,9 +1,95 @@
 # Current State
 
-**Last updated:** 2026-08-31, after roadmap Phase 5A built the family-admin
-invitation runtime and its closeout ran the Worker gate and pushed.
+**Last updated:** 2026-08-31, after roadmap Phase 5B put the invitee's side of
+the invitation live.
 
 The handoff between phases. Current facts only — history lives in git.
+
+## CORRECTION — Tricketts is a REAL family, not a QA fixture
+
+Earlier notes on this page called Tricketts a **user-confirmed throwaway** and
+scheduled it for deletion at the final closeout, alongside QA Alpha and QA
+Charlie. **That was wrong, and acting on it would have destroyed a real
+family's data.**
+
+`.qa-areas.local.json` is the authority, and it always was. It lists exactly
+three QA Areas — **QA Alpha, QA Bravo, QA Charlie** — and one protected Area,
+**Our family**. Tricketts appears in neither list. It was created live on
+2026-08-31 at 14:32 UTC through the new runtime, and its **admin seat belongs to
+a different real person's address**, not to this account.
+
+The rules from here:
+
+- **Tricketts is REAL and READ-ONLY.** Treat it as `Our family` is treated,
+  minus the protected fingerprint.
+- **Final QA cleanup must NEVER include Tricketts.** Only QA Alpha, QA Bravo
+  and QA Charlie are deletable.
+- **Any future mutation of Tricketts needs its own explicit approval**, asked
+  for and given at the time.
+- The Phase 6A Accept into Tricketts was legitimate: the misclassification was
+  surfaced to the user *before* the write, and they approved it knowing
+  Tricketts is a real family. That membership stands and is not undone here.
+
+An Area in neither list is **unclassified, and unclassified means real**. Do not
+infer QA status from a name that looks like a test.
+
+## Phase 5B — the invited person can answer, and production serves it
+
+**The invitation runtime is complete on both sides and deployed.** Migration 053
+gave the invitee three routines in August and no screen to use them from; there
+is one now.
+
+| Fact | Value |
+| ---- | ----- |
+| Commit | `d21aa5e`, pushed |
+| Cloudflare version | `5030bfa1-16d6-4fb6-9e25-971e5d4cd6ce`, 100% traffic, created 2026-08-31T20:43:21Z |
+| Migrations | still **001–053**. Phase 5B needed none. |
+
+**The surface is `/invitations`, and it is global.** It is in `GLOBAL_ROUTES`,
+so `AppFrame` draws no chrome and `FamilyProvider` does no Area work — verified
+live: **zero `<nav>` elements** on the page. It resolves no membership, no
+acting Area and no `gp_area`, which is what lets somebody in **no family at
+all** open it. An Area-scoped notification could not have carried this:
+`notifications` sits behind `is_area_member`, so a row about a family you have
+not joined is a row you cannot read.
+
+**A globally pending account may stand there** — the one routing change, via
+`PENDING_ALLOWED` in `src/lib/account-status.ts`. 053 already decided it:
+accepting while pending creates a membership that grants nothing, because every
+permission predicate carries `is_globally_approved()`.
+
+**Accept does not select the family it just joined.** `accept_family_invitation`
+returns the Area id and the screen ignores it.
+
+**Where it appears:** `/invitations`, the zero-family onboarding (above *create
+a family*), the Area chooser (`ChooserWithInvitations`), and `/account-pending`.
+`compact` renders nothing when none is waiting, so those screens are unchanged
+for everybody else.
+
+**`claimInvitations()` is a no-op that keeps its call sites.** It calls
+`claim_app_member()`, which 053 reduced to `select false`. Its documentation
+used to describe the pre-053 behaviour as current — *"the one routine that may
+write `app_members.user_id`"* — which would have led a reader to believe sign-in
+still joins people, or to "repair" it. The comment now says the truth and a test
+pins it. **Removing the call sites belongs with dropping the routine, in one
+change** — see Phase 6 below.
+
+**The notification bell is deliberately not integrated.** Forcing invitations
+into `notifications` means weakening the policy that keeps every family's
+notifications private, to deliver one sentence. Polish, later.
+
+### Live QA, read-only, on deployment `5030bfa1`
+
+The signed-in QA account has a **real open invitation to Tricketts**, so the
+populated state was exercised rather than only the empty one. Desktop 1440×900
+and mobile 390×844: `Your invitations` → *Invitation to Tricketts* → "You have
+been invited to join Tricketts as Taylor." → Accept / Decline, both 48px. No
+horizontal overflow at either size, no application console errors, no Area
+chrome. **Neither button was pressed** — the Tricketts seat is still `invited`,
+unclaimed and undeclined, and the all-Areas membership total is still 12.
+
+Root `/` still renders Our family's dashboard normally for that account: a
+pending invitation to another family changes nothing about the acting one.
 
 ## Every Phase 5A gate passed, and it is pushed
 
@@ -173,7 +259,7 @@ Area-chooser refresh after Accept. `claim_app_member()` remains 053's
 | Q19 verdict | `LAUNCH STEP 1 PASS — READY FOR LIVE SIGN-UP E2E` |
 | Next phase | **The family invitation runtime.** The database is ready; **no invitation UI exists yet** — nothing in the runtime lists, sends, accepts or declines an invitation. |
 | Migration 053 | **APPLIED TO PRODUCTION**, 2026-08-31, between 17:31 and 18:30 UTC. Verified live read-only: `app_members.declined_at` exists and all four routines are exposed, SECURITY DEFINER, `search_path=""`. |
-| Cleanup hold | **QA Alpha, QA Charlie and Tricketts must not be deleted** until the live invitation tests complete. QA Bravo stays unless explicitly requested. |
+| Cleanup hold | **QA Alpha, QA Charlie and QA Bravo** are the only deletable QA Areas, and none goes before the live invitation tests finish. **Tricketts is NOT one of them** — see the correction at the top of this page. |
 | Branch | `main` |
 | Local HEAD | see git; Phase 4B pushed the three held commits plus its own. |
 | origin/main | the Phase 4B commit. The three commits held back since Phase 3 are no longer held. |
@@ -364,9 +450,9 @@ DPR 3.
 ## A fifth Area exists: "Tricketts"
 
 Created live 2026-08-31 14:32 UTC with one admin and one member — the first
-family made through the new runtime. **USER-CONFIRMED as a throwaway test**, so
-it is disposable and should be removed alongside QA Alpha and QA Charlie at the
-final closeout. `Our family` is untouched: every protected value is unchanged
+family made through the new runtime. **This was recorded as a throwaway and that was
+wrong** — see the correction at the top of this page. It is a real family, it
+is not deleted at closeout, and it is not mutated without separate approval. `Our family` is untouched: every protected value is unchanged
 and `crossAreaTotal` is still 0.
 
 ## SMTP — configured, and proved to deliver
@@ -1423,13 +1509,13 @@ recipients, `crossAreaTotal` **0**.
 
 **QA Area census — all five Areas present, none deleted:** `Our family`,
 `QA Alpha`, `QA Bravo`, `QA Charlie`, `Tricketts`. None archived. The cleanup
-hold stands: QA Alpha, QA Charlie and Tricketts go at the final closeout, QA
-Bravo stays unless asked otherwise.
+hold stands for the QA Areas. **Tricketts is not a QA Area and must never be
+deleted in QA cleanup** — see the correction at the top of this page.
 
 **Unclaimed invitation census — RUN, and safely.** Classified **by Area id
 only**; no address was selected or printed. Production holds **one** open
 unclaimed invitation (`user_id is null and active`), and it is in
-**`Tricketts`** — the USER-CONFIRMED throwaway. **Zero in `Our family`, and zero
+**`Tricketts`** — recorded here as a throwaway, which was wrong. **Zero in `Our family`, and zero
 unexpected non-QA invitations.** 12 `app_members` rows across all five Areas.
 
 ### The one residual, and it is not a blocker
