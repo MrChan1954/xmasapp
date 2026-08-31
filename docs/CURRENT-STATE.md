@@ -1,7 +1,7 @@
 # Current State
 
-**Last updated:** 2026-08-31, after the sign-up / approval / Area-onboarding
-runtime was built and held locally.
+**Last updated:** 2026-08-31, after the Q19 runtime was pushed, auto-deployed
+and smoke-tested live, with public sign-up open.
 
 The handoff between phases. Current facts only — history lives in git.
 
@@ -10,23 +10,90 @@ The handoff between phases. Current facts only — history lives in git.
 | Fact | Value |
 | ---- | ----- |
 | Live site | `https://xmas-family.uk/` |
-| Last completed phase | **Q19 part three — the runtime is BUILT, TESTED and HELD. Not pushed, not deployed.** |
-| Q19 verdict | `Q19 RUNTIME PASS — READY FOR AUTH CONFIGURATION AND LAUNCH` |
-| Next phase | **Q19 launch — configure Supabase Auth, push, deploy, live QA.** A short session, and the only one that touches Auth settings. |
+| Last completed phase | **Q19 launch step 1 — Auth configuration verified, runtime DEPLOYED, signed-out smoke passed.** |
+| Q19 verdict | `LAUNCH STEP 1 PASS — READY FOR LIVE SIGN-UP E2E` |
+| Next phase | **Live sign-up / approval / Area-onboarding E2E**, then final QA-Area cleanup. **Blocked on custom SMTP** — see below. |
 | Branch | `main` |
-| Local HEAD | **four commits held back**: Q18's closeout, 052's build, the bootstrap note, and the runtime. |
-| origin/main | `d36d47d` — Q18's consolidation, deployed. It carried Q17's held docs commit `e38e8a2`. |
-| Serving Worker | **still the OLD runtime.** Nothing from Q19 has ever been deployed. |
+| Local HEAD | `12909e2` — pushed. Nothing held back. |
+| origin/main | `12909e2` — the Q19 runtime, deployed 2026-08-31 ~13:58 UTC. |
+| Serving Worker | **the Q19 runtime.** `/sign-up` returns 200 live; `/login` offers *Create an account*. |
 | Product name | **Gift Planner** |
 | Migrations applied | **001–052**, immutable. 052 applied manually 2026-08-31 01:06:23 UTC. |
 | Migration **052** | **APPLIED and verified.** 37 PASS / 0 FAIL across its 40 post-apply checks. |
-| Public sign-up | **STILL OFF**, and **Confirm Email is unchanged**. `/sign-up` exists in the repository and is unreachable in production. |
+| Public sign-up | **ON**, and **Confirm Email is ON**. Both machine-read from GoTrue, not taken on trust. |
 | Global administrators | **one**, bootstrapped 2026-08-31 01:18:25 UTC. |
 
-> **The single most important fact on this page.** The database is ready, the
-> runtime is written and every local gate is green — and **not one line of it is
-> live**. The next session's whole job is turning two Auth settings on, pushing,
-> and watching. In that order, and not before the settings are confirmed.
+> **The single most important fact on this page.** The runtime is live and the
+> front door is open, but **nobody has ever completed a real sign-up**. The
+> confirmation email cannot currently be delivered to a family address: the
+> project still uses Supabase's built-in email service. Custom SMTP is the next
+> phase's first task, before any E2E attempt.
+
+## Q19 launch step 1 — configured, pushed, deployed, smoke-tested
+
+**Auth configuration, machine-read** from `GET /auth/v1/settings` and from
+non-mutating `/auth/v1/verify` probes rather than from the dashboard:
+
+| Setting | Value | How it was read |
+| ------- | ----- | --------------- |
+| Confirm Email | **ON** (`mailer_autoconfirm: false`) | settings endpoint |
+| Public sign-up | **ON** (`disable_signup: false`) | settings endpoint |
+| Email provider | enabled | settings endpoint |
+| Site URL | `https://xmas-family.uk/` | verify probe with no `redirect_to` |
+| SMTP | **built-in Supabase service — USER-CONFIRMED, not machine-read** | user checked the dashboard |
+| Rate limits / quota | **not read** — dashboard-only, and no management token exists here | — |
+
+Public sign-up was **already ON** when this phase started, contrary to the
+brief's assumption. It was left on, on the user's decision: the exposure already
+existed, 052's approval gate was already live in the database, and pushing the
+new runtime shrank the window in which a new account met a runtime that signed
+it out.
+
+**The redirect allow-list is tight, and was proved so.** Each of the three URLs
+the runtime actually asks for is accepted, and a control URL is not — a rejected
+`redirect_to` falls back to the Site URL, which is what makes the probe
+discriminating:
+
+| Probed | Result |
+| ------ | ------ |
+| `https://xmas-family.uk/auth/callback` (sign-up confirmation) | accepted |
+| `https://xmas-family.uk/auth/callback?next=/reset-password` (forgot password) | accepted |
+| `https://xmas-family.uk/auth/callback?next=/account-setup` (admin invite) | accepted |
+| `https://xmas-family.uk/account-setup`, any other path on that origin | accepted |
+| `http://`, `localhost`, `www.`, a look-alike subdomain, `workers.dev` | **rejected** |
+
+**Deployment.** `d36d47d..12909e2` pushed to `main`; Cloudflare Workers Builds
+auto-deployed it. `/sign-up` went 404 → 200 about 60 seconds after the push.
+No manual deploy was run.
+
+**Live signed-out smoke — passed.** `/login` (with *Create an account* linking
+to `/sign-up`), `/sign-up` (email, password, confirm password, correct copy),
+`/account-pending`, `/account-rejected` and `/check-email` all render; none
+carries any Area data; `/admin/accounts` redirects to `/login`;
+`/api/supabase-health` refuses an unauthenticated caller. No horizontal
+overflow at 1440×900 or at 390×844 DPR 3, and no application console errors —
+the only console error seen appears identically on `example.com` and is Edge's
+own.
+
+**Protected fingerprint, taken after deployment:** notifications 37, people 19,
+events 15, appMembers 4, recipients 35, Christmas 2026 active with 19
+recipients, `crossAreaTotal` **0**. Unchanged.
+
+**QA Alpha, QA Bravo and QA Charlie all still exist**, deliberately. They are
+the safe mutation targets for the live E2E phase and are removed only at the
+final closeout, preserving `Our family`.
+
+**What is NOT tested.** No production account has been created. No confirmation
+email has been sent or received. The approval path, the rejection path, Area
+onboarding and the invite/claim path have never run against production. An
+existing account's sign-in was not exercised — no credential was available to
+this session, and guessing one is not a smoke test.
+
+**One local toolchain note.** `node_modules` is now installed by pnpm from
+`pnpm-lock.yaml` with a **hoisted** (flat) linker. The isolated layout that
+pnpm installs by default cannot build the OpenNext bundle on Windows, which
+needs symlinks; the hoisted tree builds it cleanly. Nothing in the repository
+was changed to achieve that.
 
 ## Q19 part three — the runtime, built and held
 
