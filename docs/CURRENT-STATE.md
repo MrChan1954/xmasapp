@@ -5,6 +5,82 @@ the invitation live.
 
 The handoff between phases. Current facts only — history lives in git.
 
+## Migration 054 is LIVE — a family's invitation now approves the account
+
+**Applied to production 2026-08-31, between 23:10 and 23:13 UTC**, manually, in
+one run. Migrations are now **001–054**.
+
+**The rule.** `FAMILY ADMIN INVITES + INVITEE ACCEPTS = approved Gift Planner
+account.` Both halves are required and neither is new: `grant_area_access`
+already proved only an Area's own administrator may invite, into their own
+Area; `accept_family_invitation` already proved only the owner of the confirmed
+address may take it. 054 stops discarding an authority that was already
+established, so an invited person no longer waits for a platform administrator
+who has never met them.
+
+**What did NOT change:**
+
+- **Public sign-up still waits.** An account with no accepted invitation is
+  `pending` and a Gift Planner administrator decides it, exactly as before.
+- **Rejected and suspended cannot be laundered.** They are refused *before* any
+  write; an invitation may vouch for somebody nobody has decided about, never
+  overturn a decision somebody made.
+- **Nobody becomes a global administrator.** `is_global_admin` is false on
+  insert and untouched on update.
+- **Approval is durable.** Losing the sponsoring membership later leaves the
+  account approved and the person in the legitimate zero-family state.
+- **Sponsorship grants one family**, the accepted one. Every other Area still
+  asks `is_area_member` for itself.
+
+### The one-time backfill, and what it actually did
+
+054 also settled the people who had already accepted before it existed — they
+would never call `accept_family_invitation` again, so section 1 alone would have
+left them waiting forever. **Exactly two accounts**, both matching the read-only
+preflight taken minutes earlier:
+
+| Account | Sponsoring family | Evidence |
+| ------- | ----------------- | -------- |
+| `189bf7c4…` (QA test identity) | QA Charlie | its own `Joined QA Charlie` entry |
+| `bdc15e0d…` (**a real person**) | **Tricketts** | its own `Joined Tricketts` entry |
+
+The second is Ben's family member, who accepted a genuine invitation at 22:24
+the previous evening and had been sitting in the pending queue ever since. They
+are approved now, without anybody asking them to accept anything again — which
+is the whole point of the migration.
+
+**The predicate is audit evidence, never `user_id is not null`.** That would
+have been true of every membership this installation has ever had, including
+seats an administrator attached by hand and seats the retired auto-join claimed
+without asking. Proof is the entry `accept_family_invitation` writes, and four
+things no other path produces together: the record is that seat, **the actor is
+the invitee**, the Area agrees, and the summary is `Joined <family>`. The
+summary is load-bearing: `record_audit_event` writes `app_members added` for
+every trigger entry, including a founder's own admin seat, which matches on
+every other clause. **Thirteen of fifteen claimed seats were correctly
+excluded** — eleven for having no invitee-authored acceptance, two for already
+being approved.
+
+### Verified after the apply, read-only
+
+Exactly 2 sponsored; both the expected candidates; neither a global admin;
+`decided_by` null on both — no human is invented as approver. Two `decided`
+audit rows, `source = 'family_invitation_backfill'`, each naming its sponsoring
+Area, seat and original acceptance, with no address, token, password or link.
+**`app_members` unchanged at 15 rows; Tricketts unchanged at 3 seats / 3
+claimed; 5 admin seats; 0 declined.** `app_accounts` 7 → 9, all approved;
+`auth.users` 9. Protected fingerprint exactly baseline: 37 · 19 · 15 · 4 · 35 ·
+19, `crossAreaTotal` 0.
+
+**Backup before the apply:** workflow run `33449348645`, artifact
+`supabase-backup-2026-08-31`, 23 public COPY blocks, 1138 data rows, taken at
+commit `1cc0995`.
+
+**Rollback:** `docs/manual-sql/Q21-054-ROLLBACK.sql` restores 053's routine and
+stops future sponsorship. It deliberately carries **no blanket undo** — the two
+approvals it granted are decisions about people, and reversing one costs a named
+administrator and a reason through `set_account_status`.
+
 ## CORRECTION — Tricketts is a REAL family, not a QA fixture
 
 Earlier notes on this page called Tricketts a **user-confirmed throwaway** and

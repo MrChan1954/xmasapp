@@ -303,20 +303,36 @@ describe("migration 053, on a database that carries it", () => {
       assert.equal(row.user_id, pending);
       assert.equal(row.active, true);
 
-      // ZERO USABLE ACCESS. Every predicate carries `is_globally_approved()`.
-      for (const table of ["areas", "people", "app_members", "events", "purchases", "audit_log"]) {
-        assert.equal(
-          await seen(db, who(pending, f.areas.bravo), table), 0,
-          `${table} must be invisible to a pending account holding an accepted seat`,
-        );
-      }
-
-      // APPROVAL ALONE ACTIVATES IT -- no second join action.
-      await setAccountStatus(db, pending, "approved");
+      /*
+       * WHAT MIGRATION 054 CHANGED HERE, AND WHY THIS ASSERTION INVERTED.
+       *
+       * Under 053 alone this account stayed `pending` and read nothing: every
+       * predicate carries `is_globally_approved()`, so the accepted seat
+       * granted zero access until a platform administrator decided it.
+       *
+       * 054 makes that wait unnecessary for exactly this shape. The invitation
+       * was issued by the Area's own administrator and accepted by the owner of
+       * the address it names -- two authorities that have already been checked
+       * -- so the account is SPONSORED and approved by the accept itself. What
+       * remains true, and is asserted below, is that the seat grants access to
+       * THAT family and nothing else, and that public sign-up with no accepted
+       * invitation still waits. `scripts/sponsored-approval.test.mjs` holds the
+       * whole of the new contract.
+       */
+      assert.equal(
+        await value(db, "select status from public.app_accounts where user_id = $1", [pending]),
+        "approved",
+        "an invitation issued by a family admin and explicitly accepted sponsors the account",
+      );
       assert.ok(
         Number(await seen(db, who(pending, f.areas.bravo), "people")) > 0,
-        "approval must activate the membership that was already accepted",
+        "and the invited family is usable at once, with no second approval",
       );
+
+      // STILL EXACTLY ONE FAMILY. Sponsorship approves the account; it does not
+      // hand out an Area nobody invited them to.
+      assert.equal(await seen(db, who(pending, f.areas.alpha), "people", "area_id = $1", [f.areas.alpha]), 0,
+        "the family they were never invited to stays closed");
       f.pending = { account: pending, invitationId };
     });
 

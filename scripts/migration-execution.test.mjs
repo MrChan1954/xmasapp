@@ -35,7 +35,6 @@ const WISHLIST = "202608100040_own_birthday_wishlist.sql";
 const HANDOVER = "202608100041_area_admin_handover.sql";
 const LIFECYCLE = "202608100042_area_membership_lifecycle.sql";
 const PLANNING = "202608100043_birthday_planning_eligibility.sql";
-const PERSON_ADMIN = "202608100044_area_scoped_person_administration.sql";
 const MUTATION_HARDENING = "202608100045_area_scoped_mutation_hardening.sql";
 const GIFT_IDEA_REMOVAL = "202608100046_area_scoped_gift_idea_removal.sql";
 const PERSON_ROUTINES = "202608100047_area_scoped_person_routines.sql";
@@ -49,6 +48,10 @@ const GLOBAL_APPROVAL = "202608100052_global_account_approval.sql";
 // Roadmap Phase 3's 053: an invitation stops being claimed for you on sign-in
 // and starts being accepted or declined by you. NOT applied to production.
 const INVITATION_CONSENT = "202608100053_family_invitation_consent.sql";
+// Roadmap's 054: a family admin's invitation plus the invitee's explicit accept
+// approve the Gift Planner account, so an invited person no longer waits for a
+// platform administrator who has never met them.
+const SPONSORED_APPROVAL = "202608100054_family_sponsored_approval.sql";
 
 /** Everything the database owns, as names. The unit of "what a migration did". */
 async function inventory(db) {
@@ -93,13 +96,13 @@ describe("the whole history replays on PostgreSQL 18", () => {
   after(async () => { await db?.close(); });
 
   test("every migration executes, in order, against a real server", async () => {
-    assert.equal(db.appliedMigrations.length, 53);
+    assert.equal(db.appliedMigrations.length, 54);
     // The tail, as a list rather than as counted-back offsets. Each new
     // migration used to move every one of those offsets by one, which meant
     // an edit nobody could get right in a single pass.
     assert.deepEqual(db.appliedMigrations.slice(-8).map((m) => m.name), [
-      GIFT_IDEA_REMOVAL, PERSON_ROUTINES, HELPER_GRANTS, AUDIT_ACTING_AREA,
-      BIRTHDAY_PRIVACY_SUBJECT, LEGACY_SURFACE, GLOBAL_APPROVAL, INVITATION_CONSENT,
+      PERSON_ROUTINES, HELPER_GRANTS, AUDIT_ACTING_AREA, BIRTHDAY_PRIVACY_SUBJECT,
+      LEGACY_SURFACE, GLOBAL_APPROVAL, INVITATION_CONSENT, SPONSORED_APPROVAL,
     ]);
     assert.ok(db.appliedMigrations.every((m) => m.ok));
   });
@@ -407,16 +410,16 @@ describe("public.rls_auto_enable, the object production has and no migration cre
 // ===========================================================================
 
 describe("the migration inventory", () => {
-  test("053 is the newest, and nothing older has moved", () => {
+  test("054 is the newest, and nothing older has moved", () => {
     const names = migrationNames();
-    assert.equal(names.length, 53);
+    assert.equal(names.length, 54);
     assert.deepEqual(names.slice(-10),
-      [PERSON_ADMIN, MUTATION_HARDENING, GIFT_IDEA_REMOVAL, PERSON_ROUTINES,
+      [MUTATION_HARDENING, GIFT_IDEA_REMOVAL, PERSON_ROUTINES,
        HELPER_GRANTS, AUDIT_ACTING_AREA, BIRTHDAY_PRIVACY_SUBJECT, LEGACY_SURFACE,
-       GLOBAL_APPROVAL, INVITATION_CONSENT]);
-    // 053 is written and rehearsed but NOT applied to production, so it stays
-    // out of the checksum manifest below, exactly as 041-052 do.
-    assert.equal(names.at(-1), INVITATION_CONSENT);
+       GLOBAL_APPROVAL, INVITATION_CONSENT, SPONSORED_APPROVAL]);
+    // 054 is written and rehearsed but NOT applied to production, so it stays
+    // out of the checksum manifest below, exactly as 041-053 do.
+    assert.equal(names.at(-1), SPONSORED_APPROVAL);
   });
 });
 

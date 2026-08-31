@@ -62,6 +62,8 @@ after(async () => { await db?.close(); });
 // ===========================================================================
 
 describe("handing over a family", () => {
+  /** The live audit vocabulary, captured before this suite breaks it on purpose. */
+  let restoreActionCheck;
   beforeEach(async () => { await restoreAlpha(); });
 
   test("this family's administrator can, to one of its active members", async () => {
@@ -202,6 +204,30 @@ describe("handing over a family", () => {
      * ask whether the earlier writes would survive on their own.
      */
     await asOwner(db);
+    /*
+     * CAPTURED, NOT RETYPED -- and this is a repair, not a flourish.
+     *
+     * This test used to break the vocabulary and then "put it back" by writing
+     * out a hard-coded list. That list was correct when it was written, at 041,
+     * when the words were added/removed/restored/handover. Migration 052 then
+     * widened the constraint to seven -- adding `decided`, `granted` and
+     * `revoked` -- and nobody updated the line down there, so from this point
+     * on the SHARED database in this suite carried a constraint three words
+     * narrower than the schema really has.
+     *
+     * It went unnoticed because nothing later in this file wrote one of the
+     * missing words. Migration 054's sponsorship writes `decided`, which is how
+     * it finally surfaced -- as a failure that looked like a defect in 054 and
+     * was in fact this line.
+     *
+     * Reading the real definition and restoring it verbatim cannot go stale.
+     */
+    restoreActionCheck = await value(db,
+      `select pg_get_constraintdef(oid) from pg_constraint
+       where conrelid = 'public.audit_log'::regclass and conname = 'audit_log_action_check'`);
+    assert.match(restoreActionCheck, /decided/u,
+      "the live vocabulary must be captured before it is broken");
+
     await db.exec(`
       alter table public.audit_log drop constraint if exists audit_log_action_check;
       alter table public.audit_log add constraint audit_log_action_check
@@ -216,11 +242,16 @@ describe("handing over a family", () => {
       "select id from public.app_members where area_id = $1 and role = 'admin' and active", [f.areas.alpha]);
     assert.equal(stillAdmin, f.members.adaAlpha, "neither half of the swap may survive");
 
-    // Put the vocabulary back.
+    // Put the vocabulary back -- exactly the one that was there, whatever it is.
     await db.exec(`
       alter table public.audit_log drop constraint if exists audit_log_action_check;
-      alter table public.audit_log add constraint audit_log_action_check
-        check (action in ('added', 'removed', 'restored', 'handover'));`);
+      alter table public.audit_log add constraint audit_log_action_check ${restoreActionCheck};`);
+
+    const restored = await value(db,
+      `select pg_get_constraintdef(oid) from pg_constraint
+       where conrelid = 'public.audit_log'::regclass and conname = 'audit_log_action_check'`);
+    assert.equal(restored, restoreActionCheck,
+      "the suite must hand the next test the schema it was given");
   });
 
   test("a second handover from the old administrator is refused, not queued", async () => {
