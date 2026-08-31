@@ -1,7 +1,7 @@
 # Current State
 
-**Last updated:** 2026-08-31, after roadmap Phase 4B closed out the production
-apply of migration 053.
+**Last updated:** 2026-08-31, after roadmap Phase 4C closed out migration 053
+and removed the accidental rollback table.
 
 The handoff between phases. Current facts only — history lives in git.
 
@@ -10,7 +10,7 @@ The handoff between phases. Current facts only — history lives in git.
 | Fact | Value |
 | ---- | ----- |
 | Live site | `https://xmas-family.uk/` |
-| Last completed phase | **Roadmap Phase 4B — migration 053 applied to production, and the one post-apply FAIL diagnosed as a false positive and corrected.** |
+| Last completed phase | **Roadmap Phase 4C — the corrected post-apply checks run end-to-end at 0 FAIL, and the accidental rollback table dropped from production.** |
 | Q19 verdict | `LAUNCH STEP 1 PASS — READY FOR LIVE SIGN-UP E2E` |
 | Next phase | **The family invitation runtime.** The database is ready; **no invitation UI exists yet** — nothing in the runtime lists, sends, accepts or declines an invitation. |
 | Migration 053 | **APPLIED TO PRODUCTION**, 2026-08-31, between 17:31 and 18:30 UTC. Verified live read-only: `app_members.declined_at` exists and all four routines are exposed, SECURITY DEFINER, `search_path=""`. |
@@ -29,6 +29,40 @@ The handoff between phases. Current facts only — history lives in git.
 > front door is open and Auth email now reaches a real address — but **nobody
 > has ever completed a real sign-up**. That is the next phase, and it needs one
 > email address the user chooses.
+
+## Roadmap Phase 4C — the database contract for 053 is closed
+
+The corrected `docs/Q20-053-POST-APPLY-CHECKS.sql` was finally run end-to-end in
+the Supabase SQL editor, and returned **0 FAIL**. The callable
+`SECURITY DEFINER` sweep passed. `rls_auto_enable` no longer appears as a
+failure: the check is now event-trigger aware and reports it as **INFO** — an
+`event_trigger`, `SECURITY DEFINER`, `search_path=pg_catalog`, platform state
+that no migration here creates and none should adopt. That was the Phase 4B
+false positive, and it is resolved rather than merely tolerated.
+
+Production is healthy. Cloudflare version
+`e907381b-c86f-4bbc-ad27-5af5fd9898c4` serves 100% of traffic and the live site
+answers **200**. Wrangler does not surface the originating commit for a Workers
+Build (`Source: Unknown`, `Tag: -`), so the version is **not provably** the
+build of `1e79bf0`; it does not need to be, because that commit touched only
+`docs/` and `scripts/` and changed no runtime source at all.
+
+The accidental rollback table was inspected and then removed — see *Closed in
+Phase 4C* below. **No production schema changed other than that one
+`DROP TABLE`.** Migration 053 was neither reapplied nor rolled back, and there
+is still no migration 054.
+
+Protected fingerprint after the drop, from `scripts/qa/fingerprint.mjs`:
+notifications 37, people 19, events 15, appMembers 4, recipients 35, Christmas
+2026 active recipients 19, `crossAreaTotal` 0 — unchanged. Note that
+`appMembers: 4` counts **Our family**; the all-Areas membership total is **12**,
+reported by the same run as `memberRowsChecked`. The two are not the same number
+and should not be reconciled against each other. All five Areas remain: Our
+family, QA Alpha, QA Bravo, QA Charlie, Tricketts. One invitation is open and
+awaiting an answer.
+
+**The invitation runtime is still not implemented.** 053's database contract is
+complete and now fully closed out; the UI that would use it does not exist.
 
 ## Roadmap Phase 4 and 4B — migration 053 applied, and the one FAIL explained
 
@@ -96,17 +130,38 @@ rollback run. A PASS there now means what a PASS in the SQL editor means. It
 also reproduces a second production fact: the rollback's backup table came out
 with row level security already on, because this trigger turned it on.
 
-### Open item — the rollback residue
+### Closed in Phase 4C — the rollback residue is gone
 
-`public.app_members_053_backup` **exists in production**, holding 13 membership
-rows with addresses in them. It is **not exposed**: row level security is on and
-no policy is attached, so `anon` and `authenticated` read zero rows — confirmed
-live with the publishable key, which returned `[]`. `service_role` bypasses RLS,
-as it does everywhere. The post-apply checks now report the table as **REVIEW**,
-with its RLS and policy state read out of the catalogue.
+`public.app_members_053_backup` **no longer exists**. Phase 4C dropped it from
+production on 2026-08-31, after explicit user approval, with a single
+`DROP TABLE` and **no `CASCADE`** — so Postgres itself was the dependency gate.
 
-**Somebody has to decide when to drop it. It was not dropped in Phase 4B**,
-which altered no production schema.
+It held **12** rows, not the 13 recorded here earlier; live `public.app_members`
+holds 12 as well, and every backup row matched a live `app_members.id`. The
+snapshot contained nothing that was not already live, so dropping it destroyed
+no history.
+
+Two things the earlier note got wrong, both worth keeping:
+
+- It was described as **not exposed**. That was half right. RLS was on with zero
+  policies, so `anon` read no *rows* — but the `CREATE TABLE AS` had inherited
+  the `public` schema's default grants, so the browser role still held `SELECT`
+  on the table. `GET /rest/v1/app_members_053_backup` with the publishable key
+  answered **200 `[]`**, where `app_members` and `notifications` both answer
+  **401 permission denied**. A table of real membership rows was resting on one
+  layer where every comparable table has two. That is now moot, and it is the
+  reason removing it was worth doing rather than merely tidy.
+- The row count was 13. It was 12.
+
+Dependency inspection before the drop found nothing pointing at it: no inbound
+or outbound foreign keys, no user triggers, no indexes or constraints, no
+dependent views, no routine referencing it, no non-trivial `pg_depend` rows, and
+no replication publication. `docs/INSPECT-BACKUP-TABLE.sql` is the read-only
+report that established this; it is deliberately untracked.
+
+Verified read-only after the drop: the table is absent from the schema cache for
+**both** `service_role` and `anon` (`PGRST205`), while `public.app_members`,
+`app_members.declined_at` and all four routines 053 added remain present.
 
 ### What is NOT done
 
