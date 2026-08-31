@@ -1,7 +1,7 @@
 # Current State
 
-**Last updated:** 2026-08-31, after custom SMTP was configured and a real Auth
-email was proved to deliver.
+**Last updated:** 2026-08-31, after roadmap Phase 1 fixed the two live
+navigation/admin regressions and deployed them.
 
 The handoff between phases. Current facts only — history lives in git.
 
@@ -10,12 +10,12 @@ The handoff between phases. Current facts only — history lives in git.
 | Fact | Value |
 | ---- | ----- |
 | Live site | `https://xmas-family.uk/` |
-| Last completed phase | **Q19 launch step 1 — Auth configuration verified, runtime DEPLOYED, signed-out smoke passed.** |
+| Last completed phase | **Roadmap Phase 1 — the More page's admin check and the global admin dead end, both fixed and deployed.** |
 | Q19 verdict | `LAUNCH STEP 1 PASS — READY FOR LIVE SIGN-UP E2E` |
-| Next phase | **Live sign-up / approval / Area-onboarding E2E**, then final QA-Area cleanup. Unblocked. |
+| Next phase | **Roadmap Phase 2 — the family invitation architecture design.** Design only; migration 053 is Phase 3. |
 | Branch | `main` |
-| Local HEAD | `12909e2` — pushed. Nothing held back. |
-| origin/main | `12909e2` — the Q19 runtime, deployed 2026-08-31 ~13:58 UTC. |
+| Local HEAD | `b21b798` plus this docs commit. |
+| origin/main | `b21b798` — Phase 1, deployed 2026-08-31 ~15:12 UTC. |
 | Serving Worker | **the Q19 runtime.** `/sign-up` returns 200 live; `/login` offers *Create an account*. |
 | Product name | **Gift Planner** |
 | Migrations applied | **001–052**, immutable. 052 applied manually 2026-08-31 01:06:23 UTC. |
@@ -27,6 +27,47 @@ The handoff between phases. Current facts only — history lives in git.
 > front door is open and Auth email now reaches a real address — but **nobody
 > has ever completed a real sign-up**. That is the next phase, and it needs one
 > email address the user chooses.
+
+## Roadmap Phase 1 — two live regressions, and what caused them
+
+**The event More screen told everybody their role was unknowable.** It worked
+out whether the reader administered the family by sending a GET to
+`/api/admin/family-access` and reading the answer off the status code: `ok`
+meant admin, 401/403 meant not, anything else meant "we could not check". Q19
+moved every read of that route into the database and left only a POST, so the
+GET began answering **405** — none of the three cases — and every reader fell
+into the third. The family's own administrator lost the entries the warning was
+hiding.
+
+**The fix is the role source, not the message.** `FamilyProvider` has resolved
+the membership for the family on screen all along, and the navigation chrome has
+been reading it the whole time; the screen now asks the same question of the
+same source. That carries the separations with it: the **selected Area** decides,
+an account in several families with none chosen resolves to nothing rather than a
+guess, and a Gift Planner global administrator is still nobody's family
+administrator. It fails closed — an unresolved role hides the entries.
+
+**`/admin/accounts` is no longer a dead end.** It offers **Back to Gift
+Planner**, an anchor to `/` — the one place that decides between the dashboard,
+the Area chooser and first-family onboarding. Sign out remains, separately. The
+route still resolves no Area to draw it, and the transitive import walk in
+`scripts/account-approval-runtime.test.mjs` still proves that.
+
+`scripts/event-more-admin.test.mjs` is new and renders the real provider over
+the real screen, because the broken version would have satisfied any test that
+only read the source.
+
+**Not yet verified live:** both fixes need a signed-in browser, and none was
+available to that session. The signed-out smoke passed at 1440×900 and 390×844
+DPR 3.
+
+## A fifth Area exists: "Tricketts"
+
+Created live 2026-08-31 14:32 UTC with one admin and one member — the first
+family made through the new runtime. **USER-CONFIRMED as a throwaway test**, so
+it is disposable and should be removed alongside QA Alpha and QA Charlie at the
+final closeout. `Our family` is untouched: every protected value is unchanged
+and `crossAreaTotal` is still 0.
 
 ## SMTP — configured, and proved to deliver
 
