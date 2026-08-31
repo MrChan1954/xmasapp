@@ -93,7 +93,7 @@ describe("migrations 001-038 are applied and immutable", () => {
     // on this table and changes no wishlist routine -- 040 still owns every one
     // of them. What it changes is how an invited account BECOMES a member: by
     // accepting, rather than by signing in.
-    assert.equal(migrationFiles.length, 53);
+    assert.equal(migrationFiles.length, 54);
   });
 
   test("no earlier migration mentions the new ones", () => {

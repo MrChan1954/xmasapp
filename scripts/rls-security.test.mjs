@@ -153,8 +153,16 @@ test("the authorization migration explicitly enables RLS on every application ta
   // It creates no policy, enables RLS on nothing new, and grants nothing to
   // `anon` or `service_role`. Its own behaviour is proved against a real
   // PostgreSQL in `scripts/family-invitations.test.mjs`.
-  assert.equal(migrationFiles.at(-14), wishlistMigrationName);
-  assert.equal(migrationFiles.at(-15), areaAuthMigrationName);
+  // 054 IS REVIEWED AND ADDS NO SECURITY SURFACE. It redefines exactly one
+  // routine, `accept_family_invitation`, so that an invitation issued by a
+  // family administrator and explicitly accepted by its invitee also approves
+  // the Gift Planner account. It creates no table, column, index, policy,
+  // grant or trigger, and takes nothing away: the refusal of rejected and
+  // suspended accounts is untouched and still runs before any write. Its
+  // behaviour is proved against a real PostgreSQL in
+  // `scripts/sponsored-approval.test.mjs`.
+  assert.equal(migrationFiles.at(-15), wishlistMigrationName);
+  assert.equal(migrationFiles.at(-16), areaAuthMigrationName);
 
   // What 050 introduces, security-wise: a strictly narrower read policy.
   const birthdayPrivacyMigration = readFileSync(
