@@ -1,16 +1,11 @@
 # Current State
 
 **Last updated:** 2026-08-31, after roadmap Phase 5A built the family-admin
-invitation runtime. **The commit is local and has NOT been pushed** — see the
-open item at the top of the next section.
+invitation runtime and its closeout ran the Worker gate and pushed.
 
 The handoff between phases. Current facts only — history lives in git.
 
-## READ THIS FIRST — Phase 5A is written, tested, and undeployed
-
-Phase 5A's runtime is committed on local `main` and **deliberately not pushed**,
-because pushing `main` auto-deploys production and one final gate could not be
-run on this machine:
+## Every Phase 5A gate passed, and it is pushed
 
 | Gate | Result |
 | ---- | ------ |
@@ -19,26 +14,61 @@ run on this machine:
 | `npm run build` | PASS |
 | `npm run test:all` | PASS — 2166 tests, 293 suites, 0 fail |
 | `git diff --check` | PASS |
-| **`npx opennextjs-cloudflare build` → `npm run check:worker-bundle`** | **NOT RUN** |
+| `npx opennextjs-cloudflare build` | PASS |
+| `npm run check:worker-bundle` | PASS — 81 assets, 10535.98 KiB / gzip 2297.46 KiB, exit 0 |
 
-**Why the Worker bundle check could not run.** OpenNext picks its package
-manager from the lockfile, sees `pnpm-lock.yaml`, and `execSync`s `pnpm build`.
-`pnpm` is not installed on this machine — not on `PATH`, not in
-`node_modules/.bin`, not resolvable from PowerShell — and `.open-next/` holds
-only `.build`, so there is no worker output for `check:worker-bundle` to read
-either. A shim on `PATH` did not reach OpenNext's `cmd.exe` child.
+### The local toolchain, and the trap in it
 
-**What that gate protects, and why it is not optional.** It is the check that
-caught the `__name` theme-bootstrap failure: wrangler's esbuild injects helpers
-into serialised inline scripts, and the failure appears only in the bundled
-Worker — never in `next build`. Deploying without it is deploying an unbundled
-guess.
+**pnpm is not installed on this machine, and must not be installed globally to
+get round that.** OpenNext reads `pnpm-lock.yaml`, decides the project is
+pnpm's, and `execSync`s `pnpm build` — so `pnpm` has to be resolvable by a
+`cmd.exe` child. Corepack provides it without touching the Node installation or
+the repository:
 
-**What the next session must do, in order.** Install pnpm (`npm i -g pnpm`),
-run `npx opennextjs-cloudflare build` then `npm run check:worker-bundle` bare,
-and only then push. After the push: confirm the Cloudflare deployment, do the
-read-only live smoke on Family Access, and re-take the protected fingerprint
-with `scripts/qa/fingerprint.mjs`. None of those four has happened.
+```
+corepack enable pnpm --install-directory <a scratch dir>
+corepack prepare pnpm@10.34.5 --activate
+```
+
+then put that scratch dir on `PATH` for the build. No global install, no
+`packageManager` field, no manifest change.
+
+**Pin 10.34.5. Do not let Corepack pick the latest.** Corepack's default is
+pnpm **11**, and pnpm 11 runs an implicit `pnpm install` before `pnpm run` —
+which **silently relinked `node_modules` to the isolated layout** and then
+failed on `ERR_PNPM_IGNORED_BUILDS`. The isolated layout is exactly what cannot
+build the OpenNext bundle on Windows:
+
+```
+Error: EPERM: operation not permitted, symlink
+  node_modules\.pnpm\@next+env@16.3.0\node_modules\@next\env -> ...
+```
+
+pnpm 11 also drops an untracked `pnpm-workspace.yaml` (an `allowBuilds` stub) in
+the repository root. **Delete it.** It is a tooling artifact and nothing here
+should carry it.
+
+**The recovery, which is also the setup, is one command:**
+
+```
+CI=true pnpm install --frozen-lockfile --config.node-linker=hoisted
+```
+
+`--frozen-lockfile` is what guarantees no lockfile write — `pnpm-lock.yaml` is
+still SHA-256 `9dfeb23c…d72ae4`, byte-identical to the value Q17 recorded. `CI`
+is needed only because pnpm refuses to purge `node_modules` without a TTY.
+Afterwards `node_modules/.pnpm` holds only `lock.yaml` and the tree is flat,
+which is how the bundle builds.
+
+**`--skipNextBuild` is not a shortcut round any of this.** `next.config.ts` does
+not set `output: "standalone"` — OpenNext supplies that when it runs the build
+itself — so skipping it dies on a missing
+`.next/standalone/.next/server/pages-manifest.json`.
+
+**Why the gate is not optional.** It is the check that caught the `__name`
+theme-bootstrap failure: wrangler's esbuild injects helpers into serialised
+inline scripts, and that breaks only in the bundled Worker, never in
+`next build`.
 
 ## Roadmap Phase 5A — the family admin can invite, and learns nothing by doing it
 
