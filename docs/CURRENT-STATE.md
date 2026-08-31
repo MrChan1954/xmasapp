@@ -10,9 +10,10 @@ The handoff between phases. Current facts only — history lives in git.
 | Fact | Value |
 | ---- | ----- |
 | Live site | `https://xmas-family.uk/` |
-| Last completed phase | **Roadmap Phase 1 — the More page's admin check and the global admin dead end, both fixed and deployed.** |
+| Last completed phase | **Roadmap Phase 2 — the family invitation architecture design, decisions closed.** Design only: nothing was migrated, changed or deployed. The design is `docs/PHASE-2-FAMILY-INVITATION-DESIGN.md`; the five product decisions are in its §16. |
 | Q19 verdict | `LAUNCH STEP 1 PASS — READY FOR LIVE SIGN-UP E2E` |
-| Next phase | **Roadmap Phase 2 — the family invitation architecture design.** Design only; migration 053 is Phase 3. |
+| Next phase | **Roadmap Phase 3 — write and rehearse migration 053.** Exact scope is fixed in `docs/PHASE-2-FAMILY-INVITATION-DESIGN.md` §17. **No open questions remain** — all five decisions are closed and recorded in §16. |
+| Cleanup hold | **QA Alpha, QA Charlie and Tricketts must not be deleted** until the live invitation tests complete. QA Bravo stays unless explicitly requested. |
 | Branch | `main` |
 | Local HEAD | `b21b798` plus this docs commit. |
 | origin/main | `b21b798` — Phase 1, deployed 2026-08-31 ~15:12 UTC. |
@@ -944,3 +945,71 @@ been reviewed, not before. Q18's closeout commit rides along with it.
 **Q17's two open questions are both answered and closed** — pnpm is the package
 manager, and the `*-taylor*` scripts were unwanted and are deleted. Q18 leaves
 no question that only the user can answer.
+
+## Roadmap Phase 3 — migration 053 written and rehearsed, NOT applied
+
+**Verdict: `PHASE 3 CONDITIONAL PASS`.** 053 is written, applies cleanly to a
+disposable PostgreSQL, passes its own end-state block and its post-apply checks,
+rolls back and re-applies. **It is not applied to production and must not be
+until the thirteen pre-053 test assertions listed below are updated.**
+
+| Fact | Value |
+| ---- | ----- |
+| Migration file | `supabase/migrations/202608100053_family_invitation_consent.sql` |
+| Applied to production? | **NO.** Production still carries 001–052 only. |
+| Rehearsal environment | PGlite (real PostgreSQL 18, WebAssembly), `scripts/pg/rehearsal.mjs`. In-process, thrown away per suite. **Never production; no production connection was opened in this phase.** |
+| Post-apply checks | `docs/Q20-053-POST-APPLY-CHECKS.sql` — 30 checks, 0 FAIL on the rehearsal DB |
+| Rollback | `docs/Q20-053-ROLLBACK.sql` — executed in full, 0 FAIL, and 053 re-applied on top |
+| New tests | `scripts/family-invitations.test.mjs` (62 pass) and `scripts/family-invitations-rollback.test.mjs` (12 pass) |
+| Migrations 001–052 | untouched; the checksum manifest still matches |
+
+### What 053 changes
+
+`app_members.declined_at` + `app_members_declined_is_unclaimed` (CHECK, `not
+valid`) + `app_members_open_invitation_idx` (partial). Four routines added —
+`list_my_family_invitations()`, `accept_family_invitation(uuid)`,
+`decline_family_invitation(uuid)`, `record_invitation_delivery(uuid, text)`.
+Four redefined — `refuse_foreign_area_write()` gains one decline exemption,
+`grant_area_access` clears `declined_at`, `list_area_access` returns it
+(dropped and recreated, because the return type widens), and
+`claim_app_member()` becomes `select false`. No policy, no backfill, no expiry,
+no widening of `audit_log_action_check`, no grant to `service_role`.
+
+### THE BLOCKER — thirteen assertions still describe the pre-053 world
+
+053 sits in `supabase/migrations/`, and `buildRehearsal()` reads that directory,
+so every suite now builds on a 053 database. Thirteen assertions across six
+files still assert the auto-join, or count migrations, or inventory routines:
+
+- `migration-execution.test.mjs` — "052 is the newest" (52 → 53), the replay
+  list, and the RLS-enable sweep.
+- `global-approval.test.mjs` — the `claim_app_member` section (four cases), and
+  `claim_app_member() stopped being SECURITY DEFINER` (it is now
+  `language sql immutable`, as the design specifies).
+- `area-lifecycle.test.mjs` — "claiming an invitation", "one login must never
+  hold two seats in one family".
+- `area-mutation-security.test.mjs` — **the one worth reading.** Its inventory
+  flags the three invitee routines as "neither derives its target Area nor calls
+  the guard". That is correct and deliberate: they read no acting Area at all
+  (design §14 #19), and they authorize on the caller's own confirmed address
+  instead. The test needs an allowlist entry naming that reason, not a change to
+  the migration.
+- `account-approval-gate.test.mjs`, `rls-security.test.mjs` — the same shapes.
+
+**None of the thirteen is a defect in 053.** All are tests that pinned the
+behaviour 053 exists to remove. They must be updated — and the whole suite
+green — before Phase 4 applies anything to production.
+
+### Also outstanding before Phase 4
+
+- **The production read-only precheck was not run.** Confirm from production
+  that migrations stop at 052 and count open unclaimed invitations
+  (`user_id is null and active and declined_at is null` — the column does not
+  exist there yet, so the first two conjuncts) before applying. Section 5 of the
+  post-apply file does that census without selecting an address.
+- **One deviation from the design, recorded:** §13 wanted an
+  `invitation_reissued` audit row carrying `{previous_state}`. 053 relies on the
+  existing `record_audit_event` trigger, which already reports the
+  inactive→active crossing as `restored`, Area-attributed. Adding an explicit
+  row would have written two audit rows for one event. The reissue is audited;
+  the `previous_state` detail is not stored.
