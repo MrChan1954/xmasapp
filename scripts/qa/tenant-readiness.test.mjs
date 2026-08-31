@@ -157,8 +157,15 @@ const TRACED_TO_AREA = [
  * `areas` is swept differently and on purpose: an Area's own row is not traced
  * to an Area, it IS one, so the assertion is that Bravo's row is invisible in
  * Alpha rather than that its children are.
+ *
+ * `app_accounts` (052) is not family data at all -- it is the global approval
+ * queue, and it has no Area column to trace. Sweeping it for cross-Area leakage
+ * would be asking a question it has no answer to. What guards it instead is
+ * stronger than any sweep: row level security with ZERO policies and not one
+ * privilege for anon or authenticated, so no browser session reaches a row of
+ * it in ANY Area. That is asserted directly below.
  */
-const NOT_TRACED = new Set(["areas"]);
+const NOT_TRACED = new Set(["areas", "app_accounts"]);
 
 describe("every category of family data is separate between two Areas", () => {
   test("NOT ONE ROW OF BRAVO'S IS VISIBLE TO A MEMBER OF ALPHA", async () => {
@@ -217,6 +224,23 @@ describe("every category of family data is separate between two Areas", () => {
     const unswept = protectedTables.filter((name) => !known.has(name) && !NOT_TRACED.has(name));
     assert.deepEqual(unswept, [],
       "a protected table nobody sweeps is where the next leak will be");
+  });
+
+  test("and app_accounts is not reachable from any Area, by anybody", async () => {
+    // The reason it is exempt from the sweep above, proven rather than asserted.
+    // Two Areas, two ordinary members, one administrator, and the anonymous
+    // role: every one of them is refused before row level security is even
+    // consulted, because neither browser role holds a privilege on the table.
+    for (const [label, actor] of [
+      ["an Alpha member", who(f.users.mo, f.areas.alpha)],
+      ["Alpha's administrator", who(f.users.dual, f.areas.alpha)],
+      ["a Bravo member", who(f.users.sam, f.areas.bravo)],
+      ["a signed-out visitor", { user: null, role: "anon", area: null }],
+    ]) {
+      const read = await probe(db, actor, "select count(*) from public.app_accounts");
+      assert.equal(read.ok, false, `${label} must not be able to read app_accounts`);
+      assert.match(read.error, /permission denied/iu, label);
+    }
   });
 
   test("an Area's own row is invisible from outside it", async () => {

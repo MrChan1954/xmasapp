@@ -146,8 +146,8 @@ test("the authorization migration explicitly enables RLS on every application ta
   // never consulted for. It creates no table, defines no function, adds no
   // policy and grants nothing to anybody. The behaviour it produces is proved
   // against a real PostgreSQL in `scripts/table-privileges.test.mjs`.
-  assert.equal(migrationFiles.at(-12), wishlistMigrationName);
-  assert.equal(migrationFiles.at(-13), areaAuthMigrationName);
+  assert.equal(migrationFiles.at(-13), wishlistMigrationName);
+  assert.equal(migrationFiles.at(-14), areaAuthMigrationName);
 
   // What 050 introduces, security-wise: a strictly narrower read policy.
   const birthdayPrivacyMigration = readFileSync(

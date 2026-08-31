@@ -374,6 +374,9 @@ describe("the schema itself says every targeted mutation is guarded", () => {
     "record_settlement", "admin_record_confirmed_payment", "review_payment",
     "void_settlement", "set_area_name", "set_area_archived", "leave_area",
     "transfer_area_admin",
+    // 052: Family Access moved out of a service-role route and into the
+    // database, so it is guarded like every other targeted mutation.
+    "grant_area_access", "revoke_area_access",
   ];
 
   test("each one calls require_acting_area", async () => {
@@ -409,6 +412,15 @@ describe("the schema itself says every targeted mutation is guarded", () => {
       claim_app_member: "self-service; matches the caller's own auth email only",
       record_audit_event: "trigger function, not callable",
       record_birthday_audit_event: "trigger function, not callable",
+      // 052. THESE THREE ARE NOT AREA-BLIND; THEY ARE AREA-LESS. A global
+      // Gift Planner decision writes app_accounts and audit_log and touches
+      // no Area-owned table at all, so there is no Area for them to derive
+      // and require_acting_area would be asking the wrong question. What
+      // stands in for it is is_global_admin(), which every one of them calls
+      // first -- and which no family administrator can ever satisfy.
+      set_account_status: "global, not Area-scoped; gated on is_global_admin()",
+      grant_global_admin: "global, not Area-scoped; gated on is_global_admin()",
+      revoke_global_admin: "global, not Area-scoped; gated on is_global_admin()",
     };
 
     await asOwner(db);

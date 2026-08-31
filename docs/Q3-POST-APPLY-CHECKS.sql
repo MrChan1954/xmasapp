@@ -296,7 +296,12 @@ select 4503, '045 mutation hardening',
                      and pg_get_functiondef(p.oid) !~ 'require_acting_area'
                      and pg_get_functiondef(p.oid) !~ 'area_of_(person|event|recipient|purchase|gift_idea|member|settlement)'
                      and p.proname not in (
-                       'create_area', 'create_person', 'create_event', 'claim_app_member')) = 0
+                       'create_area', 'create_person', 'create_event', 'claim_app_member',
+                       -- 052: global Gift Planner decisions. Area-LESS, not
+                       -- Area-blind: they write app_accounts and audit_log and
+                       -- touch no Area-owned table, and are gated on
+                       -- is_global_admin() instead.
+                       'set_account_status', 'grant_global_admin', 'revoke_global_admin')) = 0
              then 'PASS' else 'REVIEW' end),
        ((select coalesce(string_agg(p.proname, ', ' order by p.proname), '(none -- correct)')
          from pg_proc p
@@ -306,8 +311,9 @@ select 4503, '045 mutation hardening',
            and pg_get_functiondef(p.oid) ~* '(insert into public\.|update public\.|delete from public\.)'
            and pg_get_functiondef(p.oid) !~ 'require_acting_area'
            and pg_get_functiondef(p.oid) !~ 'area_of_(person|event|recipient|purchase|gift_idea|member|settlement)'
-           and p.proname not in ('create_area', 'create_person', 'create_event', 'claim_app_member'))
-        || ' write without deriving a target Area (the four insert-only routines are exempt)')
+           and p.proname not in ('create_area', 'create_person', 'create_event', 'claim_app_member',
+                 'set_account_status', 'grant_global_admin', 'revoke_global_admin'))
+        || ' write without deriving a target Area (the four insert-only routines and 052''s three global ones are exempt)')
 
 union all
 select 4504, '045 grants',

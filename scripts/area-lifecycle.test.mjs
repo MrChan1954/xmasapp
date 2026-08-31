@@ -29,7 +29,7 @@ import test, { describe, before, after, beforeEach } from "node:test";
 import {
   asOwner, attempt, buildRehearsal, probe, rows, seen, value,
 } from "./pg/rehearsal.mjs";
-import { buildTwoFamilies } from "./pg/fixtures.mjs";
+import { buildTwoFamilies, setAccountStatus } from "./pg/fixtures.mjs";
 
 let db;
 let f;
@@ -854,6 +854,10 @@ describe("becoming a member is the one write the barrier lets a stranger make", 
     outsider = await value(db, `
       insert into auth.users (email, email_confirmed_at)
       values ('outsider@example.test', now()) returning id`);
+    // 052: approved for Gift Planner, and a member of nothing. Which is the
+    // shape this whole section is about -- a stranger to every family, who
+    // is nonetheless allowed through the front door.
+    await setAccountStatus(db, outsider);
     const person = await value(db,
       "insert into public.people (area_id, name) values ($1, 'Outsider') returning id", [f.areas.charlie]);
     invitation = await value(db, `
@@ -1204,6 +1208,7 @@ describe("leaving one family leaves the others alone -- in the app, not just the
     const solitary = await value(db, `
       insert into auth.users (email, email_confirmed_at)
       values ('solitary@example.test', now()) returning id`);
+    await setAccountStatus(db, solitary);   // 052
     const person = await value(db,
       "insert into public.people (name, area_id) values ('Solitary', $1) returning id", [f.areas.alpha]);
     await db.query(`

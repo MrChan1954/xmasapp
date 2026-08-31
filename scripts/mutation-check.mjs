@@ -270,8 +270,18 @@ drop policy if exists "active members add gift ideas" on public.gift_ideas;`,
     suites: ["scripts/areas-and-tenancy.test.mjs"],
   },
   {
+    /*
+     * RE-AIMED FOR MIGRATION 052, WHICH REDEFINES create_area.
+     *
+     * It used to edit 037's copy. That copy is overwritten by 052 before any
+     * test runs, so from 052 onwards the mutant never reached the schema and
+     * this mutation SURVIVED -- reported as a hole in the tests when it was
+     * really a hole in the mutation. Exactly what happened to Q2-11 when 047
+     * redefined set_person_birthday, and the same fix: break the definition
+     * the database actually ends up with.
+     */
     name: "Q2-8. creating a family copies the people out of another one",
-    file: "supabase/migrations/202608100037_area_write_barrier.sql",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
     from: `  insert into public.app_members (user_id, email, person_id, role, active, area_id)
   values (caller, caller_email, new_person, 'admin', true, new_area);`,
     to: `  insert into public.app_members (user_id, email, person_id, role, active, area_id)
@@ -282,16 +292,23 @@ drop policy if exists "active members add gift ideas" on public.gift_ideas;`,
     suites: ["scripts/area-lifecycle.test.mjs"],
   },
   {
+    // RE-AIMED FOR 052, which redefines is_area_member. See Q2-8 above.
     name: "Q2-9. a deactivated membership still counts as being in the family",
-    file: "supabase/migrations/202608100034_areas_and_memberships.sql",
-    from: `    where m.user_id = (select auth.uid())
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `  select public.is_globally_approved() and exists (
+    select 1
+    from public.app_members m
+    where m.user_id = (select auth.uid())
       and m.active = true
       and m.area_id = p_area_id
   );
 $$;
 
 create or replace function public.is_area_admin(p_area_id uuid)`,
-    to: `    where m.user_id = (select auth.uid())
+    to: `  select public.is_globally_approved() and exists (
+    select 1
+    from public.app_members m
+    where m.user_id = (select auth.uid())
       and m.area_id = p_area_id
   );
 $$;
@@ -1674,6 +1691,252 @@ function priceInput(pennies: number) { return (pennies / 100).toFixed(2); }`,
     suites: ["scripts/canonical-paths.test.mjs"],
   },
 
+
+  /*
+   * ===================================================================
+   * Q19 -- MIGRATION 052, GLOBAL ACCOUNT APPROVAL
+   * ===================================================================
+   *
+   * EVERY ONE OF THESE LEAVES THE MIGRATION APPLYING CLEANLY.
+   *
+   * 052 carries its own end-state block, and that block looks for the gate
+   * by name in each routine it redefines. A mutation that simply deleted the
+   * gate would therefore be caught by the MIGRATION -- which proves the
+   * migration is careful and proves nothing at all about the tests.
+   *
+   * So where the end-state looks for a string, these keep the string and
+   * break the meaning: `X` becomes `(X or true)`, which reads the same to a
+   * substring search and answers true to everybody. What is left to notice
+   * the difference is behaviour, which is the only thing worth measuring.
+   */
+  {
+    name: "Q19-1. the approval gate comes off is_area_member",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `as $$
+  select public.is_globally_approved() and exists (
+    select 1
+    from public.app_members m
+    where m.user_id = (select auth.uid())
+      and m.active = true
+      and m.area_id = p_area_id
+  );
+$$;`,
+    to: `as $$
+  select (public.is_globally_approved() or true) and exists (
+    select 1
+    from public.app_members m
+    where m.user_id = (select auth.uid())
+      and m.active = true
+      and m.area_id = p_area_id
+  );
+$$;`,
+    suites: ["scripts/global-approval.test.mjs"],
+  },
+  {
+    name: "Q19-2. the approval gate comes off is_area_admin",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `  select public.is_globally_approved() and exists (
+    select 1
+    from public.app_members m
+    where m.user_id = (select auth.uid())
+      and m.active = true
+      and m.area_id = p_area_id
+      and m.role = 'admin'
+  );`,
+    to: `  select (public.is_globally_approved() or true) and exists (
+    select 1
+    from public.app_members m
+    where m.user_id = (select auth.uid())
+      and m.active = true
+      and m.area_id = p_area_id
+      and m.role = 'admin'
+  );`,
+    suites: ["scripts/global-approval.test.mjs"],
+  },
+  {
+    name: "Q19-3. the approval gate comes off is_active_app_member",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `  select public.is_globally_approved() and exists (
+    select 1
+    from public.app_members
+    where user_id = (select auth.uid())
+      and active = true
+  );`,
+    to: `  select (public.is_globally_approved() or true) and exists (
+    select 1
+    from public.app_members
+    where user_id = (select auth.uid())
+      and active = true
+  );`,
+    suites: ["scripts/global-approval.test.mjs"],
+  },
+  {
+    name: "Q19-4. the approval gate comes off is_own_app_member, reopening the notification leak",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `  select public.is_globally_approved() and exists (
+    select 1
+    from public.app_members m
+    where m.id = p_app_member_id
+      and m.user_id = (select auth.uid())
+      and m.active = true
+  );`,
+    to: `  select (public.is_globally_approved() or true) and exists (
+    select 1
+    from public.app_members m
+    where m.id = p_app_member_id
+      and m.user_id = (select auth.uid())
+      and m.active = true
+  );`,
+    suites: ["scripts/global-approval.test.mjs"],
+  },
+  {
+    name: "Q19-5. create_area stops asking whether the account is approved",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `  if not public.is_globally_approved() then
+    raise exception 'Your Gift Planner account has not been approved yet'`,
+    to: `  if not (public.is_globally_approved() or true) then
+    raise exception 'Your Gift Planner account has not been approved yet'`,
+    suites: ["scripts/global-approval.test.mjs"],
+  },
+  {
+    name: "Q19-6. claim_app_member believes an unconfirmed email again",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `  where auth_user.id = caller
+    and auth_user.email_confirmed_at is not null;`,
+    to: `  where auth_user.id = caller
+    and (auth_user.email_confirmed_at is not null or true);`,
+    suites: ["scripts/global-approval.test.mjs"],
+  },
+  {
+    name: "Q19-7. stamp_audit_area stops returning early for a global decision",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `  if new.table_name = 'app_accounts' then
+    new.area_id := null;
+    return new;
+  end if;`,
+    to: `  if new.table_name = 'app_accounts' and false then
+    new.area_id := null;
+    return new;
+  end if;`,
+    suites: ["scripts/global-approval.test.mjs"],
+  },
+  {
+    name: "Q19-8. the app_members own-row policy stops asking for approval",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `    user_id = (select auth.uid())
+    and active = true
+    and public.is_globally_approved()
+  );`,
+    to: `    user_id = (select auth.uid())
+    and active = true
+    and (public.is_globally_approved() or true)
+  );`,
+    suites: ["scripts/global-approval.test.mjs"],
+  },
+  {
+    name: "Q19-9. the global audit policy stops restricting itself to app_accounts",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `    area_id is null
+    and table_name = 'app_accounts'
+    and celebrant_person_id is null`,
+    to: `    area_id is null
+    and celebrant_person_id is null`,
+    suites: ["scripts/global-approval.test.mjs"],
+  },
+  {
+    name: "Q19-10. set_account_status stops checking who is asking",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `  if not public.is_global_admin() then
+    raise exception 'Only a Gift Planner administrator can decide an account'`,
+    to: `  if not (public.is_global_admin() or true) then
+    raise exception 'Only a Gift Planner administrator can decide an account'`,
+    suites: ["scripts/global-approval.test.mjs"],
+  },
+  {
+    name: "Q19-11. grant_area_access attaches a login to the seat it creates",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `    insert into public.app_members (area_id, person_id, email, role, active)
+    values (target_area, p_person_id, normalised, 'member', true);`,
+    to: `    insert into public.app_members (area_id, person_id, email, role, active, user_id)
+    values (target_area, p_person_id, normalised, 'member', true,
+            (select u.id from auth.users u where lower(u.email) = normalised));`,
+    suites: ["scripts/global-approval.test.mjs"],
+  },
+  {
+    name: "Q19-12. a claimed seat is re-granted against its STALE cached address",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `  select lower(u.email) into linked_email
+  from auth.users u
+  where u.id = seat.user_id
+    and u.email_confirmed_at is not null;`,
+    to: `  linked_email := lower(seat.email);`,
+    suites: ["scripts/global-approval.test.mjs"],
+  },
+  {
+    name: "Q19-13. grant_area_access stops refusing the family administrator's own seat",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `  if seat.id is not null and seat.role = 'admin' then
+    raise exception 'The family administrator''s access is changed by handing over the family, not here'
+      using errcode = '42501';
+  end if;`,
+    to: "",
+    suites: ["scripts/global-approval.test.mjs"],
+  },
+  {
+    name: "Q19-14. revoke_global_admin stops protecting the last administrator",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `  if admins_left = 0 then
+    raise exception 'That is the last Gift Planner administrator'
+      using errcode = '23514';
+  end if;`,
+    to: "",
+    suites: ["scripts/global-approval.test.mjs"],
+  },
+  {
+    name: "Q19-15. the backfill stops requiring a confirmed email",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `from auth.users u
+where u.email_confirmed_at is not null
+  and exists (
+    select 1
+    from public.app_members m
+    where m.user_id = u.id
+      and m.active = true
+  )
+on conflict (user_id) do nothing;`,
+    to: `from auth.users u
+where true
+  and exists (
+    select 1
+    from public.app_members m
+    where m.user_id = u.id
+      and m.active = true
+  )
+on conflict (user_id) do nothing;`,
+    suites: ["scripts/global-approval.test.mjs"],
+  },
+  {
+    name: "Q19-16. the approval gate comes off is_app_admin",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `  select public.is_globally_approved() and case
+    when public.acting_area() is not null then public.is_area_admin(public.acting_area())`,
+    to: `  select (public.is_globally_approved() or true) and case
+    when public.acting_area() is not null then public.is_area_admin(public.acting_area())`,
+    suites: ["scripts/global-approval.test.mjs"],
+  },
+  {
+    name: "Q19-17. the approval gate comes off is_area_contributor_member",
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `  select public.is_globally_approved() and exists (
+    select 1
+    from public.app_members m
+    join public.people p on p.id = m.person_id`,
+    to: `  select (public.is_globally_approved() or true) and exists (
+    select 1
+    from public.app_members m
+    join public.people p on p.id = m.person_id`,
+    suites: ["scripts/global-approval.test.mjs"],
+  },
 ];
 
 function runSuite(suite) {

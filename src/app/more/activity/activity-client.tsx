@@ -56,6 +56,12 @@ const KINDS = {
   people_birthday: "Birthdays",
   events: "Events",
   app_members: "Accounts",
+  // MIGRATION 052. A global approval decision belongs to no family, so a row
+  // of this kind can never pass this screen's Area filter. It is named here
+  // because the Gift Planner administrator's own review screen reads the same
+  // log -- and because a kind the database can write with no name at all is
+  // exactly how a raw table name reaches a reader the day one ever does.
+  app_accounts: "Gift Planner accounts",
 } as const;
 
 const ACTION_TONE = { added: "success", removed: "danger", restored: "warning" } as const;

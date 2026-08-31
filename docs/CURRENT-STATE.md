@@ -1,6 +1,6 @@
 # Current State
 
-**Last updated:** 2026-08-30, after Q18 closed.
+**Last updated:** 2026-08-31, after Q19's migration-052 build and rehearsal.
 
 The handoff between phases. Current facts only — history lives in git.
 
@@ -9,15 +9,85 @@ The handoff between phases. Current facts only — history lives in git.
 | Fact | Value |
 | ---- | ----- |
 | Live site | `https://xmas-family.uk/` |
-| Last completed phase | **Q18 — the architecture consolidation and single-path refactor** |
-| Q18 verdict | `Q18 CONDITIONAL PASS — JUSTIFIED DUPLICATE PATHS REMAIN` |
-| Next phase | **Q19 — see the two candidates Q18 deferred, below** |
+| Last completed phase | **Q19 — migration 052 built and rehearsed. NOT APPLIED.** |
+| Q19 verdict | `Q19 BUILD PASS — 052 READY FOR PRODUCTION APPROVAL` |
+| Next phase | **Q19 part two — apply 052, bootstrap, then build the runtime** |
 | Branch | `main` |
-| Local HEAD | one commit ahead of `origin/main` — this closeout, **held back deliberately** (docs only) |
+| Local HEAD | Q18's closeout plus Q19's build, **held back deliberately** — none of it may deploy before 052 is applied |
 | origin/main | `d36d47d` — Q18's consolidation, deployed. It carried Q17's held docs commit `e38e8a2`. |
 | Serving Worker | **not read this phase** — `wrangler deployments list` was blocked by the sandbox. The push deployed and the live site was verified end-to-end at both viewports; the version id is unrecorded. |
 | Product name | **Gift Planner** |
 | Migrations applied | **001–051**, immutable. 051 applied manually 2026-08-30. |
+| Migration **052** | **written, rehearsed, NOT APPLIED.** Production still ends at 051. |
+| Public sign-up | **still off.** No `/sign-up`, no global administrator, no runtime. |
+
+## Q19 — migration 052 is built and rehearsed, and waiting on you
+
+`docs/Q19-PUBLIC-SIGNUP-APPROVAL.md` is the record, and it carries the census
+rows, the bootstrap statement and the runtime plan. Read it before doing
+anything to production.
+
+**One sentence:** being able to sign in stops being the same thing as being
+allowed in. A new table, `public.app_accounts`, sits **upstream of every Area** —
+`auth.users` → `app_accounts` → `app_members` → role.
+
+**Nothing is applied.** The database is untouched; the only production activity
+this phase was two read-only fingerprints and one read-only census.
+
+### What 052 is
+
+One table, ten new routines, **nine** redefinitions, two policies, one widened
+CHECK. `app_accounts` has RLS on, **zero policies, and not one privilege for
+`anon` or `authenticated`** — a browser reads its status through
+`my_account_status()` and nowhere else. **A missing row means NOT APPROVED.**
+
+Six redefinitions were designed. **Three came out of the rehearsal**, and they
+are the reason this phase was worth running rather than writing:
+
+1. **`is_own_app_member` was a real leak.** It gates `notifications`,
+   `notification_preferences` and `push_subscriptions` — the three tables keyed
+   on a membership rather than an Area, and therefore the three an Area-shaped
+   sweep never looks at. Measured without the fix, a **rejected** account with a
+   claimed membership still read its own notification rows, and a notification
+   carries the gift itself. The approved rule "blocked from ALL Area data" was
+   not true with six redefinitions.
+2. **`is_app_admin` and `is_area_contributor_member`**, found by a **surviving
+   mutation**. Every isolation test suspended an ordinary *member*, for whom
+   `is_area_admin` answers false either way; suspending an **administrator**
+   showed both predicates still saying yes. Neither let a suspended account do
+   anything — nineteen writes were attempted and all nineteen refused — but a
+   database that keeps telling somebody it has locked out that they run a family
+   is one refactor from a hole.
+3. **`audit_log.action` had a closed vocabulary** (`added, removed, restored,
+   handover`). 052 widens it by three, exactly as 041 did, which invalidates no
+   existing row.
+
+`is_acting_area` and the four `current_*` identity resolvers are **deliberately
+left ungated**, with reasons, and a named test locks that choice in.
+
+### The production census — run, read-only, clean
+
+| | |
+| --- | --- |
+| Total `auth.users` | **5** |
+| Category A (auto-approved) | **5** |
+| Category B (unconfirmed, **blocks**) | **0** |
+| Category C (no active membership) | **0** |
+| Unclaimed invitations | **0** |
+
+**Nothing blocks the apply.** Nobody loses access. Note that the **QA account
+is one of the five** and is approved by the backfill like any other — correct,
+and worth knowing rather than discovering.
+
+The five candidate uuids are in `docs/Q19-PUBLIC-SIGNUP-APPROVAL.md`. **Choosing
+the bootstrap administrator is yours, not the model's.**
+
+### Before production apply
+
+1. Review the census. 2. Apply 052 by hand. 3. Run
+`docs/Q19-052-POST-APPLY-CHECKS.sql`. 4. Run the bootstrap statement with your
+chosen uuid and record it. 5. Run the checks again. 6. Only then build the
+runtime, and only then enable Supabase Auth sign-up and `/sign-up`.
 
 ## Q18 — one implementation per concept
 
@@ -494,8 +564,26 @@ Being the Area's admin did not help them, which is the invariant.
 
 ## Verification state
 
-- Full regression **1,749 tests, all passing**. Q18 added 24 and removed none.
-- Mutations **145/145 caught, zero survivors**. **130 are killed by a named
+- Full regression **1,939 tests, all passing**. Q19 added 190: the 147 of
+  `global-approval`, the 18 of the rollback rehearsal, the doc-file tests, and
+  the per-migration tests that grow with the chain.
+- Mutations **162/162 caught, zero survivors** (145 + Q19's 17). Sixteen of the
+  seventeen are killed by a **named behavioural assertion**; the seventeenth
+  (the backfill's confirmed-email rule) also fails seven named tests, and the
+  harness simply reports the stronger signal — 052's own end-state block
+  refusing, which is a data assertion against real rows rather than a parse or
+  build failure.
+- **Every Q19 mutation leaves the migration applying cleanly.** 052's end-state
+  block looks for each gate *by name*, so a mutation that deleted one would be
+  caught by the migration and would prove nothing about the tests. They keep the
+  string and break the meaning — `X` becomes `(X or true)` — leaving behaviour
+  as the only thing that can notice.
+- **Q2-8 and Q2-9 were re-aimed at 052**, which now redefines `create_area` and
+  `is_area_member`. Left alone they survived: the mutant never reached the
+  schema. Same failure mode Q17 fixed for 047, same fix.
+- Migrations **001–051 were byte-identical before and after every mutation run**,
+  and 052 was restored exactly. Hashed and compared, not assumed.
+- Previously, at Q18: full regression 1,749; mutations **145/145 caught**. **130 are killed by a named
   failing test** (Q18's four are all behavioural) and 15 by a migration's own
   end-state block — and after Q17 every one of those 15 edits an object that is actually
   installed, so the block is querying the resulting schema rather than comparing
@@ -627,14 +715,21 @@ eyebrow is source-verified only: `/login` redirects an authenticated session to
 
 ## Starting the next phase
 
+**The next phase begins with a decision only you can make: which Category A
+uuid becomes the first Gift Planner administrator.** Nothing in Q19 part two can
+start before that.
+
 In a **fresh** Claude session (Opus 5, High):
 
 > Read `CLAUDE.md` (loaded automatically) and `docs/CURRENT-STATE.md`. Read
 > `docs/SECURITY-AND-QA.md` if this phase touches security, data or live QA.
 > Then execute this phase. \<phase prompt\>
 
-**Push the closeout commit with the next phase's work.** It is docs-only and on
-its own would trigger a production build that changes nothing.
+**Do NOT push Q19's work until 052 is applied.** It is not docs-only: it adds a
+migration and rewrites test harness expectations. Pushing `main` auto-deploys,
+and while the deployed code does not yet depend on 052, holding the whole
+change together keeps the database and the repository describing the same thing.
+Q18's closeout commit rides along with it.
 
 **Q17's two open questions are both answered and closed** — pnpm is the package
 manager, and the `*-taylor*` scripts were unwanted and are deleted. Q18 leaves

@@ -85,7 +85,11 @@ describe("migrations 001-038 are applied and immutable", () => {
     // asserted below rather than left implied.
     assert.equal(migrationFiles.indexOf(WISHLIST), migrationFiles.indexOf(AREA_AUTH) + 1);
     assert.equal(migrationFiles.indexOf(AREA_AUTH), 38, "039 is the thirty-ninth migration");
-    assert.equal(migrationFiles.length, 51);
+    // Q19 adds 052: global account approval. It creates no policy on this
+    // table and changes no wishlist routine -- 040 still owns every one of
+    // them. What it DOES change is who counts as a member at all, and that
+    // is proved against a real database rather than counted here.
+    assert.equal(migrationFiles.length, 52);
   });
 
   test("no earlier migration mentions the new ones", () => {

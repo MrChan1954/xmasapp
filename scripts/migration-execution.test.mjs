@@ -45,6 +45,7 @@ const BIRTHDAY_PRIVACY_SUBJECT = "202608100050_audit_birthday_privacy_subject.sq
 // Q15's 051: three superseded routines dropped, and the blanket table grant
 // narrowed on `areas` and `birthday_wishlist_ideas`.
 const LEGACY_SURFACE = "202608100051_drop_superseded_routines_and_narrow_table_grants.sql";
+const GLOBAL_APPROVAL = "202608100052_global_account_approval.sql";
 
 /** Everything the database owns, as names. The unit of "what a migration did". */
 async function inventory(db) {
@@ -89,14 +90,14 @@ describe("the whole history replays on PostgreSQL 18", () => {
   after(async () => { await db?.close(); });
 
   test("every migration executes, in order, against a real server", async () => {
-    assert.equal(db.appliedMigrations.length, 51);
-    assert.equal(db.appliedMigrations.at(-7).name, MUTATION_HARDENING);
-    assert.equal(db.appliedMigrations.at(-6).name, GIFT_IDEA_REMOVAL);
-    assert.equal(db.appliedMigrations.at(-5).name, PERSON_ROUTINES);
-    assert.equal(db.appliedMigrations.at(-4).name, HELPER_GRANTS);
-    assert.equal(db.appliedMigrations.at(-3).name, AUDIT_ACTING_AREA);
-    assert.equal(db.appliedMigrations.at(-2).name, BIRTHDAY_PRIVACY_SUBJECT);
-    assert.equal(db.appliedMigrations.at(-1).name, LEGACY_SURFACE);
+    assert.equal(db.appliedMigrations.length, 52);
+    // The tail, as a list rather than as counted-back offsets. Each new
+    // migration used to move every one of those offsets by one, which meant
+    // an edit nobody could get right in a single pass.
+    assert.deepEqual(db.appliedMigrations.slice(-8).map((m) => m.name), [
+      MUTATION_HARDENING, GIFT_IDEA_REMOVAL, PERSON_ROUTINES, HELPER_GRANTS,
+      AUDIT_ACTING_AREA, BIRTHDAY_PRIVACY_SUBJECT, LEGACY_SURFACE, GLOBAL_APPROVAL,
+    ]);
     assert.ok(db.appliedMigrations.every((m) => m.ok));
   });
 
@@ -403,13 +404,13 @@ describe("public.rls_auto_enable, the object production has and no migration cre
 // ===========================================================================
 
 describe("the migration inventory", () => {
-  test("051 is the newest, and nothing older has moved", () => {
+  test("052 is the newest, and nothing older has moved", () => {
     const names = migrationNames();
-    assert.equal(names.length, 51);
-    assert.deepEqual(names.slice(-9),
+    assert.equal(names.length, 52);
+    assert.deepEqual(names.slice(-10),
       [PLANNING, PERSON_ADMIN, MUTATION_HARDENING, GIFT_IDEA_REMOVAL,
        PERSON_ROUTINES, HELPER_GRANTS, AUDIT_ACTING_AREA, BIRTHDAY_PRIVACY_SUBJECT,
-       LEGACY_SURFACE]);
+       LEGACY_SURFACE, GLOBAL_APPROVAL]);
   });
 });
 

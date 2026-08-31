@@ -26,7 +26,7 @@ import test, { describe, before, after } from "node:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { ROOT, asOwner, buildRehearsal } from "./pg/rehearsal.mjs";
+import { ROOT, asOwner, attempt, buildRehearsal } from "./pg/rehearsal.mjs";
 
 const CHECKS = join(ROOT, "docs", "PHASE-5-POST-APPLY-CHECKS.sql");
 const sql = readFileSync(CHECKS, "utf8").replace(/\r\n/gu, "\n");
@@ -580,7 +580,7 @@ describe("the Q6 check file cannot change anything either", () => {
       "prosecdef", "search_path", "has_function_privilege",
       "is_area_admin(target_area)", "is_area_contributor_member(target_area)",
       "set_person_birthday(uuid,smallint,smallint,smallint)",
-      "no unguarded definer writer beyond the five known-safe ones",
+      "no unguarded definer writer beyond the eight known-safe ones",
     ]) {
       assert.ok(q6Sql.includes(needle), `the file must check ${needle}`);
     }
@@ -665,8 +665,210 @@ describe("THE Q6 CHECK FILE FAILS ON A DATABASE THAT HAS NOT HAD 047", () => {
   });
 
   test("and the drift check notices the routines that are Area-blind", () => {
-    const drift = result.rows.find((row) => row.check_name.includes("five known-safe"));
+    const drift = result.rows.find((row) => row.check_name.includes("known-safe"));
     assert.ok(drift, "the drift check should be present");
     assert.equal(drift.verdict, "REVIEW");
+  });
+});
+
+/* ===========================================================================
+ * Q19 -- THE THREE FILES MIGRATION 052 SHIPS WITH
+ *
+ * Two of them are meant to be pasted into the live SQL Editor, so the same two
+ * things have to be true of each: it must change nothing, and it must run. The
+ * third -- the rollback -- is the opposite: it changes a great deal, and its
+ * own suite (`scripts/global-approval-rollback.test.mjs`) executes it and
+ * compares the result with a pre-052 database. What is checked here is only
+ * that its header carries the warnings a reader needs BEFORE running it.
+ * =========================================================================== */
+
+const Q19_CHECKS = join(ROOT, "docs", "Q19-052-POST-APPLY-CHECKS.sql");
+const Q19_CENSUS = join(ROOT, "docs", "Q19-052-PRE-APPLY-AUTH-CENSUS.sql");
+const Q19_ROLLBACK = join(ROOT, "docs", "Q19-052-ROLLBACK.sql");
+
+for (const [label, path] of [
+  ["the Q19 post-apply check file", Q19_CHECKS],
+  ["the Q19 pre-apply census", Q19_CENSUS],
+]) {
+  describe(`${label} cannot change anything`, () => {
+    const body = stripCommentsAndLiterals(readFileSync(path, "utf8").replace(/\r\n/gu, "\n"));
+
+    test("it contains no statement that writes, and none that changes an object", () => {
+      const FORBIDDEN = [
+        "insert", "update", "delete", "upsert", "merge",
+        "alter", "create", "drop", "truncate",
+        "grant", "revoke", "comment on", "call", "do",
+        "vacuum", "analyze", "reindex", "cluster", "refresh",
+        "copy", "lock", "set ", "reset", "begin", "commit", "rollback",
+        "security definer", "perform", "notify",
+      ];
+      const found = FORBIDDEN.filter((word) =>
+        new RegExp(String.raw`(?<![\w.])${word.trim()}(?![\w])`, "iu").test(body));
+      assert.deepEqual(found, [],
+        `these words appear as executable SQL, not just in comments: ${found.join(", ")}`);
+    });
+
+    test("and it is ONE statement, so the SQL Editor shows its result", () => {
+      const statements = body.split(";").map((one) => one.trim()).filter(Boolean);
+      assert.equal(statements.length, 1);
+      assert.match(statements[0], /^with\b/iu);
+    });
+
+    test("it never asks for the Supabase CLI's migration history table", () => {
+      assert.ok(!body.includes("supabase_migrations"));
+    });
+  });
+}
+
+describe("the Q19 post-apply check file actually runs, against a 052 database", () => {
+  let db;
+  let result;
+
+  before(async () => {
+    db = await buildRehearsal({});
+    await asOwner(db);
+    result = await db.query(readFileSync(Q19_CHECKS, "utf8"));
+  });
+  after(async () => { await db?.close(); });
+
+  test("it returns one table with the three columns a reader needs", () => {
+    assert.ok(result.rows.length > 20, "it should cover the table, the routines, the policies and the backfill");
+    assert.deepEqual(Object.keys(result.rows[0]).sort(), ["check_name", "detail", "status"]);
+  });
+
+  test("the first row is the summary, whatever verdict it carries", () => {
+    assert.match(result.rows[0].detail, /passed, .* failed, .* to review/u);
+  });
+
+  test("AND AGAINST A CORRECTLY MIGRATED DATABASE, NOTHING FAILS", () => {
+    const bad = result.rows.filter((row) => row.status === "FAIL" || row.status === "REVIEW");
+    assert.deepEqual(bad.map((row) => row.check_name), []);
+  });
+
+  test("every verdict is one of the four the header explains", () => {
+    for (const kind of new Set(result.rows.map((row) => row.status))) {
+      assert.ok(["PASS", "FAIL", "INFO", "REVIEW"].includes(kind), `unexpected verdict: ${kind}`);
+    }
+  });
+});
+
+describe("THE Q19 CHECK FILE CANNOT REPORT SUCCESS ON A DATABASE THAT HAS NOT HAD 052", () => {
+  /*
+   * The test that gives the file its value. Everything above proves it says
+   * PASS when it should; this proves it cannot say PASS when it should not.
+   *
+   * IT REFUSES BY ERRORING, AND THAT IS THE DESIGN. Sections 5 and 7 read
+   * rows out of `app_accounts`, which a pre-052 database does not have -- and
+   * a single statement cannot read a table conditionally. Being ONE statement
+   * is what makes the SQL Editor show the whole report, so the trade is
+   * deliberate: run it before 052 and you get an unmistakable sentence naming
+   * the missing table, rather than a table of FAILs to interpret.
+   */
+  let db;
+
+  before(async () => {
+    db = await buildRehearsal({
+      through: "202608100051_drop_superseded_routines_and_narrow_table_grants.sql",
+    });
+    await asOwner(db);
+  });
+  after(async () => { await db?.close(); });
+
+  test("it stops, and the error names the table 052 was supposed to create", async () => {
+    const attempted = await attempt(db, readFileSync(Q19_CHECKS, "utf8"));
+    assert.equal(attempted.ok, false, "the file reported something on a database with no app_accounts");
+    assert.match(attempted.error, /app_accounts/u);
+    assert.equal(attempted.code, "42P01", "and it is a missing-relation error, not a syntax one");
+  });
+
+  test("and the header says so, so nobody has to discover it", () => {
+    const header = readFileSync(Q19_CHECKS, "utf8").split("with" + String.fromCharCode(10))[0];
+    assert.match(header, /RUN IT AFTER 052, NOT BEFORE/u);
+  });
+});
+
+describe("the Q19 census actually runs, and partitions every account", () => {
+  let db;
+  let result;
+
+  before(async () => {
+    // Deliberately a PRE-052 database: the census is what you read BEFORE
+    // applying, so that is the schema it has to work on.
+    db = await buildRehearsal({
+      through: "202608100051_drop_superseded_routines_and_narrow_table_grants.sql",
+    });
+    await asOwner(db);
+    result = await db.query(readFileSync(Q19_CENSUS, "utf8"));
+  });
+  after(async () => { await db?.close(); });
+
+  test("it returns one table with the three columns a reader needs", () => {
+    assert.deepEqual(Object.keys(result.rows[0]).sort(), ["detail", "item", "section"]);
+  });
+
+  test("the headline counts come first, and the categories partition auth.users", () => {
+    assert.equal(result.rows[0].section, "HEADLINE");
+    const partition = result.rows.find((row) => row.item.includes("cover every account exactly once"));
+    assert.ok(partition, "the partition assertion must be in the report");
+    assert.match(partition.detail, /^yes/u);
+  });
+
+  test("every section the header describes is present", () => {
+    const sections = new Set(result.rows.map((row) => row.section));
+    for (const section of ["HEADLINE", "A -- AUTOMATIC", "B -- STOP AND REVIEW",
+      "C -- MANUAL REVIEW", "I -- INVITATIONS"]) {
+      assert.ok(sections.has(section), `${section} is missing from the census`);
+    }
+  });
+
+  test("AND IT NAMES NO FAMILY DATA -- no gift, no amount, no person's name", () => {
+    const body = readFileSync(Q19_CENSUS, "utf8");
+    for (const column of [
+      "amount_pennies", "budget_pennies", "planned_amount_pennies", "actual_price_pennies",
+      "estimated_price_pennies", "birthday_month", "birthday_day", "birthday_year",
+    ]) {
+      assert.ok(!body.includes(column), `the census reads ${column}, which is family data`);
+    }
+    // A person's name never appears; an AREA name does, but only against an
+    // invitation, which is meaningless without knowing which family it is for.
+    assert.ok(!body.includes("public.people"), "the census must not read the people table at all");
+  });
+});
+
+describe("the Q19 rollback warns before it destroys", () => {
+  const header = readFileSync(Q19_ROLLBACK, "utf8").replace(/\r\n/gu, "\n").split("-- 0.")[0];
+
+  test("it says that rolling back reopens create_area to any signed-in account", () => {
+    assert.match(header, /create_area/u);
+    assert.match(header, /ANY signed-in account/iu);
+  });
+
+  test("and that claim_app_member goes back to believing an unconfirmed email", () => {
+    assert.match(header, /claim_app_member/u);
+    assert.match(header, /UNCONFIRMED/u);
+  });
+
+  test("and that /sign-up must not stay publicly reachable", () => {
+    assert.match(header, /sign-up/u);
+  });
+
+  test("and that dropping app_accounts destroys every approval decision", () => {
+    assert.match(header, /DESTROYS EVERY APPROVAL DECISION/u);
+  });
+
+  test("and it documents a backup statement to take first", () => {
+    const body = readFileSync(Q19_ROLLBACK, "utf8");
+    assert.match(body, /app_accounts_rollback_backup/u);
+  });
+
+  test("every drop in it is RESTRICT, never CASCADE", () => {
+    const body = readFileSync(Q19_ROLLBACK, "utf8").replace(/\r\n/gu, "\n");
+    // The executable text, because the header quite rightly TALKS about
+    // CASCADE -- to say not to reach for one.
+    assert.ok(!/\bcascade\b/iu.test(stripCommentsAndLiterals(body)),
+      "a CASCADE would drop objects nobody listed, which is how a rollback takes something with it");
+    const drops = [...body.matchAll(/^drop (?:function|table) if exists [^;]+;/gmu)].map((m) => m[0]);
+    assert.equal(drops.length, 11, "ten routines and one table");
+    for (const drop of drops) assert.match(drop, /restrict;$/u);
   });
 });

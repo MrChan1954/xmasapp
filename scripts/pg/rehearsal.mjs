@@ -83,10 +83,14 @@ alter default privileges for role postgres in schema public grant all on functio
 create schema if not exists auth;
 grant usage on schema auth to anon, authenticated, service_role;
 
+-- The columns this application actually reads. last_sign_in_at is not used
+-- by any migration or policy; it is here because the Q19 auth census reports
+-- it, and a census that cannot be rehearsed is a census nobody has run.
 create table if not exists auth.users (
   id uuid primary key default gen_random_uuid(),
   email text unique,
   email_confirmed_at timestamptz,
+  last_sign_in_at timestamptz,
   created_at timestamptz not null default now()
 );
 

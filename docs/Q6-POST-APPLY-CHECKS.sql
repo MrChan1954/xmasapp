@@ -292,11 +292,11 @@ union all
 select 4731, '001-046 unchanged',
        '045''s cohort still carries require_acting_area',
        (case when (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-                   where n.nspname = 'public' and p.prosrc like '%require_acting_area%') = 22
+                   where n.nspname = 'public' and p.prosrc like '%require_acting_area%') = 24
              then 'PASS' else 'REVIEW' end),
        (select count(*)::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where n.nspname = 'public' and p.prosrc like '%require_acting_area%')
-       || ' routines mention require_acting_area (22 expected on 001-049)'
+       || ' routines mention require_acting_area (24 expected on 001-052)'
 
 union all
 
@@ -348,9 +348,20 @@ union all
 --                            BREAK claiming an invitation to a family you are
 --                            not yet standing in
 --
--- A SIXTH NAME APPEARING HERE IS THE WHOLE POINT OF THIS CHECK.
+-- 052 ADDS THREE MORE, AND THEY ARE A DIFFERENT KIND OF SAFE.
+--
+--   set_account_status / grant_global_admin / revoke_global_admin
+--                            Area-LESS rather than Area-blind. They write
+--                            app_accounts and audit_log, neither of which
+--                            belongs to a family, so there is no Area for
+--                            require_acting_area to be given. What stands in
+--                            its place is is_global_admin(), which each of
+--                            them calls first and which no family
+--                            administrator can satisfy.
+--
+-- A NINTH NAME APPEARING HERE IS THE WHOLE POINT OF THIS CHECK.
 select 4742, 'no drift',
-       'no unguarded definer writer beyond the five known-safe ones',
+       'no unguarded definer writer beyond the eight known-safe ones',
        (case when (select coalesce(string_agg(p.proname, ',' order by p.proname), '')
                    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
                    where n.nspname = 'public' and p.prosecdef
@@ -358,7 +369,7 @@ select 4742, 'no drift',
                      and has_function_privilege('authenticated', p.oid, 'execute')
                      and p.prosrc ~* '(insert into|update (only )?public\.|delete from)'
                      and p.prosrc !~* '(require_acting_area|is_acting_area)')
-                  = 'claim_app_member,create_area,create_event,create_person,start_birthday_planning'
+                  = 'claim_app_member,create_area,create_event,create_person,grant_global_admin,revoke_global_admin,set_account_status,start_birthday_planning'
              then 'PASS' else 'REVIEW' end),
        (select coalesce(string_agg(p.proname, ', ' order by p.proname), '(none)')
         from pg_proc p join pg_namespace n on n.oid = p.pronamespace

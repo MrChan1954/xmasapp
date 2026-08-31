@@ -51,6 +51,23 @@ export async function buildTwoFamilies(db) {
     );
   }
 
+  // MIGRATION 052. Signing in stopped being the same thing as being allowed in:
+  // every routine below is gated on an approved global account. The fixture's
+  // people are the ordinary approved population, and a suite that needs a
+  // pending, rejected or suspended one writes that status itself.
+  //
+  // Guarded on the table existing, because `buildRehearsal({ through })` stops
+  // the chain early and several suites build this fixture on a pre-052 schema.
+  await db.exec(`
+    do $$
+    begin
+      if to_regclass('public.app_accounts') is not null then
+        insert into public.app_accounts (user_id, status)
+        select id, 'approved' from auth.users
+        on conflict (user_id) do update set status = 'approved';
+      end if;
+    end $$;`);
+
   const legacy = await value(db, "select id from public.areas order by created_at limit 1");
 
   // -------------------------------------------------------------------------
@@ -237,5 +254,27 @@ async function link(db, areaId, personId, userId) {
     `insert into public.app_members (area_id, person_id, user_id, email, role, active)
      values ($1, $2, $3, $4, 'member', true) returning id`,
     [areaId, personId, userId, `${personId.slice(0, 8)}@example.test`],
+  );
+}
+
+/**
+ * MIGRATION 052: APPROVE ONE ACCOUNT FOR GIFT PLANNER, OR REFUSE IT.
+ *
+ * A suite that mints its own `auth.users` row now has to say what the global
+ * approval queue decided about it, because being able to sign in stopped being
+ * the same thing as being allowed in. Every Area predicate asks
+ * `is_globally_approved()` first, so an account with no `app_accounts` row is
+ * a stranger no matter how many memberships it holds.
+ *
+ * Pass a status other than `approved` to build a pending, rejected or suspended
+ * account deliberately -- which is exactly what the isolation tests do.
+ */
+export async function setAccountStatus(db, userId, status = "approved") {
+  await asOwner(db);
+  await db.query(
+    `insert into public.app_accounts (user_id, status)
+     values ($1, $2)
+     on conflict (user_id) do update set status = excluded.status, updated_at = now()`,
+    [userId, status],
   );
 }

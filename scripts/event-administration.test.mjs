@@ -98,42 +98,47 @@ test("026 to 033 are still in order, with Phase 5's Areas on top", () => {
   // 026-033 keep their order relative to each other; everything newer sits
   // above them, so every offset moves together and nothing about 026-033
   // changes.
-  assert.equal(files.at(-26), MIGRATION, "026 must come first of these");
-  assert.equal(files.at(-25), REMINDER_MIGRATION, "then 027");
-  assert.equal(files.at(-24), OCCASION_MIGRATION, "then 028");
-  assert.equal(files.at(-23), BUDGET_MIGRATION, "then 029");
-  assert.equal(files.at(-22), CONTRIBUTOR_MIGRATION, "then 030");
-  assert.equal(files.at(-21), PRIVACY_MIGRATION, "then 031");
-  assert.equal(files.at(-20), PEOPLE_MIGRATION, "then 032");
-  assert.equal(files.at(-19), MEMBERSHIP_MIGRATION, "then 033");
-  assert.deepEqual(files.slice(-18, -13), AREA_MIGRATIONS, "then Phase 5's five, in order");
-  assert.deepEqual(files.slice(-13, -11), HARDENING_MIGRATIONS, "then the Q1 hardening");
-  assert.deepEqual(files.slice(-11, -8), LIFECYCLE_MIGRATIONS, "and Q2's Area lifecycle on top of that");
+  assert.equal(files.at(-27), MIGRATION, "026 must come first of these");
+  assert.equal(files.at(-26), REMINDER_MIGRATION, "then 027");
+  assert.equal(files.at(-25), OCCASION_MIGRATION, "then 028");
+  assert.equal(files.at(-24), BUDGET_MIGRATION, "then 029");
+  assert.equal(files.at(-23), CONTRIBUTOR_MIGRATION, "then 030");
+  assert.equal(files.at(-22), PRIVACY_MIGRATION, "then 031");
+  assert.equal(files.at(-21), PEOPLE_MIGRATION, "then 032");
+  assert.equal(files.at(-20), MEMBERSHIP_MIGRATION, "then 033");
+  assert.deepEqual(files.slice(-19, -14), AREA_MIGRATIONS, "then Phase 5's five, in order");
+  assert.deepEqual(files.slice(-14, -12), HARDENING_MIGRATIONS, "then the Q1 hardening");
+  assert.deepEqual(files.slice(-12, -9), LIFECYCLE_MIGRATIONS, "and Q2's Area lifecycle on top of that");
   // Q3's 044 sits above all of it. Named here so adding another migration is
   // still a deliberate act that has to come back through this file.
-  assert.equal(files.at(-8), "202608100044_area_scoped_person_administration.sql");
-  assert.equal(files.at(-7), "202608100045_area_scoped_mutation_hardening.sql");
+  assert.equal(files.at(-9), "202608100044_area_scoped_person_administration.sql");
+  assert.equal(files.at(-8), "202608100045_area_scoped_mutation_hardening.sql");
   // Q5 adds 046, which closes the one gift/purchase write 045 could not reach.
-  assert.equal(files.at(-6), "202608100046_area_scoped_gift_idea_removal.sql");
+  assert.equal(files.at(-7), "202608100046_area_scoped_gift_idea_removal.sql");
   // Q6 adds 047: the four person routines that authorised in one family and
   // wrote in another.
-  assert.equal(files.at(-5), "202608100047_area_scoped_person_routines.sql");
+  assert.equal(files.at(-6), "202608100047_area_scoped_person_routines.sql");
   // Q10 adds 048: a grant revoke on three internal helpers. It defines no
   // function of its own, so this file's own promises are untouched by it.
-  assert.equal(files.at(-4), "202608100048_revoke_area_helper_grants.sql");
+  assert.equal(files.at(-5), "202608100048_revoke_area_helper_grants.sql");
   // Q11 adds 049: one `create or replace` on `stamp_audit_area`, so that an
   // audit entry for a deleted row learns its Area from the acting Area. It
   // adds no table, policy, grant or trigger and touches nothing 026-033 owns.
-  assert.equal(files.at(-3), "202608100049_audit_area_from_acting_area.sql");
+  assert.equal(files.at(-4), "202608100049_audit_area_from_acting_area.sql");
   // Q12 adds 050: two privacy columns on `audit_log`, a backfill of them, and
   // an own-birthday clause in the audit-log read policy, plus guards in three
   // routines. It creates no table and changes no event administration routine,
   // so 026-033's own promises are untouched by it too.
-  assert.equal(files.at(-2), "202608100050_audit_birthday_privacy_subject.sql");
+  assert.equal(files.at(-3), "202608100050_audit_birthday_privacy_subject.sql");
   // Q15 adds 051: three superseded routines dropped, and the blanket table
   // grant narrowed on `areas` and `birthday_wishlist_ideas`. It creates
   // nothing, defines no function and touches no event administration routine.
-  assert.equal(files.at(-1), "202608100051_drop_superseded_routines_and_narrow_table_grants.sql");
+  assert.equal(files.at(-2), "202608100051_drop_superseded_routines_and_narrow_table_grants.sql");
+  // Q19 adds 052: global Gift Planner approval. It creates one table, adds
+  // ten routines and redefines seven, none of which is an event
+  // administration routine -- what it changes about 026-033's world is that
+  // every one of their guards now sits behind an approved account.
+  assert.equal(files.at(-1), "202608100052_global_account_approval.sql");
   for (const prefix of ["202608100026", "202608100027", "202608100028", "202608100029", "202608100030", "202608100031", "202608100032", "202608100033"]) {
     assert.equal(
       files.filter((name) => name.startsWith(prefix)).length,
