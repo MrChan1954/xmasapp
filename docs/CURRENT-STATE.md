@@ -1,7 +1,7 @@
 # Current State
 
-**Last updated:** 2026-08-31, after the Q19 runtime was pushed, auto-deployed
-and smoke-tested live, with public sign-up open.
+**Last updated:** 2026-08-31, after custom SMTP was configured and a real Auth
+email was proved to deliver.
 
 The handoff between phases. Current facts only — history lives in git.
 
@@ -12,7 +12,7 @@ The handoff between phases. Current facts only — history lives in git.
 | Live site | `https://xmas-family.uk/` |
 | Last completed phase | **Q19 launch step 1 — Auth configuration verified, runtime DEPLOYED, signed-out smoke passed.** |
 | Q19 verdict | `LAUNCH STEP 1 PASS — READY FOR LIVE SIGN-UP E2E` |
-| Next phase | **Live sign-up / approval / Area-onboarding E2E**, then final QA-Area cleanup. **Blocked on custom SMTP** — see below. |
+| Next phase | **Live sign-up / approval / Area-onboarding E2E**, then final QA-Area cleanup. Unblocked. |
 | Branch | `main` |
 | Local HEAD | `12909e2` — pushed. Nothing held back. |
 | origin/main | `12909e2` — the Q19 runtime, deployed 2026-08-31 ~13:58 UTC. |
@@ -23,11 +23,31 @@ The handoff between phases. Current facts only — history lives in git.
 | Public sign-up | **ON**, and **Confirm Email is ON**. Both machine-read from GoTrue, not taken on trust. |
 | Global administrators | **one**, bootstrapped 2026-08-31 01:18:25 UTC. |
 
-> **The single most important fact on this page.** The runtime is live and the
-> front door is open, but **nobody has ever completed a real sign-up**. The
-> confirmation email cannot currently be delivered to a family address: the
-> project still uses Supabase's built-in email service. Custom SMTP is the next
-> phase's first task, before any E2E attempt.
+> **The single most important fact on this page.** The runtime is live, the
+> front door is open and Auth email now reaches a real address — but **nobody
+> has ever completed a real sign-up**. That is the next phase, and it needs one
+> email address the user chooses.
+
+## SMTP — configured, and proved to deliver
+
+Auth email goes out through **Resend** (`smtp.resend.com:465`, sender
+`Gift Planner <no-reply@auth.xmas-family.uk>`, domain `auth.xmas-family.uk`
+verified). Supabase's built-in mailer is no longer in the path.
+
+**Proved, not assumed.** One password-reset request for a real existing address
+was submitted through the live `/forgot-password` form on 2026-08-31.
+`/auth/v1/recover` returned **200** — a broken SMTP host fails there with a
+500 — and the email **arrived**. No password was changed, no link followed, no
+account state touched.
+
+**One caveat that matters for launch.** It landed in **junk**, not the inbox.
+Hotmail/Outlook filters a newly verified sending domain with no reputation, and
+a confirmation email a family member never finds is, from their side, an email
+that never came. Worth a DMARC record and a warm-up before telling people to
+sign up — and worth telling the first few to check their spam folder.
+
+**Not inspected:** Resend's own delivery events. Reading them needs the user's
+authenticated Resend session, which is not reachable from this environment.
 
 ## Q19 launch step 1 — configured, pushed, deployed, smoke-tested
 
