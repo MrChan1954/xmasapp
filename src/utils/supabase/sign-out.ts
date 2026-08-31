@@ -43,9 +43,28 @@ import { createClient } from "./client";
  *      starts from nothing.
  */
 export async function signOut(): Promise<void> {
+  await clearSession();
+  redirectToLogin();
+}
+
+/**
+ * THE FIRST TWO STEPS, FOR THE ONE CALLER THAT MUST NOT NAVIGATE.
+ *
+ * `/account-setup` clears a session when the browser turns out to be signed in
+ * to a DIFFERENT account from the one the setup link is for. It then has to
+ * stay put and say so: sending that person to `/login` would drop them on a
+ * screen that does not render the reason, and they would try the same link
+ * again with no idea what happened.
+ *
+ * Step 3 is all that is left out. The session still ends first and the Area
+ * cookie is still forgotten -- the hazard Q18 named, and the reason this module
+ * exists -- so a caller cannot half-sign-out by accident. `auth.signOut()`
+ * remains in this file and nowhere else, which is what
+ * `scripts/canonical-paths.test.mjs` counts.
+ */
+export async function clearSession(): Promise<void> {
   await createClient().auth.signOut();
   forgetAreaCookie();
-  redirectToLogin();
 }
 
 /**

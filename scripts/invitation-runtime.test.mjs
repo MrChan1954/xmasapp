@@ -424,9 +424,22 @@ describe("where an invitation actually appears", () => {
     assert.match(list, /invitations\.length === 0 \? \(\s*\n\s*compact \? null : \(/u);
   });
 
-  test("THE PENDING SCREEN CARRIES IT TOO, and explains what accepting will and will not do", () => {
+  test("THE PENDING SCREEN POINTS AT IT, and does not offer Accept itself", () => {
+    /*
+     * IT USED TO RENDER THE CARD INLINE, Accept included, and that was wrong
+     * for a reason only the live run exposed: a brand-new invited account was
+     * being bounced to THIS screen from `/account-setup`, so the first
+     * interactive control anybody ever met was **Accept**, seconds after
+     * clicking a link in an email and with no account setup behind them.
+     * Joining a family is a decision, and one offered that early reads as
+     * something the email did to you.
+     *
+     * `accept_family_invitation` still permits a pending account -- 053 chose
+     * that, and the membership grants nothing until approval. The offer simply
+     * belongs on the screen that exists for it, reached deliberately.
+     */
     const pending = read("src/app/account-pending/page.tsx");
-    assert.match(pending, /<FamilyInvitations compact \/>/u);
+    assert.ok(!withoutComments(pending).includes("<FamilyInvitations"));
     assert.match(pending, /INVITATION_COPY\.pendingNote/u);
     assert.match(pending, /href=\{INVITATIONS_PATH\}/u);
     // The sentence has to be true of the pending state specifically: joined

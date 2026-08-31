@@ -5,8 +5,11 @@ import { useRouter } from "next/navigation";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { HOME_PATH, destinationFor } from "@/lib/account-status.ts";
 import { INPUT_LIMITS, validateRequiredText } from "@/lib/input-validation";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { SETUP_IDENTITY_PARAM, SETUP_SESSION_MESSAGES, mayProceedWithSetup, mustClearSession, setupSessionVerdict } from "@/lib/setup-session.ts";
 import { loadAccountStatusClient } from "@/utils/supabase/account-status-client";
 import { createClient } from "@/utils/supabase/client";
+import { clearSession } from "@/utils/supabase/sign-out";
 import { AuthHeading, AuthScreen } from "../components/auth-card";
 import { Button, ButtonLink, Field, Input, Notice } from "../components/ui";
 
@@ -76,6 +79,17 @@ export default function AccountSetupPage() {
         setStage("error");
         return;
       }
+      /*
+       * WHO THE LINK SAYS IT IS FOR. On the PKCE path `/auth/callback` has
+       * already exchanged the code and appended the exchanged user's id, so this
+       * side can CHECK the session rather than assume it. It is an identifier
+       * and not a credential -- forging it only makes the two ids disagree,
+       * which fails closed.
+       */
+      const namedIdentity = query.get(SETUP_IDENTITY_PARAM);
+      /** Set only when THIS visit spent the link's tokens. */
+      let establishedUserId: string | null = null;
+
       if (accessToken && refreshToken) {
         const session = await supabase.auth.setSession({
           access_token: accessToken,
@@ -93,6 +107,14 @@ export default function AccountSetupPage() {
           setStage("error");
           return;
         }
+        /*
+         * THE LINK'S OWN IDENTITY, READ BACK FROM WHAT IT ESTABLISHED.
+         * `setSession` REPLACES any session that was already in this browser, so
+         * whoever this is now, they are the person the tokens were minted for --
+         * and that is what makes the implicit path deterministic without needing
+         * the callback to name anybody.
+         */
+        establishedUserId = session.data.user?.id ?? null;
       } else {
         console.error(
           `[account-setup] no tokens in link | hasAccessToken=${Boolean(accessToken)} hasRefreshToken=${Boolean(refreshToken)}`,
@@ -100,11 +122,50 @@ export default function AccountSetupPage() {
       }
 
       const userResult = await supabase.auth.getUser();
-      if (userResult.error || !userResult.data.user) {
+
+      /*
+       * ==================================================================
+       *  WHOSE SESSION IS THIS, AND DID THE LINK PUT IT THERE?
+       * ==================================================================
+       *
+       * `getUser()` answers with whatever session the browser holds. It used to
+       * be believed unconditionally, which meant: sign in as A, open the
+       * invitation email for B in the same browser, find the link's tokens
+       * already spent -- and Gift Planner would greet you, set a password and
+       * route you AS A, while you believed you had just set up B.
+       *
+       * `setupSessionVerdict` decides instead of assuming. `establishedFromLink`
+       * is true only when THIS visit exchanged tokens, in which case
+       * `setSession` has already replaced any previous session and the identity
+       * is the link's by construction. Otherwise the identity has to have been
+       * NAMED -- by the callback, on the PKCE path -- and has to agree.
+       *
+       * An unidentified link over an existing session is refused rather than
+       * borrowed: there is no evidence connecting that session to the email that
+       * was opened, and borrowing it is the whole of the defect.
+       */
+      const verdict = setupSessionVerdict({
+        linkUserId: establishedUserId ?? namedIdentity,
+        sessionUserId: userResult.data.user?.id ?? null,
+        establishedFromLink: establishedUserId !== null,
+      });
+      console.info(`[account-setup] session verdict | ${verdict} | named=${Boolean(namedIdentity)} established=${establishedUserId !== null}`);
+
+      if (mustClearSession(verdict)) {
+        // SIGNED OUT, NOT MERELY REFUSED. Leaving the other account signed in
+        // would leave the next screen ambiguous all over again, and the person
+        // holding this link is entitled to a clean browser to open it in.
+        await clearSession();
+        setMessage(SETUP_SESSION_MESSAGES.wrong_identity);
+        setStage("error");
+        return;
+      }
+
+      if (!mayProceedWithSetup(verdict) || userResult.error || !userResult.data.user) {
         console.error(
           `[account-setup] getUser failed | status=${userResult.error?.status} code=${userResult.error?.code} message=${userResult.error?.message}`,
         );
-        setMessage("This setup link is invalid or has expired. Ask your family’s admin for a new link.");
+        setMessage(SETUP_SESSION_MESSAGES.no_session);
         setStage("error");
         return;
       }

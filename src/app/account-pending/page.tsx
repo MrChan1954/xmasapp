@@ -3,7 +3,6 @@
 import { INVITATION_COPY, INVITATIONS_PATH } from "@/lib/invitations";
 import { signOut } from "@/utils/supabase/sign-out";
 import { AuthHeading, AuthScreen } from "../components/auth-card";
-import { FamilyInvitations } from "../invitations/family-invitations";
 import { Button, ButtonLink } from "../components/ui";
 
 /**
@@ -58,21 +57,22 @@ export default function AccountPendingPage() {
       </div>
 
       {/*
-        AND THE ONE THING THIS ACCOUNT CAN ACTUALLY DO WHILE IT WAITS.
-        `accept_family_invitation` permits `pending` deliberately: the membership
-        it creates grants nothing at all until approval, because every permission
-        predicate in the schema already carries `is_globally_approved()`. So
-        answering here costs nothing and saves the person being approved, then
-        having to chase the family for a second invitation.
+        A LINK, NOT THE BUTTONS THEMSELVES -- AND THAT IS A CORRECTION.
 
-        `compact` renders NOTHING when nothing is pending, so the screen is
-        unchanged for everybody who was not invited.
+        This screen briefly rendered the invitation card inline, Accept and
+        Decline included. It went wrong because of where this screen sits: a
+        brand-new invited account was being bounced HERE from `/account-setup`,
+        so the first interactive control anybody ever saw was **Accept**, about
+        eight seconds after clicking a link in an email, with no account setup
+        behind them. Joining a family is a decision, and a decision offered that
+        early reads as something the email did to you.
+
+        `accept_family_invitation` still permits a pending account -- 053 chose
+        that deliberately, and the membership grants nothing until approval. The
+        offer simply belongs on the screen that exists for it, reached on
+        purpose.
       */}
-      <div className="mt-7">
-        <FamilyInvitations compact />
-      </div>
-
-      <p className="mt-4 text-xs leading-5 text-ink-600">{INVITATION_COPY.pendingNote}</p>
+      <p className="mt-7 text-sm leading-6 text-ink-600">{INVITATION_COPY.pendingNote}</p>
 
       <ButtonLink href={INVITATIONS_PATH} variant="secondary" size="lg" className="mt-6 w-full">
         {INVITATION_COPY.title}

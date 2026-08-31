@@ -229,6 +229,25 @@ const UNVERIFIED_ALLOWED: readonly string[] = [
 const PENDING_ALLOWED: readonly string[] = [
   ACCOUNT_PENDING_PATH,
   "/invitations",
+  /*
+   * `/account-setup` IS HERE BECAUSE ITS ABSENCE MADE A PASSWORD UNREACHABLE.
+   *
+   * An invite link CONFIRMS THE ADDRESS as part of the exchange. So by the time
+   * `/account-setup` runs, the account is no longer `email_unverified` -- it is
+   * `pending`, because no `app_accounts` row exists yet. With `pending`
+   * permitted only on the two screens above, the setup page asked
+   * `destinationFor`, was told to go to `/account-pending`, and returned before
+   * ever rendering the password form.
+   *
+   * Which means: EVERY BRAND-NEW INVITED ACCOUNT WAS UNABLE TO SET A PASSWORD,
+   * and could only ever get back in through another emailed link. Observed
+   * live on 2026-08-31 with a real invitation.
+   *
+   * It is safe: `/account-setup` reads no family data, and the password it sets
+   * belongs to an account that still cannot open anything until a Gift Planner
+   * administrator approves it. Setting a credential is not access.
+   */
+  "/account-setup",
 ];
 
 /**

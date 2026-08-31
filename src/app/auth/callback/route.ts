@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { HOME_PATH, destinationFor } from "@/lib/account-status";
+import { SETUP_IDENTITY_PARAM } from "@/lib/setup-session";
 import { getRequestOrigin } from "@/utils/request-origin";
 import { claimInvitations, loadAccountStatus } from "@/utils/supabase/account-status-server";
 import { createClient } from "@/utils/supabase/server";
@@ -86,6 +87,28 @@ export async function GET(request: Request) {
    * them into a path. An approved account goes wherever the link asked for, and
    * every other state goes to the screen that explains itself.
    */
+  /*
+   * ACCOUNT SETUP IS TOLD WHOSE LINK THIS WAS.
+   *
+   * The exchange above replaced the session cookie with the link's identity, so
+   * by the time `/account-setup` runs there are no tokens left in the URL to
+   * prove that. Without proof it used to ask `getUser()` and accept whatever
+   * answer came back -- which, in a browser already signed in to another
+   * account, is the OTHER PERSON. Naming the identity here turns that into a
+   * check rather than an assumption.
+   *
+   * The id is an identifier and not a credential: it grants nothing, every
+   * route still derives the caller from `auth.uid()`, and a forged one only
+   * makes the two ids disagree, which fails closed.
+   */
+  if (next === "/account-setup") {
+    const setupUrl = new URL(next, requestOrigin);
+    const exchanged = exchange.data.user?.id ?? null;
+    if (exchanged) setupUrl.searchParams.set(SETUP_IDENTITY_PARAM, exchanged);
+    console.info("[auth callback] handing the setup screen its identity", { named: Boolean(exchanged) });
+    return NextResponse.redirect(setupUrl);
+  }
+
   const status = await loadAccountStatus();
   const destination = destinationFor(status.state, HOME_PATH);
   if (destination && destination !== HOME_PATH) {

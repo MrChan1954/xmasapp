@@ -131,6 +131,18 @@ describe("an account with no family is offered one", () => {
       const source = withoutComments(read(path));
       assert.ok(!/auth\.signOut\(\)/u.test(source),
         `${path} must not sign anybody out for lacking a family`);
+      /*
+       * ONE SESSION IS ENDED ON THESE PATHS, AND IT IS NOT ABOUT A FAMILY.
+       * `/account-setup` calls `clearSession()` when the browser turns out to be
+       * signed in to a DIFFERENT account from the one the setup link is for --
+       * an identity mismatch, decided before any membership is read. What must
+       * never come back is ending a session because `app_members` was empty, so
+       * that is what this looks for: a membership read anywhere near it.
+       */
+      const ends = source.indexOf("clearSession()");
+      if (ends === -1) continue;
+      assert.ok(!/app_members/u.test(source.slice(Math.max(0, ends - 600), ends)),
+        `${path} must not end a session over a membership read`);
     }
   });
 });
