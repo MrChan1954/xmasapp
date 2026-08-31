@@ -1,6 +1,5 @@
 import "server-only";
 
-import { createClient as createAdminSupabaseClient } from "@supabase/supabase-js";
 import { validateUuid } from "@/lib/input-validation";
 import { assertValidVapidKeys, sendPushNotification, type VapidKeys } from "@/lib/web-push";
 import { logNotification, pushServiceHost } from "@/lib/notification-log";
@@ -22,6 +21,7 @@ import {
 } from "@/lib/notification-dispatch";
 import { getCurrentMember } from "@/utils/supabase/current-member";
 import { createClient as createSessionClient } from "@/utils/supabase/server";
+import { ServiceRoleUnavailableError, createServiceRoleClient } from "@/utils/supabase/service-role";
 
 export { NotificationError };
 export type { NotificationEventKind, DispatchReport };
@@ -35,15 +35,24 @@ const DEVICE_LABELS: Record<string, string> = {
   other: "This device",
 };
 
+/**
+ * The one service-role client, wearing this domain's error.
+ *
+ * Q18 could not merge the hand-rolled copies of this constructor because each
+ * threw a different type. `service-role.ts` owns the key and throws one
+ * low-level `ServiceRoleUnavailableError`; each boundary translates it into the
+ * message its own callers already expect, so the 503 a browser sees is
+ * unchanged.
+ */
 function createAdminClient() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
-  if (!supabaseUrl || !supabaseSecretKey) {
-    throw new NotificationError(503, "Notifications are not configured on the server.");
+  try {
+    return createServiceRoleClient();
+  } catch (error) {
+    if (error instanceof ServiceRoleUnavailableError) {
+      throw new NotificationError(503, "Notifications are not configured on the server.");
+    }
+    throw error;
   }
-  return createAdminSupabaseClient(supabaseUrl, supabaseSecretKey, {
-    auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false },
-  });
 }
 
 type AdminClient = ReturnType<typeof createAdminClient>;

@@ -1,10 +1,8 @@
 import "server-only";
 
-import { createClient as createAdminSupabaseClient } from "@supabase/supabase-js";
-import type { User } from "@supabase/supabase-js";
-import { validateEmail, validateUuid } from "@/lib/input-validation";
-
+import { validateUuid } from "@/lib/input-validation";
 import { getCurrentMember } from "@/utils/supabase/current-member";
+import { ServiceRoleUnavailableError, createServiceRoleClient, type ServiceRoleClient } from "@/utils/supabase/service-role";
 
 export class FamilyAccessError extends Error {
   constructor(
@@ -16,27 +14,28 @@ export class FamilyAccessError extends Error {
   }
 }
 
-function createAdminClient() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
+export type FamilyAccessAdminClient = ServiceRoleClient;
 
-  if (!supabaseUrl || !supabaseSecretKey) {
-    throw new FamilyAccessError(
-      503,
-      "Family Access is not configured on the server.",
-    );
+/**
+ * The one service-role client, wearing this domain's error.
+ *
+ * Q18 could not merge the four hand-rolled copies of this constructor because
+ * each threw a different type, on the most security-sensitive client in the
+ * app. The split is what makes them mergeable: `service-role.ts` owns the key
+ * and throws one low-level `ServiceRoleUnavailableError`, and each boundary
+ * translates it into the message its own callers already expect. Nothing about
+ * the response a browser sees has changed.
+ */
+function createAdminClient(): ServiceRoleClient {
+  try {
+    return createServiceRoleClient();
+  } catch (error) {
+    if (error instanceof ServiceRoleUnavailableError) {
+      throw new FamilyAccessError(503, "Family Access is not configured on the server.");
+    }
+    throw error;
   }
-
-  return createAdminSupabaseClient(supabaseUrl, supabaseSecretKey, {
-    auth: {
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-      persistSession: false,
-    },
-  });
 }
-
-export type FamilyAccessAdminClient = ReturnType<typeof createAdminClient>;
 
 /**
  * MAY THIS CALLER ADMINISTER THE FAMILY THEY ARE LOOKING AT?
@@ -54,8 +53,10 @@ export type FamilyAccessAdminClient = ReturnType<typeof createAdminClient>;
  *
  * THE SELECTED AREA IS A CHOICE, NEVER A PERMISSION.
  *   * The list of memberships is read through the CALLER'S OWN session, so row
- *     level security has already narrowed it to their own rows. A cookie naming
- *     a family they are not in matches nothing and they are refused.
+ *     level security has already narrowed it to their own rows -- and since
+ *     migration 052 that policy also requires global approval, so a rejected or
+ *     suspended account reads none of them and is refused here too. A cookie
+ *     naming a family they are not in matches nothing and they are refused.
  *   * The role is then read from THAT membership. Administering Alpha says
  *     nothing about Bravo, and selecting Bravo does not carry Alpha's role into
  *     it.
@@ -64,6 +65,15 @@ export type FamilyAccessAdminClient = ReturnType<typeof createAdminClient>;
  *
  * Nothing a browser can send makes this return an Area the caller is not an
  * active administrator of.
+ *
+ * WHAT THIS IS STILL FOR, NOW THAT MOST OF FAMILY ACCESS IS RPCs. Migration 052
+ * moved reading, granting and revoking into `list_area_access`,
+ * `grant_area_access` and `revoke_area_access`, which authorise themselves from
+ * the acting Area and need none of this. What is left needs the SUPABASE ADMIN
+ * API -- sending an invitation email, minting a setup link, minting a recovery
+ * link -- and there is no database routine that can do those. So this check
+ * survives for exactly three actions, and it is the only thing standing between
+ * them and the wrong family.
  */
 export async function requireFamilyAccessAdmin() {
   const { user, member } = await getCurrentMember();
@@ -87,15 +97,16 @@ export async function requireFamilyAccessAdmin() {
   /**
    * THE AREA THIS PERMISSION WAS GRANTED IN, RETURNED WITH IT.
    *
-   * Everything past this point uses the SERVICE ROLE -- it has to, because it
-   * creates Auth accounts -- and the service role bypasses row level security
-   * AND migration 037's write barrier, which exempts callers with no
-   * `auth.uid()`. So there is nothing left underneath to keep this route inside
-   * one family: the Area has to be carried from the check that authorised it
-   * and applied to every query by hand.
+   * Everything past this point uses the SERVICE ROLE -- it has to, because the
+   * Admin API is the only thing that can send an invitation or mint a link --
+   * and the service role bypasses row level security AND migration 037's write
+   * barrier, which exempts callers with no `auth.uid()`. So there is nothing
+   * left underneath to keep this route inside one family: the Area has to be
+   * carried from the check that authorised it and applied to every query by
+   * hand.
    *
-   * Without it, an administrator of one family could list, invite, disable and
-   * re-address the accounts of a family they have never been in.
+   * Without it, an administrator of one family could mint a password-recovery
+   * link for the account of a family they have never been in.
    */
   const areaId = (member.area_id as string | null) ?? null;
   if (!areaId) {
@@ -108,41 +119,6 @@ export async function requireFamilyAccessAdmin() {
     personId: (member.person_id as string | null) ?? null,
     areaId,
   };
-}
-
-export async function listAllAuthUsers(
-  admin: ReturnType<typeof createAdminClient>,
-) {
-  const users: User[] = [];
-  const perPage = 1000;
-
-  for (let page = 1; page <= 100; page += 1) {
-    const result = await admin.auth.admin.listUsers({ page, perPage });
-    if (result.error) {
-      throw new FamilyAccessError(
-        502,
-        "Supabase Auth accounts could not be loaded.",
-      );
-    }
-
-    users.push(...result.data.users);
-    if (result.data.users.length < perPage) break;
-
-    if (page === 100) {
-      throw new FamilyAccessError(
-        503,
-        "There are too many Auth accounts to verify safely.",
-      );
-    }
-  }
-
-  return users;
-}
-
-export function normalizeEmail(value: unknown) {
-  const result = validateEmail(value);
-  if (!result.ok) throw new FamilyAccessError(400, result.error);
-  return result.value;
 }
 
 export function requirePersonId(value: unknown) {

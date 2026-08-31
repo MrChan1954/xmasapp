@@ -1,13 +1,12 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
+import { signOut } from "@/utils/supabase/sign-out";
 import { AppShell, PageHeader } from "../components/app-shell";
 import { Button, Field, Input, Notice } from "../components/ui";
 
 export default function AccountPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -23,11 +22,13 @@ export default function AccountPage() {
     if (!result.error) { setPassword(""); setConfirm(""); }
   };
 
-  const signOut = async () => {
-    await createClient().auth.signOut();
-    router.replace("/login");
-    router.refresh();
-  };
+  /*
+   * SIGN-OUT IS `@/utils/supabase/sign-out`, and this file no longer carries
+   * its own copy of it. Q18 found the four lines here byte-identical to the
+   * four in `account-menu.tsx` and named the hazard exactly: if sign-out ever
+   * needs to clear the Area cookie, one copy gets it and the other does not.
+   * It does need to, it now does, and there is one copy to get it.
+   */
 
   /*
    * BACK TO SETTINGS, NOT TO "/more". `/more` is a legacy redirect INTO an

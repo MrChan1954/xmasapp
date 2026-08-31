@@ -1,32 +1,58 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { Check, Home, LogOut, Plus, Settings, ShieldCheck, Snowflake, User } from "lucide-react";
+import { Check, Home, LogOut, Plus, Settings, ShieldCheck, Snowflake, User, UserCog } from "lucide-react";
 import { useEffect, useState } from "react";
 import { CREATE_AREA_LABEL, CREATE_AREA_PATH } from "@/lib/areas";
+import { GLOBAL_ADMIN_PATH } from "@/lib/account-status";
+import { loadAccountStatusClient } from "@/utils/supabase/account-status-client";
 import { createClient } from "@/utils/supabase/client";
+import { signOut } from "@/utils/supabase/sign-out";
 import { useFamily } from "../family-context";
 import { useFestive } from "./festive/festive-context";
 import { Menu, MenuCheckboxItem, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSection } from "./popover";
 import { useAreas } from "./use-areas";
 
 export function AccountMenu() {
-  const router = useRouter();
   // FamilyProvider short-circuits on auth routes, so tolerate an empty role.
   const { isAdmin } = useFamily();
   const { snow, setSnow, reducedMotion } = useFestive();
   const { active, choices, canSwitch, canCreate, switchTo } = useAreas();
   const [email, setEmail] = useState("");
+  /**
+   * WHETHER TO OFFER THE GLOBAL QUEUE AT ALL.
+   *
+   * `/admin/accounts` answers `notFound()` to anybody who is not a Gift Planner
+   * administrator, which is the right refusal and a terrible way to find the
+   * screen: without a link, the only route to it is knowing the path and typing
+   * it, which is exactly the fault Q16 found with `/areas/new`.
+   *
+   * READ FROM `my_account_status()`, NEVER FROM THE TABLE, and hiding the item
+   * is not what keeps anybody out -- `list_accounts` and `set_account_status`
+   * each ask `is_global_admin()` for themselves and raise 42501. This decides
+   * whether the door is visible.
+   *
+   * IT IS NOT THE FAMILY ADMIN FLAG BESIDE IT. `isAdmin` above is this
+   * account's role in the family on screen; being one says nothing whatsoever
+   * about the other, which is the whole point of having two kinds.
+   */
+  const [isGlobalAdmin, setIsGlobalAdmin] = useState(false);
 
   useEffect(() => {
-    void createClient().auth.getUser().then(({ data }) => setEmail(data.user?.email ?? ""));
+    let live = true;
+    void createClient().auth.getUser().then(({ data }) => { if (live) setEmail(data.user?.email ?? ""); });
+    void loadAccountStatusClient().then((status) => { if (live) setIsGlobalAdmin(status.isGlobalAdmin); });
+    return () => { live = false; };
   }, []);
 
-  const signOut = async () => {
-    await createClient().auth.signOut();
-    router.replace("/login");
-    router.refresh();
-  };
+  /*
+   * Sign-out is `@/utils/supabase/sign-out` now, and no longer a four-line copy
+   * of it here. Q18 found this byte-identical to the one in `/account` and left
+   * both alone, because verifying a change to the sign-out path means signing
+   * the family out of the live site; Q19 has to settle it, because the pending
+   * and refused screens and the global admin queue all need it and none of them
+   * has an account menu. The shared one also clears `gp_area`, which neither
+   * copy ever did.
+   */
 
   const initials = (email.split("@")[0] || "?").slice(0, 2).toUpperCase();
 
@@ -136,6 +162,14 @@ export function AccountMenu() {
             <MenuItem href="/settings" icon={<Settings aria-hidden size={16} strokeWidth={1.8} />}>
               Settings
             </MenuItem>
+            {/* THE INSTALLATION scope, above even the global one. Who may use
+                Gift Planner at all -- no family, no gift, no money. Shown only
+                to the handful of accounts that administer it. */}
+            {isGlobalAdmin && (
+              <MenuItem href={GLOBAL_ADMIN_PATH} icon={<UserCog aria-hidden size={16} strokeWidth={1.8} />}>
+                Gift Planner accounts
+              </MenuItem>
+            )}
             <MenuItem
               tone="danger"
               icon={<LogOut aria-hidden size={16} strokeWidth={1.8} />}

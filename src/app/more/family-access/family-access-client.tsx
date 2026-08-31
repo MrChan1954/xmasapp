@@ -2,7 +2,19 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { INPUT_LIMITS, validateEmail } from "@/lib/input-validation";
-import { IconPlus, IconSearch, IconShield } from "../../components/icons";
+import {
+  AREA_ACCESS_EXPLANATIONS,
+  AREA_ACCESS_LABELS,
+  areaAccessStatus,
+  canGrantAccess,
+  canRevokeAccess,
+  isAdminSeat,
+  type AreaAccessRow,
+  type AreaAccessStatus,
+} from "@/lib/family-access";
+import { describeSupabaseError, describeThrown } from "@/lib/supabase-error";
+import { createClient } from "@/utils/supabase/client";
+import { IconSearch, IconShield } from "../../components/icons";
 import {
   Badge,
   Button,
@@ -15,73 +27,86 @@ import {
   Modal,
   ModalHeader,
   Notice,
-  Select,
   Skeleton,
   ToggleChip,
   cx,
   type BadgeTone,
 } from "../../components/ui";
 import { useRealtimeRefresh } from "../../components/use-realtime-refresh";
-import { describeSupabaseError, describeThrown } from "@/lib/supabase-error";
-import { createClient } from "@/utils/supabase/client";
 
-type AccountStatus = "no_account" | "pending" | "active" | "disabled";
-type AccountRole = "admin" | "member" | null;
+/**
+ * WHO CAN OPEN THIS FAMILY.
+ *
+ * ==========================================================================
+ *  EVERY READ AND EVERY ACCESS WRITE ON THIS SCREEN IS AN RPC NOW.
+ * ==========================================================================
+ *
+ * This screen used to fetch `/api/admin/family-access`, which used the SERVICE
+ * ROLE to read every person, every membership and EVERY AUTH ACCOUNT IN THE
+ * PROJECT -- up to a hundred pages of them -- to answer a question about one
+ * family. Migration 052 replaced that with three routines that authorise
+ * themselves:
+ *
+ *   list_area_access()                 no Area parameter and no email
+ *                                      parameter, so it cannot be pointed at
+ *                                      another family and cannot be used to
+ *                                      probe whether an address has an account.
+ *   grant_area_access(person, email)   creates or restores an invitation, and
+ *                                      NEVER writes `user_id`.
+ *   revoke_area_access(person, unlink) keeps the seat unless explicitly told to
+ *                                      empty it.
+ *
+ * WHY `grant_area_access` NOT WRITING `user_id` IS THE IMPORTANT ONE. Attaching
+ * a login to an invitation is `claim_app_member`'s job and nothing else's,
+ * because only the claimant can prove which login is theirs. An administrator
+ * who could write `user_id` could hand any family seat to any account.
+ *
+ * THE THREE THINGS THAT STILL GO THROUGH THE SERVER ROUTE are the three the
+ * Supabase Admin API is the only way to do: send an invitation email, mint a
+ * setup link, mint a recovery link. No SQL routine can send an email.
+ *
+ * FIVE STATUSES, NOT FOUR, AND THE NEW ONE IS THE POINT.
+ * `awaiting_global_approval` is somebody who HAS claimed their seat and whose
+ * Gift Planner account has not been approved. The family administrator can do
+ * nothing about it, and this screen says so plainly -- otherwise they resend
+ * the invitation, change the address, and eventually ask the person to sign up
+ * again, none of which can possibly help.
+ */
 
-type FamilyMember = {
-  personId: string;
-  name: string;
-  /** In the family's contributor pool. Eligibility, not an amount. */
-  isFamilyContributor: boolean;
-  email: string | null;
-  role: AccountRole;
-  active: boolean | null;
-  status: AccountStatus;
-  isCurrentUser: boolean;
-};
+type PersonFlags = { isFamilyContributor: boolean };
 
-type FamilyAccessResponse = {
-  members: FamilyMember[];
-  currentUser: {
-    personId: string;
-    role: "admin";
-  };
-};
+type Row = AreaAccessRow & PersonFlags;
 
-type ActionName =
-  | "create"
-  | "send-invite"
-  | "copy-setup-link"
-  | "send-reset"
-  | "copy-reset-link"
-  | "disable"
-  | "reactivate"
-  | "update-email";
+type Filter = "all" | AreaAccessStatus;
 
-type ActionResponse = {
-  ok?: boolean;
-  message?: string;
-  link?: string;
-  error?: string;
-};
-
-type Filter = "all" | AccountStatus;
-type DialogState =
-  | { kind: "create"; personId: string }
-  | { kind: "email"; person: FamilyMember }
-  | { kind: "confirm-disable"; person: FamilyMember }
-  | null;
-
-const filters: Array<{ value: Filter; label: string }> = [
+const FILTERS: Array<{ value: Filter; label: string }> = [
   { value: "all", label: "All" },
-  { value: "no_account", label: "No account" },
-  { value: "pending", label: "Setup pending" },
-  { value: "active", label: "Active" },
-  { value: "disabled", label: "Disabled" },
+  { value: "no_access", label: AREA_ACCESS_LABELS.no_access },
+  { value: "awaiting_signup", label: AREA_ACCESS_LABELS.awaiting_signup },
+  { value: "awaiting_global_approval", label: "Waiting for approval" },
+  { value: "active", label: AREA_ACCESS_LABELS.active },
+  { value: "revoked", label: AREA_ACCESS_LABELS.revoked },
 ];
 
+const STATUS_TONES: Record<AreaAccessStatus, BadgeTone> = {
+  no_access: "neutral",
+  awaiting_signup: "warning",
+  awaiting_global_approval: "gold",
+  active: "success",
+  revoked: "danger",
+};
+
+/** The three actions that still need the Supabase Admin API. */
+type LinkAction = "send-invite" | "copy-setup-link" | "copy-reset-link";
+
+type DialogState =
+  | { kind: "grant"; row: Row }
+  | { kind: "revoke"; row: Row }
+  | { kind: "unlink"; row: Row }
+  | null;
+
 export function FamilyAccessClient() {
-  const [members, setMembers] = useState<FamilyMember[]>([]);
+  const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,142 +116,175 @@ export function FamilyAccessClient() {
   const [dialog, setDialog] = useState<DialogState>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const loadMembers = useCallback(async (quiet = false) => {
+  const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
-    setError(null);
-
     try {
-      const response = await fetch("/api/admin/family-access", {
-        method: "GET",
-        cache: "no-store",
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | FamilyAccessResponse
-        | { error?: string }
-        | null;
-
-      if (response.status === 401 || response.status === 403) {
-        setForbidden(true);
-        setMembers([]);
+      const db = createClient();
+      const access = await db.rpc("list_area_access");
+      if (access.error) {
+        /*
+         * 42501 is the routine refusing somebody who is not this family's
+         * administrator -- or who has not said which family they are in. It is
+         * the same refusal for both, deliberately: telling them apart would let
+         * somebody probe which families an account belongs to.
+         */
+        if (access.error.code === "42501") { setForbidden(true); setRows([]); return; }
+        setError(describeSupabaseError(access.error, "Family access could not be loaded."));
         return;
       }
-      if (!response.ok || !payload || !("members" in payload)) {
-        throw new Error(payload && "error" in payload && payload.error ? payload.error : "Family access could not be loaded.");
-      }
+
+      const list = (access.data ?? []) as AreaAccessRow[];
+
+      /*
+       * THE CONTRIBUTOR FLAG, READ SEPARATELY AND SCOPED BY THE LIST ITSELF.
+       *
+       * `list_area_access` answers about ACCESS and carries no contributor
+       * eligibility, which belongs to the person rather than to their login.
+       * The ids come from the list the routine just returned, so this read is
+       * confined to the acting Area by construction -- there is no Area filter
+       * to get wrong and no way to widen it from the browser. `people` is
+       * behind `is_area_member` either way.
+       */
+      const ids = list.map((row) => row.person_id);
+      const people = ids.length
+        ? await db.from("people").select("id,is_family_contributor").in("id", ids)
+        : { data: [], error: null };
+      const contributors = new Map(
+        ((people.data ?? []) as Array<{ id: string; is_family_contributor: boolean }>)
+          .map((row) => [row.id, Boolean(row.is_family_contributor)]),
+      );
 
       setForbidden(false);
-      setMembers(payload.members);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Family access could not be loaded.");
+      setError(null);
+      setRows(list.map((row) => ({ ...row, isFamilyContributor: contributors.get(row.person_id) ?? false })));
+    } catch (thrown) {
+      setError(describeThrown(thrown, "Family access could not be loaded. Check your connection and try again."));
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void loadMembers();
-    }, 0);
+    const timer = window.setTimeout(() => { void load(); }, 0);
     return () => window.clearTimeout(timer);
-  }, [loadMembers]);
+  }, [load]);
 
-  // This screen is family-global, so it watches the one family-global table it
-  // shows: `people`. It no longer watches `contributors`, because contributor
-  // membership is per-event and is edited in Event Settings, and no longer
-  // watches `recipient_contributions`, because no money is shown here. The
-  // refetch goes back through the admin route, so the Global Admin check still
-  // runs on every refresh.
-  useRealtimeRefresh(
-    ["people"],
-    () => loadMembers(true),
-    { enabled: !forbidden },
-  );
+  // This screen is family-global, so it watches the two family-global tables it
+  // shows. `app_members` is new here: access is now changed by an RPC rather
+  // than by a route this screen calls, so a second administrator's grant would
+  // otherwise not appear until a manual refresh.
+  useRealtimeRefresh(["people", "app_members"], () => load(true), { enabled: !forbidden });
 
   const counts = useMemo(() => {
     const result: Record<Filter, number> = {
-      all: members.length,
-      no_account: 0,
-      pending: 0,
+      all: rows.length,
+      no_access: 0,
+      awaiting_signup: 0,
+      awaiting_global_approval: 0,
       active: 0,
-      disabled: 0,
+      revoked: 0,
     };
-    members.forEach((person) => {
-      result[person.status] += 1;
-    });
+    for (const row of rows) result[areaAccessStatus(row)] += 1;
     return result;
-  }, [members]);
+  }, [rows]);
 
   const visible = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    return members.filter((person) => {
-      const matchesFilter = filter === "all" || person.status === filter;
+    const needle = query.trim().toLowerCase();
+    return rows.filter((row) => {
+      const matchesFilter = filter === "all" || areaAccessStatus(row) === filter;
       const matchesQuery =
-        !normalizedQuery ||
-        person.name.toLowerCase().includes(normalizedQuery) ||
-        person.email?.toLowerCase().includes(normalizedQuery);
+        !needle ||
+        row.person_name.toLowerCase().includes(needle) ||
+        (row.email ?? "").toLowerCase().includes(needle);
       return matchesFilter && matchesQuery;
     });
-  }, [filter, members, query]);
+  }, [filter, query, rows]);
 
-  const noAccountPeople = useMemo(
-    () => members.filter((person) => person.status === "no_account").sort((a, b) => a.name.localeCompare(b.name)),
-    [members],
-  );
+  const closeDialog = () => setDialog(null);
 
-  const runAction = async (
-    action: ActionName,
-    person: Pick<FamilyMember, "personId" | "name">,
-    options?: { email?: string; delivery?: "email" | "link" },
-  ) => {
-    const busyKey = `${action}:${person.personId}`;
-    setBusy(busyKey);
+  /** `grant_area_access` — creates or restores an invitation. Never `user_id`. */
+  const grantAccess = async (row: Row, email: string) => {
+    setBusy(`grant:${row.person_id}`);
     setError(null);
     setNotice(null);
-
     try {
-      const response = await fetch("/api/admin/family-access", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action,
-          personId: person.personId,
-          ...(options?.email ? { email: options.email } : {}),
-          ...(options?.delivery ? { delivery: options.delivery } : {}),
-        }),
+      const result = await createClient().rpc("grant_area_access", {
+        p_person_id: row.person_id,
+        p_email: email,
       });
-      const payload = (await response.json().catch(() => null)) as ActionResponse | null;
-
-      if (!response.ok) {
-        throw new Error(payload?.error ?? "That Family Access change could not be saved.");
+      if (result.error) {
+        setError(describeSupabaseError(result.error, "That access could not be given."));
+        return false;
       }
-
-      const copiesLink = action === "copy-setup-link" || action === "copy-reset-link" || options?.delivery === "link";
-      if (copiesLink) {
-        if (!payload?.link) throw new Error("Supabase did not return a setup link.");
-        try {
-          await copySensitiveLink(payload.link);
-        } catch (copyError) {
-          // The server action may already have created or updated the account.
-          // Refresh before reporting the separate clipboard failure.
-          setDialog(null);
-          await loadMembers(true);
-          setError(copyError instanceof Error ? copyError.message : "The secure link was created, but this browser could not copy it.");
-          return false;
-        }
-      }
-
-      const defaultMessage = actionMessage(action, person.name, options?.delivery);
-      setNotice(copiesLink ? defaultMessage : payload?.message ?? defaultMessage);
-      setDialog(null);
-      await loadMembers(true);
+      setNotice(`${row.person_name} can be signed in to with ${email}.`);
+      closeDialog();
+      await load(true);
       return true;
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "That Family Access change could not be saved.");
+    } catch (thrown) {
+      setError(describeThrown(thrown, "That access could not be given. Check your connection and try again."));
       return false;
     } finally {
       setBusy(null);
     }
   };
+
+  /** `revoke_area_access` — `unlink` empties the seat, and only when asked. */
+  const revokeAccess = async (row: Row, unlink: boolean) => {
+    setBusy(`revoke:${row.person_id}`);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await createClient().rpc("revoke_area_access", {
+        p_person_id: row.person_id,
+        p_unlink: unlink,
+      });
+      if (result.error) {
+        setError(describeSupabaseError(result.error, "That access could not be taken away."));
+        return;
+      }
+      setNotice(unlink
+        ? `${row.person_name}’s seat is empty again and can be invited to a different address.`
+        : `${row.person_name}’s access is switched off.`);
+      closeDialog();
+      await load(true);
+    } catch (thrown) {
+      setError(describeThrown(thrown, "That access could not be taken away. Check your connection and try again."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** The three that still need the Admin API, through the server route. */
+  const runLinkAction = async (action: LinkAction, row: Row) => {
+    setBusy(`${action}:${row.person_id}`);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await fetch("/api/admin/family-access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, personId: row.person_id }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; message?: string; link?: string; error?: string }
+        | null;
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "That Family Access change could not be saved.");
+      }
+      if (action !== "send-invite") {
+        if (!payload?.link) throw new Error("Supabase did not return a link.");
+        await copySensitiveLink(payload.link);
+      }
+      setNotice(payload?.message ?? "Done.");
+    } catch (thrown) {
+      setError(describeThrown(thrown, "That Family Access change could not be saved."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** Somebody with no seat at all is who "Give access" can be offered for. */
+  const grantable = useMemo(() => rows.filter((row) => canGrantAccess(row)), [rows]);
 
   if (loading) {
     return (
@@ -261,35 +319,38 @@ export function FamilyAccessClient() {
           </div>
           <h1 className="mt-2 font-display text-[clamp(2rem,5vw,2.75rem)] leading-[1.08] font-semibold tracking-tight">Family Access</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-600">
-            Who can open the app, and what they are allowed to do. This is the whole family,
-            not one event. To choose who receives or who chips in for a particular event,
-            open that event and use its settings.
+            Who can open this family, and with what role. This is the whole family, not one
+            event. To choose who receives or who chips in for a particular event, open that
+            event and use its settings.
           </p>
-        </div>
-        <div className="grid w-full gap-3 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
-          <Button
-            size="lg"
-            disabled={loading || noAccountPeople.length === 0}
-            onClick={() => setDialog({ kind: "create", personId: noAccountPeople[0]?.personId ?? "" })}
-          >
-            <IconPlus size={17} />
-            Add account
-          </Button>
         </div>
       </header>
 
+      {/*
+        THE ONE THING A FAMILY ADMINISTRATOR CANNOT DO, said once at the top so
+        it is read before anybody starts chasing a "waiting" badge.
+      */}
+      {counts.awaiting_global_approval > 0 && (
+        <Notice tone="warning" className="mt-6">
+          {counts.awaiting_global_approval === 1 ? "One person is" : `${counts.awaiting_global_approval} people are`}
+          {" "}waiting for Gift Planner approval. Their access here is ready; only a Gift Planner
+          administrator can approve the account itself, and nothing you do on this screen will
+          speed it up.
+        </Notice>
+      )}
+
       <ContributorPool
-        members={members}
+        rows={rows}
         busy={busy !== null}
         onError={setError}
-        onChanged={() => void loadMembers(true)}
+        onChanged={() => void load(true)}
       />
 
-      <section className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="Account summary">
+      <section className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="Access summary">
         <Summary label="Family" value={counts.all} />
-        <Summary label="Active account" value={counts.active} accent />
-        <Summary label="Setup pending" value={counts.pending} />
-        <Summary label="No account" value={counts.no_account} />
+        <Summary label="Active" value={counts.active} accent />
+        <Summary label="Awaiting sign-up" value={counts.awaiting_signup} />
+        <Summary label="Waiting for approval" value={counts.awaiting_global_approval} />
       </section>
 
       <div className="mt-7 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
@@ -306,8 +367,8 @@ export function FamilyAccessClient() {
           />
         </label>
 
-        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:px-0" aria-label="Filter accounts">
-          {filters.map((item) => (
+        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:px-0" aria-label="Filter access">
+          {FILTERS.map((item) => (
             <FilterChip
               key={item.value}
               active={filter === item.value}
@@ -329,53 +390,73 @@ export function FamilyAccessClient() {
       {visible.length === 0 ? (
         <div className="mt-7 rounded-2xl border border-dashed border-line-strong bg-surface-2 px-5 py-12 text-center">
           <h2 className="font-display text-lg font-semibold">No matching people</h2>
-          <p className="mt-2 text-sm text-ink-600">Try a different name or account filter.</p>
+          <p className="mt-2 text-sm text-ink-600">Try a different name or access filter.</p>
         </div>
       ) : (
         <div className="mt-7 grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {visible.map((person) => (
-            <AccountCard
-              key={person.personId}
-              person={person}
+          {visible.map((row) => (
+            <AccessCard
+              key={row.person_id}
+              row={row}
               busy={busy}
-              onAdd={() => setDialog({ kind: "create", personId: person.personId })}
-              onEditEmail={() => setDialog({ kind: "email", person })}
-              onAction={(action) => void runAction(action, person)}
-              onDisable={() => setDialog({ kind: "confirm-disable", person })}
+              onGrant={() => setDialog({ kind: "grant", row })}
+              onRevoke={() => setDialog({ kind: "revoke", row })}
+              onUnlink={() => setDialog({ kind: "unlink", row })}
+              onLinkAction={(action) => void runLinkAction(action, row)}
             />
           ))}
         </div>
       )}
 
-      {dialog?.kind === "create" && (
-        <CreateAccountDialog
-          people={noAccountPeople}
-          initialPersonId={dialog.personId}
+      {dialog?.kind === "grant" && (
+        <GrantAccessDialog
+          row={dialog.row}
           busy={busy !== null}
-          onClose={() => setDialog(null)}
-          onCreate={async (person, email, delivery) => runAction("create", person, { email, delivery })}
+          onClose={closeDialog}
+          onGrant={(email) => grantAccess(dialog.row, email)}
         />
       )}
 
-      {dialog?.kind === "email" && (
-        <EmailDialog
-          person={dialog.person}
-          busy={busy !== null}
-          onClose={() => setDialog(null)}
-          onSave={async (email) => runAction("update-email", dialog.person, { email })}
-        />
-      )}
-
-      {dialog?.kind === "confirm-disable" && (
+      {dialog?.kind === "revoke" && (
         <ConfirmDialog
-          title={`Disable app access for ${dialog.person.name}?`}
-          body="Their Christmas information will not be deleted."
-          confirmLabel="Disable access"
-          busyLabel="Disabling…"
+          title={`Switch off ${dialog.row.person_name}’s access?`}
+          body="They stop being able to open this family straight away. Nothing they have planned or paid for is deleted, and their seat is kept — giving access back restores the same person rather than opening it to whoever asks."
+          confirmLabel="Switch off access"
+          busyLabel="Saving…"
           busy={busy !== null}
-          onCancel={() => setDialog(null)}
-          onConfirm={() => void runAction("disable", dialog.person).then(() => setDialog(null))}
+          onCancel={closeDialog}
+          onConfirm={() => void revokeAccess(dialog.row, false)}
         />
+      )}
+
+      {dialog?.kind === "unlink" && (
+        <ConfirmDialog
+          title={`Empty ${dialog.row.person_name}’s seat?`}
+          body={
+            <>
+              <p>
+                This does two things. Their access is switched off, and the login attached to
+                it is detached — so the seat becomes an empty chair that a DIFFERENT address
+                can be invited to.
+              </p>
+              <p className="mt-3">
+                It cannot be undone by giving access back: the next person to confirm the
+                address you invite takes the seat. Use it when somebody’s address has changed
+                or the wrong person was invited, and use “Switch off access” for everything
+                else.
+              </p>
+            </>
+          }
+          confirmLabel="Empty the seat"
+          busyLabel="Saving…"
+          busy={busy !== null}
+          onCancel={closeDialog}
+          onConfirm={() => void revokeAccess(dialog.row, true)}
+        />
+      )}
+
+      {grantable.length === 0 && rows.length > 0 && (
+        <p className="mt-7 text-sm text-ink-600">Everybody in this family already has access.</p>
       )}
     </div>
   );
@@ -393,31 +474,35 @@ export function FamilyAccessClient() {
  * WHAT REMOVING SOMEBODY DOES
  *   Stops them being OFFERED for new assignments. It rewrites no plan, no
  *   allocation and no payment: money already assigned stays assigned until the
- *   Global Admin edits that event on purpose. `set_family_contributor` writes
- *   one boolean and nothing else, and checks Global Admin itself — so hiding
- *   this section is a courtesy, not the boundary.
+ *   administrator edits that event on purpose. `set_family_contributor` writes
+ *   one boolean and nothing else, and checks the Area's administrator itself —
+ *   so hiding this section is a courtesy, not the boundary.
+ *
+ * IT IS ABOUT THE PERSON, NOT THEIR LOGIN. Somebody with no account at all can
+ * be a contributor; somebody with access may not be. That is why it is a
+ * separate section rather than another button on the cards below.
  */
 function ContributorPool({
-  members,
+  rows,
   busy,
   onError,
   onChanged,
 }: {
-  members: FamilyMember[];
+  rows: Row[];
   busy: boolean;
   onError: (message: string | null) => void;
   onChanged: () => void;
 }) {
   const [saving, setSaving] = useState<string | null>(null);
-  const eligible = members.filter((member) => member.isFamilyContributor);
+  const eligible = rows.filter((row) => row.isFamilyContributor);
 
-  const toggle = async (member: FamilyMember) => {
+  const toggle = async (row: Row) => {
     onError(null);
-    setSaving(member.personId);
+    setSaving(row.person_id);
     try {
       const result = await createClient().rpc("set_family_contributor", {
-        p_person_id: member.personId,
-        p_eligible: !member.isFamilyContributor,
+        p_person_id: row.person_id,
+        p_eligible: !row.isFamilyContributor,
       });
       if (result.error) {
         onError(describeSupabaseError(result.error, "That change could not be saved."));
@@ -441,20 +526,20 @@ function ContributorPool({
           planning who pays. Removing somebody here changes nothing already planned or paid.
         </p>
         <p className="mt-2 text-xs font-semibold text-ink-600">
-          {eligible.length} of {members.length} {members.length === 1 ? "person" : "people"}
+          {eligible.length} of {rows.length} {rows.length === 1 ? "person" : "people"}
         </p>
 
         <div className="mt-4 flex flex-wrap gap-2">
-          {members.map((member) => {
-            const on = member.isFamilyContributor;
+          {rows.map((row) => {
+            const on = row.isFamilyContributor;
             return (
               <ToggleChip
-                key={member.personId}
+                key={row.person_id}
                 on={on}
                 disabled={busy || saving !== null}
-                onClick={() => void toggle(member)}
+                onClick={() => void toggle(row)}
               >
-                {member.name}{on ? " ✓" : ""}
+                {row.person_name}{on ? " ✓" : ""}
               </ToggleChip>
             );
           })}
@@ -464,23 +549,24 @@ function ContributorPool({
   );
 }
 
-function AccountCard({
-  person,
+function AccessCard({
+  row,
   busy,
-  onAdd,
-  onEditEmail,
-  onAction,
-  onDisable,
+  onGrant,
+  onRevoke,
+  onUnlink,
+  onLinkAction,
 }: {
-  person: FamilyMember;
+  row: Row;
   busy: string | null;
-  onAdd: () => void;
-  onEditEmail: () => void;
-  onAction: (action: ActionName) => void;
-  onDisable: () => void;
+  onGrant: () => void;
+  onRevoke: () => void;
+  onUnlink: () => void;
+  onLinkAction: (action: LinkAction) => void;
 }) {
-  const working = busy?.endsWith(`:${person.personId}`) ?? false;
-  const isProtectedAdmin = person.role === "admin";
+  const status = areaAccessStatus(row);
+  const working = busy?.endsWith(`:${row.person_id}`) ?? false;
+  const admin = isAdminSeat(row);
 
   return (
     <article className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
@@ -488,74 +574,74 @@ function AccountCard({
         <div className="flex items-start gap-3">
           <span className={cx(
             "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl font-display text-base font-semibold",
-            isProtectedAdmin ? "bg-pine-800 text-gold-fill" : "bg-accent-soft text-accent",
+            admin ? "bg-pine-800 text-gold-fill" : "bg-accent-soft text-accent",
           )}>
-            {initials(person.name)}
+            {initials(row.person_name)}
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="truncate font-display text-lg font-semibold">{person.name}</h2>
-              <StatusBadge status={person.status} />
+              <h2 className="truncate font-display text-lg font-semibold">{row.person_name}</h2>
+              <Badge tone={STATUS_TONES[status]}>{AREA_ACCESS_LABELS[status]}</Badge>
             </div>
             <p className="mt-1 text-xs font-semibold text-ink-600">
-              {person.role === "admin" ? "Admin of this family" : person.role === "member" ? "Member" : "No account"}
+              {admin ? "Admin of this family" : row.app_member_id ? "Member" : "No account"}
             </p>
             {/* THE PERSON BEHIND THE ACCOUNT.
                 This screen is about LOGINS; the profile is about the person --
                 their name, their birthday, whether they chip in, and everything
                 ever bought for them. They are two views of one human being and
-                each should be one tap from the other, so nobody has to go
-                looking for the directory to answer "who is this?". */}
+                each should be one tap from the other. */}
             <a
-              href={`/people/${person.personId}`}
+              href={`/people/${row.person_id}`}
               className="mt-1 inline-block text-xs font-semibold text-accent hover:underline"
             >
-              Open {person.name}&rsquo;s profile →
+              Open {row.person_name}&rsquo;s profile →
             </a>
           </div>
         </div>
 
         <div className="mt-5 min-h-11 rounded-xl bg-surface-2 px-3 py-2.5">
           <p className="text-xs font-medium text-ink-600">Login email</p>
-          <p className={cx("mt-0.5 break-all text-sm", person.email ? "font-semibold text-ink-900" : "text-ink-400")}>
-            {person.email ?? "Not added yet"}
+          <p className={cx("mt-0.5 break-all text-sm", row.email ? "font-semibold text-ink-900" : "text-ink-400")}>
+            {row.email ?? "Not added yet"}
           </p>
         </div>
 
+        <p className="mt-3 text-xs leading-5 text-ink-600">{AREA_ACCESS_EXPLANATIONS[status]}</p>
+
         <div className="mt-5">
-          {person.status === "no_account" && (
-            <Button onClick={onAdd} disabled={working} className="w-full">Add account</Button>
-          )}
-
-          {person.status === "pending" && (
-            <div className="grid grid-cols-2 gap-2">
-              <ActionButton disabled={working} onClick={() => onAction("send-invite")} primary>Send setup email</ActionButton>
-              <ActionButton disabled={working} onClick={() => onAction("copy-setup-link")}>Copy setup link</ActionButton>
-              <ActionButton disabled={working} onClick={onEditEmail}>Change email</ActionButton>
-              <ActionButton disabled={working} onClick={onDisable} danger>Disable access</ActionButton>
-            </div>
-          )}
-
-          {person.status === "active" && isProtectedAdmin && (
+          {admin ? (
             <div className="flex min-h-11 items-center gap-2 rounded-xl bg-accent-soft px-3 text-xs leading-5 font-medium text-accent">
               <IconShield size={17} className="shrink-0 text-accent" />
               This family’s admin is protected. Hand the family over to change who runs it.
             </div>
-          )}
-
-          {person.status === "active" && !isProtectedAdmin && (
+          ) : (
             <div className="grid grid-cols-2 gap-2">
-              <ActionButton disabled={working} onClick={() => onAction("send-reset")} primary>Send password reset</ActionButton>
-              <ActionButton disabled={working} onClick={() => onAction("copy-reset-link")}>Copy reset link</ActionButton>
-              <ActionButton disabled={working} onClick={onEditEmail}>Change email</ActionButton>
-              <ActionButton disabled={working} onClick={onDisable} danger>Disable access</ActionButton>
-            </div>
-          )}
+              {canGrantAccess(row) && (
+                <ActionButton disabled={working} onClick={onGrant} primary>Give access</ActionButton>
+              )}
 
-          {person.status === "disabled" && (
-            <div className="grid grid-cols-2 gap-2">
-              <ActionButton disabled={working} onClick={() => onAction("reactivate")} primary>Reactivate</ActionButton>
-              <ActionButton disabled={working} onClick={onEditEmail}>Change email</ActionButton>
+              {status === "awaiting_signup" && (
+                <>
+                  <ActionButton disabled={working} onClick={() => onLinkAction("send-invite")}>Send invitation</ActionButton>
+                  <ActionButton disabled={working} onClick={() => onLinkAction("copy-setup-link")}>Copy setup link</ActionButton>
+                </>
+              )}
+
+              {status === "active" && (
+                <ActionButton disabled={working} onClick={() => onLinkAction("copy-reset-link")}>Copy reset link</ActionButton>
+              )}
+
+              {canRevokeAccess(row) && (
+                <ActionButton disabled={working} onClick={onRevoke} danger>Remove access</ActionButton>
+              )}
+
+              {/* THE ONLY UNLINK PATH THERE IS, AND IT IS EXPLICIT. Offered
+                  only once access is already off, so it can never be the
+                  accidental result of meaning to switch somebody off. */}
+              {status === "revoked" && row.claimed === true && (
+                <ActionButton disabled={working} onClick={onUnlink} danger>Empty the seat</ActionButton>
+              )}
             </div>
           )}
 
@@ -566,127 +652,61 @@ function AccountCard({
   );
 }
 
-function CreateAccountDialog({
-  people,
-  initialPersonId,
+function GrantAccessDialog({
+  row,
   busy,
   onClose,
-  onCreate,
+  onGrant,
 }: {
-  people: FamilyMember[];
-  initialPersonId: string;
+  row: Row;
   busy: boolean;
   onClose: () => void;
-  onCreate: (person: FamilyMember, email: string, delivery: "email" | "link") => Promise<boolean>;
+  onGrant: (email: string) => Promise<boolean>;
 }) {
-  const [personId, setPersonId] = useState(initialPersonId);
-  const [email, setEmail] = useState("");
-  const [validation, setValidation] = useState<string | null>(null);
-  const person = people.find((item) => item.personId === personId);
-
-  const createAccount = async (delivery: "email" | "link") => {
-    if (!person) {
-      setValidation("Choose a family member.");
-      return;
-    }
-    const normalizedEmail = validateEmail(email);
-    if (!normalizedEmail.ok) { setValidation(normalizedEmail.error); return; }
-    setValidation(null);
-    await onCreate(person, normalizedEmail.value, delivery);
-  };
-
-  return (
-    <DialogFrame title="Add family account" description="Choose an existing person. This will not create another person record." busy={busy} onClose={onClose}>
-      <form onSubmit={(event) => { event.preventDefault(); void createAccount("email"); }}>
-        <Field label="Person" required>
-          <Select autoFocus required value={personId} onChange={(event) => setPersonId(event.target.value)}>
-            <option value="">Choose a person</option>
-            {people.map((item) => <option key={item.personId} value={item.personId}>{item.name}</option>)}
-          </Select>
-        </Field>
-
-        <Field label="Email address" className="mt-4" required>
-          <Input required type="email" autoComplete="off" maxLength={INPUT_LIMITS.email} value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" />
-        </Field>
-
-        <div className="mt-4 rounded-xl border border-line bg-surface-2 p-4">
-          <p className="text-xs font-medium text-ink-600">Role</p>
-          <p className="mt-1 font-semibold">User</p>
-          <p className="mt-1 text-xs leading-5 text-ink-600">They can use Gift Planner but cannot manage family accounts.</p>
-        </div>
-
-        {validation && <p className="mt-4 text-sm font-semibold text-berry">{validation}</p>}
-
-        <div className="mt-6 grid gap-3 sm:grid-cols-2">
-          <Button type="submit" size="lg" disabled={busy}>{busy ? "Creating…" : "Create & send invite"}</Button>
-          <Button variant="secondary" size="lg" disabled={busy} onClick={() => void createAccount("link")}>Create & copy setup link</Button>
-        </div>
-        <Button variant="ghost" disabled={busy} onClick={onClose} className="mt-3 w-full">Cancel</Button>
-      </form>
-    </DialogFrame>
-  );
-}
-
-function EmailDialog({
-  person,
-  busy,
-  onClose,
-  onSave,
-}: {
-  person: FamilyMember;
-  busy: boolean;
-  onClose: () => void;
-  onSave: (email: string) => Promise<boolean>;
-}) {
-  const [email, setEmail] = useState(person.email ?? "");
+  const [email, setEmail] = useState(row.email ?? "");
   const [validation, setValidation] = useState<string | null>(null);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    const normalizedEmail = validateEmail(email);
-    if (!normalizedEmail.ok) { setValidation(normalizedEmail.error); return; }
+    const normalized = validateEmail(email);
+    if (!normalized.ok) { setValidation(normalized.error); return; }
     setValidation(null);
-    await onSave(normalizedEmail.value);
+    await onGrant(normalized.value);
   };
 
-  return (
-    <DialogFrame title={`Change ${person.name}'s email`} description="This becomes the email they use to sign in." busy={busy} onClose={onClose}>
-      <form onSubmit={(event) => void submit(event)}>
-        <Field label="Login email" required>
-          <Input autoFocus required type="email" autoComplete="off" maxLength={INPUT_LIMITS.email} value={email} onChange={(event) => setEmail(event.target.value)} />
-        </Field>
-        {validation && <p className="mt-4 text-sm font-semibold text-berry">{validation}</p>}
-        <div className="mt-6 grid grid-cols-2 gap-3">
-          <Button variant="secondary" size="lg" disabled={busy} onClick={onClose}>Cancel</Button>
-          <Button type="submit" size="lg" disabled={busy}>{busy ? "Saving…" : "Save email"}</Button>
-        </div>
-      </form>
-    </DialogFrame>
-  );
-}
-
-function DialogFrame({
-  title,
-  description,
-  busy,
-  onClose,
-  children,
-}: {
-  title: string;
-  description: string;
-  busy: boolean;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
   return (
     <Modal labelledBy="family-access-dialog-title" onClose={onClose} size="md" surface="white" dismissible={!busy}>
       <ModalHeader
         id="family-access-dialog-title"
-        title={title}
-        description={description}
+        title={`Give ${row.person_name} access`}
+        description="They sign in with this address. Giving access does not create an account — they sign up for one themselves, or follow an invitation."
         onClose={onClose}
       />
-      <div className="px-5 pb-6 sm:px-7 sm:pb-7">{children}</div>
+      <div className="px-5 pb-6 sm:px-7 sm:pb-7">
+        <form onSubmit={(event) => void submit(event)}>
+          <Field
+            label="Email address"
+            required
+            error={validation}
+            hint="It has to be the address on their Gift Planner account. If they have not signed up yet, the invitation waits for them."
+          >
+            <Input
+              autoFocus
+              required
+              type="email"
+              autoComplete="off"
+              maxLength={INPUT_LIMITS.email}
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="name@example.com"
+            />
+          </Field>
+          <div className="mt-6 grid grid-cols-2 gap-3">
+            <Button variant="secondary" size="lg" disabled={busy} onClick={onClose}>Cancel</Button>
+            <Button type="submit" size="lg" disabled={busy}>{busy ? "Saving…" : "Give access"}</Button>
+          </div>
+        </form>
+      </div>
     </Modal>
   );
 }
@@ -698,22 +718,6 @@ function Summary({ label, value, accent = false }: { label: string; value: numbe
       <p className="mt-1 text-xs font-medium text-ink-600 sm:text-sm">{label}</p>
     </div>
   );
-}
-
-function StatusBadge({ status }: { status: AccountStatus }) {
-  const tones: Record<AccountStatus, BadgeTone> = {
-    no_account: "neutral",
-    pending: "warning",
-    active: "success",
-    disabled: "danger",
-  };
-  const labels: Record<AccountStatus, string> = {
-    no_account: "No account",
-    pending: "Setup pending",
-    active: "Active",
-    disabled: "Disabled",
-  };
-  return <Badge tone={tones[status]}>{labels[status]}</Badge>;
 }
 
 function ActionButton({ children, disabled, onClick, primary = false, danger = false }: { children: React.ReactNode; disabled: boolean; onClick: () => void; primary?: boolean; danger?: boolean }) {
@@ -749,17 +753,6 @@ function AccountSkeleton() {
 
 function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?";
-}
-
-function actionMessage(action: ActionName, name: string, delivery?: "email" | "link") {
-  if (action === "create") return delivery === "link" ? `${name}'s account was created and the setup link was copied.` : `${name}'s account was created and the invite was sent.`;
-  if (action === "send-invite") return `A new setup email was sent to ${name}.`;
-  if (action === "copy-setup-link") return `${name}'s setup link was copied.`;
-  if (action === "send-reset") return `A password reset email was sent to ${name}.`;
-  if (action === "copy-reset-link") return `${name}'s password reset link was copied.`;
-  if (action === "disable") return `${name}'s access was disabled.`;
-  if (action === "reactivate") return `${name}'s access was reactivated.`;
-  return `${name}'s login email was updated.`;
 }
 
 async function copySensitiveLink(link: string) {

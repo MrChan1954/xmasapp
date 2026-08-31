@@ -1,7 +1,7 @@
 # Current State
 
-**Last updated:** 2026-08-31, after migration 052 was applied to production and
-the first global administrator was bootstrapped.
+**Last updated:** 2026-08-31, after the sign-up / approval / Area-onboarding
+runtime was built and held locally.
 
 The handoff between phases. Current facts only — history lives in git.
 
@@ -10,23 +10,95 @@ The handoff between phases. Current facts only — history lives in git.
 | Fact | Value |
 | ---- | ----- |
 | Live site | `https://xmas-family.uk/` |
-| Last completed phase | **Q19 part two — 052 APPLIED and verified; first global administrator bootstrapped.** |
-| Q19 verdict | `BOOTSTRAP PASS — RUNTIME IMPLEMENTATION UNBLOCKED` |
-| Next phase | **Q19 part three — build the sign-up / approval / Area-onboarding runtime** |
+| Last completed phase | **Q19 part three — the runtime is BUILT, TESTED and HELD. Not pushed, not deployed.** |
+| Q19 verdict | `Q19 RUNTIME PASS — READY FOR AUTH CONFIGURATION AND LAUNCH` |
+| Next phase | **Q19 launch — configure Supabase Auth, push, deploy, live QA.** A short session, and the only one that touches Auth settings. |
 | Branch | `main` |
-| Local HEAD | Q18's closeout plus Q19's build and this closeout, **still held back** — nothing deploys until the runtime is built and reviewed |
+| Local HEAD | **four commits held back**: Q18's closeout, 052's build, the bootstrap note, and the runtime. |
 | origin/main | `d36d47d` — Q18's consolidation, deployed. It carried Q17's held docs commit `e38e8a2`. |
-| Serving Worker | **not read this phase** — `wrangler deployments list` was blocked by the sandbox. The push deployed and the live site was verified end-to-end at both viewports; the version id is unrecorded. |
+| Serving Worker | **still the OLD runtime.** Nothing from Q19 has ever been deployed. |
 | Product name | **Gift Planner** |
 | Migrations applied | **001–052**, immutable. 052 applied manually 2026-08-31 01:06:23 UTC. |
 | Migration **052** | **APPLIED and verified.** 37 PASS / 0 FAIL across its 40 post-apply checks. |
-| Public sign-up | **still off**, and Confirm Email is unchanged. No `/sign-up` and no runtime — but Gift Planner now has **one** global administrator. |
+| Public sign-up | **STILL OFF**, and **Confirm Email is unchanged**. `/sign-up` exists in the repository and is unreachable in production. |
+| Global administrators | **one**, bootstrapped 2026-08-31 01:18:25 UTC. |
 
-## Q19 — migration 052 is applied, and Gift Planner has an administrator
+> **The single most important fact on this page.** The database is ready, the
+> runtime is written and every local gate is green — and **not one line of it is
+> live**. The next session's whole job is turning two Auth settings on, pushing,
+> and watching. In that order, and not before the settings are confirmed.
 
-`docs/Q19-PUBLIC-SIGNUP-APPROVAL.md` is the record, and it carries the census
-rows, the bootstrap statement and the runtime plan. Read it before doing
-anything to production.
+## Q19 part three — the runtime, built and held
+
+`docs/Q19-PUBLIC-SIGNUP-APPROVAL.md` is the record. It carries the census, the
+bootstrap statement, the runtime design **and the launch checklist**. Read it
+before doing anything to production or to the Auth project.
+
+**One sentence:** the app now asks the database whether an account is allowed in
+before it reads a single family row, and stops signing people out for not having
+a family yet.
+
+### What was built
+
+Six routes — `/sign-up`, `/check-email`, `/account-pending`,
+`/account-rejected`, `/admin/accounts`, and a three-shaped `/`. One pure
+decision function, `src/lib/account-status.ts`, that every entry point shares:
+sign-in, the auth callback, account setup, the front door and `FamilyProvider`
+all ask the same question and get the same answer.
+
+**The defect it removes.** Signing in read `app_members`, found nothing, and
+called `signOut()` — so did the auth callback and account setup. That is wrong
+in both directions at once under public sign-up: an **approved account with no
+family** was signed out of an account it is entitled to (which is everybody, for
+the first few minutes), and a **rejected account with a family** was let in,
+because the membership row was all anybody asked about. Membership is a family's
+decision; approval is Gift Planner's, and it is upstream.
+
+**Family Access is the database's now.** The route went from 855 lines and eight
+actions to a couple of hundred and three. `list_area_access()`,
+`grant_area_access()` and `revoke_area_access()` do the work through the
+caller's own session. **The project-wide Auth enumeration is gone** —
+`listAllAuthUsers` fetched up to a hundred pages of every account on the
+installation to answer a question about one family. The three survivors are the
+three the Supabase Admin API alone can do: send an invitation, mint a setup
+link, mint a recovery link. **None of them writes a row.**
+
+**Q18's two deferred consolidations are settled.** `signOut` has one home and
+now clears `gp_area`, which neither copy ever did; `createAdminClient` has one
+home, and `src/utils/supabase/service-role.ts` is the only module in `src/` that
+reads `SUPABASE_SECRET_KEY`. Both are held by counting tests.
+
+**The front door asks rather than guesses.** With families but no valid `gp_area`
+cookie it renders a chooser — **even for exactly one family**. That is the one
+place the app commits to whose people, money and history it is about, and making
+that commitment silently is how a stale cookie used to walk a two-family login
+into the wrong family without saying so. Everywhere else, `resolveActiveArea`
+still falls back, so bookmarks and deep links are unchanged.
+
+### Gates
+
+Full regression **2,023 / 2,023** (was 1,939). Mutations **169 / 169**, zero
+survivors — 7 new, and **four retargeted**: `1`, `Q3-1`, `Q3-2` and `Q3-8` all
+aimed at Family Access code 052 deleted and were reporting `COULD NOT APPLY`,
+which is a survivor rather than a pass. TypeScript, ESLint, production build and
+the Worker bundle are clean. Migrations 001–052 are byte-identical; 052 is still
+`f541b6ee…de61d`.
+
+Local browser QA on Edge over CDP at desktop 1440×900 and a genuine 390×844
+DPR 3: **75 / 75**. Signed out throughout, against localhost, because production
+is still serving the old runtime. Nothing was submitted and **no production row
+was touched**.
+
+### What is NOT proven, and cannot be until the launch
+
+No end-to-end sign-up, because public sign-up is off and no confirmation email
+has ever been sent by this runtime. No live `/admin/accounts` as a real
+administrator — the screen is rendered against a fixture and its signed-out
+refusal is proved in a browser, but no approval decision has been taken through
+the UI. No live Area chooser and no live Family Access. **None of that may be
+described as passing until the launch session runs it.**
+
+## Q19 parts one and two — migration 052 is applied, and Gift Planner has an administrator
 
 **One sentence:** being able to sign in stops being the same thing as being
 allowed in. A new table, `public.app_accounts`, sits **upstream of every Area** —
@@ -93,11 +165,11 @@ bootstrap statement refuses to run again.
 
 ### Where that leaves the sequence
 
-Steps 1–5 are **done**: census reviewed, 052 applied, post-apply checks run,
-bootstrap run and recorded, checks re-run after it. What remains is step 6 —
-**build the runtime, and only after it is built and reviewed enable Supabase
-Auth sign-up and `/sign-up`.** In that order. Confirm Email must not change
-before the runtime launch stage.
+Steps 1–6 are **done**: census reviewed, 052 applied, post-apply checks run,
+bootstrap run and recorded, checks re-run after it, and the runtime built and
+reviewed. What remains is step 7 — **enable Supabase Auth sign-up and Confirm
+Email, push, deploy, and do live QA.** In that order, and the launch checklist
+in `docs/Q19-PUBLIC-SIGNUP-APPROVAL.md` is what it is done from.
 
 ## Q18 — one implementation per concept
 

@@ -158,7 +158,14 @@ test("it is POST only, and no browser session can reach it", () => {
   // It uses the service-role client, and that is not a shortcut: the reminder
   // functions are revoked from every browser role, so no signed-in session can
   // call them however it dresses up the request.
-  assert.match(route, /SUPABASE_SECRET_KEY/u);
+  //
+  // THROUGH THE CANONICAL MODULE SINCE Q19, rather than by reading
+  // `SUPABASE_SECRET_KEY` here. `src/utils/supabase/service-role.ts` is the one
+  // place in `src/` that reads the key -- `scripts/canonical-paths.test.mjs`
+  // counts the occurrences -- and it carries the header explaining what a
+  // client built from it bypasses.
+  assert.match(route, /createServiceRoleClient\(\)/u);
+  assert.doesNotMatch(route, /SUPABASE_SECRET_KEY/u, "the key is read in exactly one module");
   assert.match(sql, /revoke all on function public\.due_birthday_reminders\(date\) from public, anon, authenticated/u);
 });
 

@@ -133,6 +133,23 @@ const EVENT_SECTION_TITLES: Record<EventSection, string> = {
  */
 const TITLES: Array<{ test: RegExp; title: string; parent?: Crumb }> = [
   { test: /^\/$/u, title: "Events" },
+  /*
+   * THE ROUTES WITH NO FAMILY BEHIND THEM, added in Q19.
+   *
+   * NONE OF THEM RENDERS A TOP BAR -- the four auth screens draw `AuthScreen`
+   * and `/admin/accounts` draws its own header -- so nothing on screen reads
+   * these strings today. They are here anyway, and deliberately, because this
+   * table is the canonical answer to "what is this route called" and Q9's
+   * lesson was that a table filled in from the routes that happened to exist
+   * grows holes nobody can see. A `parent` is omitted on purpose: an account
+   * that has not been let in has nowhere above it to go, and offering a
+   * breadcrumb into the app would be a link that redirects straight back.
+   */
+  { test: /^\/sign-up$/u, title: "Create an account" },
+  { test: /^\/check-email$/u, title: "Confirm your email address" },
+  { test: /^\/account-pending$/u, title: "Waiting for approval" },
+  { test: /^\/account-rejected$/u, title: "Account unavailable" },
+  { test: /^\/admin\/accounts$/u, title: "Gift Planner accounts" },
   { test: /^\/people$/u, title: "People" },
   { test: /^\/people\/new$/u, title: "Add person", parent: PEOPLE_HOME },
   { test: /^\/settings\/family$/u, title: FAMILY_SETTINGS_HOME.label, parent: SETTINGS_HOME },

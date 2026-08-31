@@ -449,8 +449,12 @@ test("the Global Admin edits the pool from Family access", () => {
   const client = read(...APP, "more", "family-access", "family-access-client.tsx");
   assert.match(client, /function ContributorPool\(/);
   assert.match(client, /rpc\("set_family_contributor", \{/);
-  assert.match(client, /p_person_id: member\.personId/);
-  assert.match(client, /p_eligible: !member\.isFamilyContributor/);
+  // `member.personId` until Q19; `row.person_id` since. The pool is now built
+  // from `list_area_access()`'s own rows -- which use the database's column
+  // names -- rather than from the service-role listing the route used to
+  // assemble. Same person, same boolean, one fewer privileged read.
+  assert.match(client, /p_person_id: row\.person_id/);
+  assert.match(client, /p_eligible: !row\.isFamilyContributor/);
   /*
    * A toggle must announce its state. Five screens had each grown their own
    * copy of this chip; they share ToggleChip now, so the guarantee is
@@ -462,14 +466,28 @@ test("the Global Admin edits the pool from Family access", () => {
   assert.match(ui, /export function ToggleChip\(/);
   assert.match(ui, /aria-pressed=\{on\}/, "a toggle must announce its state");
 
-  // The API has to carry the flag, or every chip renders off.
+  /*
+   * WHERE THE FLAG COMES FROM NOW, and why it is no longer the admin route.
+   *
+   * `list_area_access()` answers about ACCESS and carries no contributor
+   * eligibility -- correctly, because eligibility belongs to the person rather
+   * than to their login: somebody with no account at all can be a contributor,
+   * and somebody with access may not be.
+   *
+   * So the screen reads the flag itself, through the CALLER'S OWN session,
+   * filtered by the ids the routine just returned. That is Area-scoped by
+   * construction: there is no Area filter to get wrong, and `people` is behind
+   * `is_area_member` either way. The service role is not involved at all, which
+   * is the improvement -- the route used to fetch every person in the family
+   * with a client that can see every family there is.
+   */
+  assert.match(client, /\.from\("people"\)\.select\("id,is_family_contributor"\)\.in\("id", ids\)/u);
+  assert.match(client, /const ids = list\.map\(\(row\) => row\.person_id\);/u);
+  assert.match(client, /isFamilyContributor: contributors\.get\(row\.person_id\) \?\? false/u);
+
   const route = read(...APP, "api", "admin", "family-access", "route.ts");
-  // It also has to carry the Area, and scope the read to it: the service role
-  // sees every family, and this screen is about the one its administrator
-  // administers.
-  assert.match(route, /select\("id, name, area_id, is_family_contributor"\)/);
-  assert.match(route, /\.eq\("area_id", context\.areaId\)/);
-  assert.match(route, /isFamilyContributor: Boolean\(person\.is_family_contributor\)/);
+  assert.ok(!route.includes("is_family_contributor"),
+    "the privileged route no longer reads the contributor flag at all");
 });
 
 test("contributor pickers offer the pool; recipient pickers offer everybody", () => {

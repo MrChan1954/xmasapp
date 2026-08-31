@@ -29,11 +29,26 @@ const DB_SUITES = ["scripts/tenancy-runtime.test.mjs", "scripts/migration-execut
 
 const MUTATIONS = [
   {
-    name: "1. Family Access stops scoping its listing to one family",
+    /*
+     * RETARGETED IN Q19, AND THE MOVE IS THE POINT. It used to break the Area
+     * predicate on the route's own people LISTING -- a query migration 052
+     * deleted, along with most of that route: reading Family Access is
+     * `list_area_access()` now, which takes no Area parameter and therefore has
+     * none to forget. Left where it was, this mutation would have reported
+     * "COULD NOT APPLY", which Q15 established is testing nothing.
+     *
+     * The rule it protects survives in `loadTarget`, which is the one gateway
+     * both remaining service-role actions reach their person through -- so this
+     * still breaks the only scoping there is on the only client that has no
+     * boundary of its own.
+     */
+    name: "1. Family Access stops scoping its person gateway to one family",
     file: "src/app/api/admin/family-access/route.ts",
-    from: `        .eq("area_id", context.areaId)
-        .order("name"),`,
-    to: `        .order("name"),`,
+    from: `      .eq("id", personId)
+      .eq("area_id", areaId)
+      .maybeSingle(),`,
+    to: `      .eq("id", personId)
+      .maybeSingle(),`,
     suites: ["scripts/areas-and-tenancy.test.mjs"],
   },
   {
@@ -458,18 +473,48 @@ create or replace function public.is_area_admin(p_area_id uuid)`,
   // and every one of them belongs to exactly one family.
   // -------------------------------------------------------------------------
   {
+    /*
+     * RETARGETED IN Q19, the way Q17 retargeted Q3-3/4/5 and Q16 retargeted
+     * mutation 9. It used to break `linkMembership` in the Family Access route
+     * -- a service-role write migration 052 deleted, because granting access is
+     * `grant_area_access` now. Left where it was, this reported "COULD NOT
+     * APPLY", which Q15 established is testing nothing.
+     *
+     * THE DEFECT IS UNCHANGED and is if anything sharper in its new home: take
+     * the Area from the CALLER rather than from the person, and an
+     * administrator of one family can write a seat for a person in another.
+     * `require_acting_area` then compares the acting Area against itself and
+     * agrees, which is exactly why the Area must come from the person.
+     */
     name: "Q3-1. a membership is written into the ACTING Area rather than the Person's own",
-    file: "src/app/api/admin/family-access/route.ts",
-    from: "    area_id: person.area_id,",
-    to: "    area_id: areaId,",
-    suites: ["scripts/people-and-access.test.mjs"],
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `  -- The Area comes from the PERSON, never from the caller. A person in another
+  -- family therefore lands on \`require_acting_area\` below, which answers the
+  -- same sentence whether or not the row exists.
+  target_area := public.area_of_person(p_person_id);`,
+    to: `  -- The Area comes from the PERSON, never from the caller. A person in another
+  -- family therefore lands on \`require_acting_area\` below, which answers the
+  -- same sentence whether or not the row exists.
+  target_area := public.acting_area();`,
+    suites: ["scripts/global-approval.test.mjs"],
   },
   {
+    /*
+     * RETARGETED IN Q19, for the same reason as Q3-1 above. The old form set
+     * `person_id: null`; this one is worse and more realistic -- the seat is
+     * given to SOMEBODY, just not the person the administrator named. That is
+     * the shape a seat-takeover actually takes, and "the row exists" is not
+     * enough to notice it.
+     */
     name: "Q3-2. giving access stops linking the existing Person",
-    file: "src/app/api/admin/family-access/route.ts",
-    from: "    person_id: person.id,",
-    to: "    person_id: null,",
-    suites: ["scripts/people-and-access.test.mjs"],
+    file: "supabase/migrations/202608100052_global_account_approval.sql",
+    from: `    insert into public.app_members (area_id, person_id, email, role, active)
+    values (target_area, p_person_id, normalised, 'member', true);`,
+    to: `    insert into public.app_members (area_id, person_id, email, role, active)
+    values (target_area,
+      (select p.id from public.people p where p.area_id = target_area and p.id <> p_person_id limit 1),
+      normalised, 'member', true);`,
+    suites: ["scripts/global-approval.test.mjs"],
   },
   {
     /*
@@ -546,14 +591,21 @@ create or replace function public.is_area_admin(p_area_id uuid)`,
     suites: ["scripts/people-and-access.test.mjs"],
   },
   {
-    name: "Q3-8. the service-role account list stops filtering by Area",
+    /*
+     * RETARGETED IN Q19. The service-role account LIST is gone -- reading
+     * Family Access is `list_area_access()` now, which takes no Area parameter
+     * and therefore has none to drop. The membership half of `loadTarget` is
+     * where the same rule lives: it is the second of the route's two remaining
+     * reads, and mutation 1 breaks the first.
+     */
+    name: "Q3-8. the service-role membership lookup stops filtering by Area",
     file: "src/app/api/admin/family-access/route.ts",
-    from: `        .select("id, name, area_id, is_family_contributor")
-        .eq("area_id", context.areaId)
-        .order("name"),`,
-    to: `        .select("id, name, area_id, is_family_contributor")
-        .order("name"),`,
-    suites: ["scripts/people-and-access.test.mjs"],
+    from: `      .select("id, person_id, user_id, email, role, active")
+      .eq("person_id", personId)
+      .eq("area_id", areaId),`,
+    to: `      .select("id, person_id, user_id, email, role, active")
+      .eq("person_id", personId),`,
+    suites: ["scripts/areas-and-tenancy.test.mjs"],
   },
   {
     name: "Q3-9. the Person profile stops saying the contributor toggle is not a login",
@@ -1547,8 +1599,10 @@ export function EventSettingsScreen(`,
   {
     name: "Q16-2. a hand-rolled dialog claims a focus trap it does not have",
     file: "src/app/components/account-menu.tsx",
-    from: `import { Check, Home, LogOut, Plus, Settings, ShieldCheck, Snowflake, User } from "lucide-react";`,
-    to: `import { Check, Home, LogOut, Plus, Settings, ShieldCheck, Snowflake, User } from "lucide-react";\nconst Panel = () => <div role="dialog" aria-modal="true" />;`,
+    // The anchor is this file's lucide import, which Q19 extended with the
+    // glyph for the global admin queue. The mutation is unchanged.
+    from: `import { Check, Home, LogOut, Plus, Settings, ShieldCheck, Snowflake, User, UserCog } from "lucide-react";`,
+    to: `import { Check, Home, LogOut, Plus, Settings, ShieldCheck, Snowflake, User, UserCog } from "lucide-react";\nconst Panel = () => <div role="dialog" aria-modal="true" />;`,
     suites: ["scripts/ui-primitives.test.mjs"],
   },
   {
@@ -1936,6 +1990,78 @@ on conflict (user_id) do nothing;`,
     from public.app_members m
     join public.people p on p.id = m.person_id`,
     suites: ["scripts/global-approval.test.mjs"],
+  },
+
+  /*
+   * -------------------------------------------------------------------------
+   * Q19, PART THREE -- THE RUNTIME THAT 052 MADE POSSIBLE
+   * -------------------------------------------------------------------------
+   *
+   * The seventeen above break the DATABASE and are caught by a real PostgreSQL
+   * refusing, or failing to refuse, a real query. These break the APPLICATION,
+   * and the first five are caught by rendering the real `FamilyProvider` or by
+   * calling the real decision function -- behaviour, not a regex noticing that
+   * a line changed.
+   *
+   * The last two are canonical-path mutations, in the Q16/Q18 tradition: they
+   * put back a SECOND copy of something there must be exactly one of. Those are
+   * source-shaped by nature, because "how many implementations are there" is a
+   * question about the source and no amount of running can answer it.
+   */
+  {
+    name: "Q19-18. an undecided account reads as approved",
+    file: "src/lib/account-status.ts",
+    from: `          : status === "approved" ? "approved"
+            : "pending";`,
+    to: `          : status === "approved" ? "approved"
+            : "approved";`,
+    suites: ["scripts/account-approval-runtime.test.mjs", "scripts/account-approval-gate.test.mjs"],
+  },
+  {
+    name: "Q19-19. a suspended account stops counting as refused",
+    file: "src/lib/account-status.ts",
+    from: `  return state === "rejected" || state === "suspended";`,
+    to: `  return state === "rejected";`,
+    suites: ["scripts/account-approval-runtime.test.mjs", "scripts/account-approval-gate.test.mjs"],
+  },
+  {
+    name: "Q19-20. the pending screen stops being anybody's destination",
+    file: "src/lib/account-status.ts",
+    from: `  if (state === "pending") {
+    return pathname === ACCOUNT_PENDING_PATH ? null : ACCOUNT_PENDING_PATH;
+  }
+`,
+    to: "",
+    suites: ["scripts/account-approval-runtime.test.mjs", "scripts/account-approval-gate.test.mjs"],
+  },
+  {
+    name: "Q19-21. the provider stops acting on the global status",
+    file: "src/app/family-context.tsx",
+    from: `    const destination = appEntryDestinationFor(status.state);`,
+    to: `    const destination = null;`,
+    suites: ["scripts/account-approval-gate.test.mjs"],
+  },
+  {
+    name: "Q19-22. the front door guesses a family instead of asking",
+    file: "src/lib/areas.ts",
+    from: `  return remembered && areas.some((area) => area.id === remembered) ? "dashboard" : "chooser";`,
+    to: `  return "dashboard";`,
+    suites: ["scripts/account-approval-runtime.test.mjs"],
+  },
+  {
+    name: "Q19-23. a second module reads the service-role key",
+    file: "src/utils/supabase/family-access-admin.ts",
+    from: `    return createServiceRoleClient();`,
+    to: `    return createServiceRoleClient(process.env.SUPABASE_SECRET_KEY);`,
+    suites: ["scripts/canonical-paths.test.mjs"],
+  },
+  {
+    name: "Q19-24. a screen grows its own copy of sign-out again",
+    file: "src/app/account/page.tsx",
+    from: `import { signOut } from "@/utils/supabase/sign-out";`,
+    to: `import { signOut as canonicalSignOut } from "@/utils/supabase/sign-out";
+const signOut = async () => { await createClient().auth.signOut(); void canonicalSignOut; };`,
+    suites: ["scripts/canonical-paths.test.mjs"],
   },
 ];
 

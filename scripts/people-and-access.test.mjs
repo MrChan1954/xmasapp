@@ -624,23 +624,36 @@ describe("no screen or route can quietly become Area-blind again", () => {
 
   test("GIVING ACCESS TO AN EXISTING PERSON CREATES NO SECOND PERSON", () => {
     /*
-     * The Q3 flow that must not duplicate. `linkMembership` writes a membership
-     * whose `person_id` is the person the admin chose and whose `area_id` is
-     * THAT PERSON'S OWN -- so migration 035's cross-Area guard agrees with it by
-     * construction, and no new person is invented along the way.
+     * THE Q3 FLOW THAT MUST NOT DUPLICATE, AND THE ROUTE THAT USED TO CARRY IT.
+     *
+     * `linkMembership` wrote a membership with the service role, naming the
+     * person the administrator chose and that person's own Area. Migration 052
+     * took the whole of it into the database: `grant_area_access(person, email)`
+     * is now the only way an invitation is created, and the route has no write
+     * of any kind left. So the rule this test protects is stronger than it was
+     * -- there is no code path here that could invent a person, because there
+     * is no code path here that writes at all.
      */
     const route = withoutComments(read("src/app/api/admin/family-access/route.ts"));
-    const link = route.slice(route.indexOf("async function linkMembership"));
 
-    assert.match(link, /person_id: person\.id/u, "it links the person it was given");
-    assert.match(link, /area_id: person\.area_id/u, "in that person's own family");
-    assert.match(link, /role: "member"/u, "and never as an admin");
-    assert.ok(!link.includes('.from("people")'), "linking an account must not write to people at all");
-    assert.ok(!link.includes("create_person"));
-
-    // Nowhere in the whole route may a person be created.
-    assert.ok(!route.includes('.from("people").insert'), "the access route never creates a person");
+    assert.ok(!route.includes("linkMembership"), "the service-role membership write is gone");
+    for (const mutator of [".insert(", ".update(", ".upsert(", ".delete("]) {
+      assert.ok(!route.includes(mutator), `the access route must not ${mutator} anything`);
+    }
     assert.ok(!route.includes("create_person"));
+
+    /*
+     * AND THE ROUTINE THAT REPLACED IT KEEPS THE SAME TWO GUARANTEES, in the
+     * one place they can no longer be bypassed. It takes a `person_id` and
+     * derives the Area from that person (`area_of_person`), so a membership
+     * still cannot name one family's person in another family's Area -- and it
+     * never writes `user_id`, which is the takeover `linkMembership` could
+     * have performed and this cannot.
+     */
+    const screen = withoutComments(read("src/app/more/family-access/family-access-client.tsx"));
+    assert.match(screen, /rpc\("grant_area_access", \{\s*\n\s*p_person_id: row\.person_id,/u,
+      "access is granted for the person the administrator chose");
+    assert.ok(!screen.includes("user_id"), "and nothing on this screen writes a login onto a seat");
   });
 
   test("no runtime file hard-codes a family, a person or an event", () => {

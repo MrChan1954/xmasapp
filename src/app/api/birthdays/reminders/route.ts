@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { createClient as createAdminSupabaseClient } from "@supabase/supabase-js";
 import { londonToday } from "@/utils/supabase/birthdays-server";
 import { flushNotificationOutbox } from "@/utils/supabase/notifications-server";
+import { ServiceRoleUnavailableError, createServiceRoleClient } from "@/utils/supabase/service-role";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,15 +66,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Not authorised." }, { status: 401, headers: noStoreHeaders });
   }
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
-  if (!supabaseUrl || !supabaseSecretKey) {
-    return NextResponse.json({ error: "Not configured." }, { status: 503, headers: noStoreHeaders });
+  /*
+   * The one service-role client. This job has no signed-in caller at all -- it
+   * is a scheduled sweep authenticated by the shared secret checked above -- so
+   * the service role is the whole of its authority and the secret check is the
+   * whole of its authorization. `service-role.ts` owns the key; a missing one
+   * still answers 503 exactly as it did.
+   */
+  let admin;
+  try {
+    admin = createServiceRoleClient();
+  } catch (error) {
+    if (error instanceof ServiceRoleUnavailableError) {
+      return NextResponse.json({ error: "Not configured." }, { status: 503, headers: noStoreHeaders });
+    }
+    throw error;
   }
-
-  const admin = createAdminSupabaseClient(supabaseUrl, supabaseSecretKey, {
-    auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false },
-  });
 
   // The date the family is living in, not a UTC instant.
   const today = londonToday();

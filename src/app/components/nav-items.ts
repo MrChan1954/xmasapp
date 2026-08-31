@@ -3,6 +3,8 @@ import { CalendarDays, Contact, Gift, House, MoreHorizontal, Scale, Settings, Sp
 import { eventNavMode, eventPath, eventSectionFromPath, type EventNavMode, type EventSection } from "@/lib/events.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { DEFAULT_PAGE_TITLE, EVENTS_HOME, FAMILY_SETTINGS_HOME, SETTINGS_HOME, activeGlobalSection, pageTitleFor, type Crumb, type GlobalNavSection, type PageTitle } from "@/lib/navigation.ts";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { AUTH_ROUTES, GLOBAL_ROUTES, isAuthRoute, isBareRoute, isGlobalRoute } from "@/lib/account-status.ts";
 
 export type NavItem = {
   href: string;
@@ -152,21 +154,22 @@ export const GLOBAL_NAV: readonly GlobalNavItem[] = [
 // the components have one import and a test can run the real function.
 export { activeGlobalSection, type GlobalNavSection };
 
-/**
- * Signed-out entry points. These render their own full-screen frame, carry no
- * app chrome, and have no family data to load.
+/*
+ * THE ROUTES WITH NO FAMILY BEHIND THEM MOVED TO `src/lib/account-status.ts`
+ * IN Q19, and are re-exported here so every component keeps its single import.
+ *
+ * THE MOVE IS THE FIX, for the same reason `pageTitleFor` moved. There are two
+ * kinds of chrome-less route now -- signed-out AUTH routes and signed-in GLOBAL
+ * ones (`/account-pending`, `/account-rejected`, `/admin/accounts`) -- and the
+ * decision about which screens carry an Area is now the same decision as which
+ * destination each account status leads to. Two lists in two files would drift,
+ * and the way they would drift is a global route quietly acquiring an Area
+ * loader: `/admin/accounts` must work for a Gift Planner administrator who
+ * belongs to no family at all.
+ *
+ * Next door, in a module that imports nothing, a test can call the real thing.
  */
-const AUTH_ROUTES = new Set([
-  "/login",
-  "/forgot-password",
-  "/reset-password",
-  "/account-setup",
-  "/auth/callback",
-]);
-
-export function isAuthRoute(pathname: string) {
-  return AUTH_ROUTES.has(pathname);
-}
+export { AUTH_ROUTES, GLOBAL_ROUTES, isAuthRoute, isBareRoute, isGlobalRoute };
 
 /*
  * TITLES AND BREADCRUMBS MOVED TO `src/lib/navigation.ts` IN Q9, and are

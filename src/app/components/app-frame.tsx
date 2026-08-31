@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { BottomTabs } from "./bottom-tabs";
 import { IconRail } from "./icon-rail";
 import { NotificationInboxProvider } from "./use-notification-inbox";
-import { isAuthRoute } from "./nav-items";
+import { isBareRoute } from "./nav-items";
 
 /**
  * The persistent navigation frame, rendered once from the root layout.
@@ -20,11 +20,20 @@ import { isAuthRoute } from "./nav-items";
  *
  * Signed-out routes render their own full-screen frame (`AuthScreen`), so they
  * get the children bare — no chrome, and no flex wrapper to fight with.
+ *
+ * SO DO THE GLOBAL ROUTES, since Q19, and for a stronger reason than looks.
+ * `/account-pending`, `/account-rejected` and `/admin/accounts` belong to an
+ * account rather than to a family, and two of the three are reachable by
+ * somebody who is in no family at all. The rail and the tab bar are built from
+ * an Area; rendering them there would put a family's navigation in front of
+ * somebody the database has not let into one, and `IconRail` would go looking
+ * for an Area that does not exist. `isBareRoute` covers both kinds, so the
+ * frame and `FamilyProvider` cannot disagree about which screens have chrome.
  */
 export function AppFrame({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
-  if (isAuthRoute(pathname)) return <>{children}</>;
+  if (isBareRoute(pathname)) return <>{children}</>;
 
   return (
     // `dvh` rather than `vh`: in an installed app and in mobile Safari the

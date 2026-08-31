@@ -16,15 +16,39 @@
  * have failed in live QA, and vice versa.
  */
 
+/**
+ * THE DEFAULT GLOBAL STATUS, AND WHY IT IS `approved`.
+ *
+ * Migration 052 put `my_account_status()` in front of every screen in the app:
+ * `FamilyProvider` asks it before it reads one family row, and sends anybody who
+ * is not approved to `/check-email`, `/account-pending` or `/account-rejected`.
+ * So a fixture that answered nothing would turn every DOM test in the suite
+ * into "the sign-in redirect happened", whatever the test was about.
+ *
+ * `approved` is the state every one of those tests already assumed implicitly --
+ * a signed-in member looking at their family -- so this preserves what they
+ * mean. A test about the gate itself overrides `fake.rpc.my_account_status`.
+ */
+const APPROVED = () => ({
+  data: [{ status: "approved", is_global_admin: false, email_confirmed: true }],
+  error: null,
+});
+
 /** Everything the fake knows, and everything it was asked. */
 export const fake = {
   user: { id: "user-1" },
   tables: {},
   queries: [],
+  /** Named routines, by name. Anything unlisted answers `{ data: null }`. */
+  rpc: { my_account_status: APPROVED },
+  /** Every RPC the code under test called, in order, for forensics. */
+  rpcCalls: [],
   reset(tables = {}) {
     this.user = { id: "user-1" };
     this.tables = tables;
     this.queries = [];
+    this.rpc = { my_account_status: APPROVED };
+    this.rpcCalls = [];
   },
   /** Every filter applied to the last read of `table`, for mutation forensics. */
   filtersFor(table) {
@@ -77,5 +101,9 @@ export const createClient = () => ({
   from,
   channel,
   removeChannel: () => {},
-  rpc: async () => ({ data: null, error: null }),
+  rpc: async (name, args) => {
+    fake.rpcCalls.push({ name, args: args ?? null });
+    const handler = fake.rpc[name];
+    return handler ? handler(args) : { data: null, error: null };
+  },
 });

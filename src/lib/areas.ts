@@ -142,3 +142,39 @@ export function validateAreaName(input: string): { ok: true; value: string } | {
   if (/[\u0000-\u001f\u007f]/.test(trimmed)) return { ok: false, reason: "That name contains characters we cannot store." };
   return { ok: true, value: trimmed };
 }
+
+/**
+ * WHAT THE FRONT DOOR SHOULD RENDER.
+ *
+ * Three answers, and the middle one is the whole point of this function:
+ *
+ *   onboarding  No family at all. Not an error and not an empty dashboard --
+ *               the first thing they see is the one action that starts
+ *               everything. Legitimate for an approved account: global
+ *               approval and family membership are separate facts, and being
+ *               allowed into Gift Planner does not put anybody in a family.
+ *
+ *   chooser     Families, but no valid choice among them. `resolveActiveArea`
+ *               would happily pick one; at the FRONT DOOR that is a guess about
+ *               whose people, money and history to put on screen, made silently
+ *               on somebody's behalf. So the question gets asked instead --
+ *               even when there is exactly one family, because "you are in the
+ *               Wards" is worth reading once on a new device, and one tap is
+ *               cheaper than discovering later that a stale cookie sent you
+ *               into the wrong one.
+ *
+ *   dashboard   The remembered family is still one of theirs. The overwhelming
+ *               majority of visits, and no extra hop for any of them.
+ *
+ * DELIBERATELY NOT `resolveActiveArea`, and not a replacement for it. That
+ * function answers "which family should this SCREEN be about", falls back on
+ * purpose, and every deep link still depends on it -- opening a bookmarked
+ * event with no cookie must show the event, not a chooser. This one answers
+ * only what `/` renders.
+ */
+export type AreaEntry = "onboarding" | "chooser" | "dashboard";
+
+export function areaEntryFor(areas: readonly Area[], remembered: string | null | undefined): AreaEntry {
+  if (areas.length === 0) return "onboarding";
+  return remembered && areas.some((area) => area.id === remembered) ? "dashboard" : "chooser";
+}

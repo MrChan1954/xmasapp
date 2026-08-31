@@ -1,9 +1,38 @@
 import { NextResponse } from "next/server";
+import { HOME_PATH, destinationFor } from "@/lib/account-status";
 import { getRequestOrigin } from "@/utils/request-origin";
+import { claimInvitations, loadAccountStatus } from "@/utils/supabase/account-status-server";
 import { createClient } from "@/utils/supabase/server";
 
 const loginError = (requestOrigin: string, message: string) => NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(message)}`, requestOrigin));
 
+/**
+ * A PKCE code is opaque base64url. Anything with whitespace or a control
+ * character in it did not come from Supabase, and refusing it here keeps such
+ * a value out of the exchange request and out of the log line below.
+ */
+const CONTROL_CHARACTERS = /[\u0000-\u0020\u007f-\u009f]/u;
+
+/**
+ * WHERE EVERY EMAIL LINK LANDS: a sign-up confirmation, an invitation, a
+ * password recovery.
+ *
+ * WHAT CHANGED IN Q19, AND IT IS THE WHOLE OF THE CHANGE. This route used to
+ * finish by reading `app_members` and, finding nothing, calling `signOut()` and
+ * sending the reader to a sign-in form saying "This email does not have access
+ * to this Christmas."
+ *
+ * Under public sign-up that is the single worst place that refusal could be:
+ * it is the last step of confirming a brand new address, and a brand new
+ * account has no membership BY DEFINITION. Everybody who ever signed up would
+ * have confirmed their address and been signed out for it.
+ *
+ * So membership is not asked about at all any more. The claim still runs --
+ * it is the only routine that may attach a login to an invitation, and it is
+ * the reason an invited person ends up in their family -- and then the GLOBAL
+ * status decides where they go, exactly as it does on the sign-in form and in
+ * `FamilyProvider`. One question, three callers, one answer.
+ */
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const requestOrigin = getRequestOrigin(request);
@@ -12,7 +41,7 @@ export async function GET(request: Request) {
   const callbackError = url.searchParams.get("error_description") ?? url.searchParams.get("error");
   const allowedDestinations = new Set(["/", "/reset-password", "/account-setup"]);
   const next = requestedNext && allowedDestinations.has(requestedNext) ? requestedNext : "/";
-  const validCode = code && code.length <= 4_096 && !/[\u0000-\u0020\u007f-\u009f]/u.test(code) ? code : null;
+  const validCode = code && code.length <= 4_096 && !CONTROL_CHARACTERS.test(code) ? code : null;
   console.info("[auth callback] reached", { pathname: url.pathname, codePresent: Boolean(validCode) });
   if (!validCode) {
     if (callbackError) {
@@ -35,22 +64,36 @@ export async function GET(request: Request) {
     console.error("[auth callback] code exchange failed", { status: exchange.error.status });
     return loginError(requestOrigin, "This login link is invalid or has expired.");
   }
-  const claim = await supabase.rpc("claim_app_member");
-  if (claim.error) {
-    console.error("[auth callback] membership claim failed", { code: claim.error.code });
-    await supabase.auth.signOut();
-    return loginError(requestOrigin, "Your login succeeded, but this email is not linked to an approved family member.");
+
+  /*
+   * CLAIM AFTER CONFIRMATION, WHICH IS THE ORDER 052 MADE MANDATORY.
+   *
+   * `claim_app_member()` now requires `email_confirmed_at is not null` --
+   * without it, signing up as somebody else's address was enough to walk into
+   * their family. The code exchange above is what sets that column for a
+   * confirmation link, so this call has to come after it and not before.
+   *
+   * A failure is not fatal and never was: `false` simply means there was
+   * nothing waiting on this address, which is the normal case for anybody who
+   * signed up on their own account rather than being invited.
+   */
+  const claimed = await claimInvitations();
+  console.info("[auth callback] invitation claim complete", { claimed });
+
+  /*
+   * AND THEN THE ONE QUESTION THAT DECIDES ANYTHING. `my_account_status()`
+   * carries the global decision and the confirmed flag; `destinationFor` turns
+   * them into a path. An approved account goes wherever the link asked for, and
+   * every other state goes to the screen that explains itself.
+   */
+  const status = await loadAccountStatus();
+  const destination = destinationFor(status.state, HOME_PATH);
+  if (destination && destination !== HOME_PATH) {
+    console.info("[auth callback] routed by global status", { state: status.state });
+    return NextResponse.redirect(new URL(destination, requestOrigin));
   }
-  const userId = exchange.data.user?.id;
-  // Any active membership admits them; which family comes later. `.limit(1)`
-  // keeps a second one from erroring the check and refusing the sign-in.
-  const membership = userId ? await supabase.from("app_members").select("id").eq("user_id", userId).eq("active", true).limit(1).maybeSingle() : { data: null, error: null };
-  if (!membership.data) {
-    console.error("[auth callback] no active membership after claim", { membershipErrorCode: membership.error?.code ?? null });
-    await supabase.auth.signOut();
-    return loginError(requestOrigin, "This email does not have access to this Christmas.");
-  }
-  console.info("[auth callback] approved member signed in");
+
+  console.info("[auth callback] approved account signed in");
   return NextResponse.redirect(new URL(next, requestOrigin));
 }
 

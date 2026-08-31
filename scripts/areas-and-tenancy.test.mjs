@@ -69,7 +69,10 @@ describe("nothing resolves a membership by guessing", () => {
 describe("an account with no family is offered one", () => {
   test("the dashboard renders the setup screen rather than an empty dashboard", () => {
     const source = read("src/app/page.tsx");
-    assert.match(source, /needsSetup/);
+    // `needsSetup` until Q19; `areaEntryFor` since, because the front door has
+    // three answers rather than two and the middle one -- families, but no
+    // valid choice among them -- had nowhere to live in a boolean.
+    assert.match(source, /areaEntryFor/);
     assert.ok(source.includes("<CreateAreaForm first />"));
   });
 
@@ -81,19 +84,47 @@ describe("an account with no family is offered one", () => {
 
   test("and an account that HAS a family never sees it", () => {
     // The setup screen is the absence of a family, not a permission check: it
-    // must be guarded by needsSetup and nothing else.
+    // must be guarded by the entry classification and nothing else.
     const source = read("src/app/page.tsx");
     const line = source.split(String.fromCharCode(10)).find((l) => l.includes("<CreateAreaForm first />"));
     assert.ok(line, "the setup screen should be rendered from the root");
-    assert.ok(line.trim().startsWith("if (needsSetup)"));
+    assert.ok(line.trim().startsWith('if (entry === "onboarding")'));
   });
 
-  test("and the root still never redirects anywhere", () => {
-    // "/" is the PWA start_url and the one route in this app that must always
-    // resolve to itself -- historically it was how the front door kept ending
-    // up inside Christmas.
+  test("and the root still redirects for NO family reason whatsoever", () => {
+    /*
+     * "/" is the PWA start_url and the one route that must resolve to itself
+     * -- historically it was how the front door kept ending up inside
+     * Christmas. This used to be "never redirects at all", and Q19 gave it one
+     * legitimate exception: an account the DATABASE has not let into Gift
+     * Planner has no dashboard to be shown instead, and is sent to the screen
+     * that explains itself.
+     *
+     * So the rule is narrower rather than gone: exactly one redirect, and its
+     * argument comes from `destinationFor` -- never from an Area, a membership
+     * or an event. All three Area outcomes are still RENDERED.
+     */
     const source = read("src/app/page.tsx");
-    assert.ok(!source.includes("redirect("), "the root must not redirect");
+    const calls = source.match(/\bredirect\([^)]*\)/gu) ?? [];
+    assert.deepEqual(calls, ["redirect(destination)"],
+      "the only redirect from the root is the global account status");
+    assert.match(source, /const destination = destinationFor\(status\.state, HOME_PATH\)/u);
+    assert.ok(source.includes('if (entry === "onboarding") return <CreateAreaForm first />;'));
+    assert.ok(source.includes('if (entry === "chooser") return <AreaChooser areas={areas} />;'));
+  });
+
+  test("and an approved account is never signed out for having no family", () => {
+    /*
+     * THE DEFECT Q19 EXISTS TO REMOVE, pinned at the two places that used to
+     * commit it. Signing in read `app_members`, found nothing, and called
+     * `signOut()`; so did the auth callback. Under public sign-up that is
+     * everybody, for the first few minutes of their account.
+     */
+    for (const path of ["src/app/login/page.tsx", "src/app/auth/callback/route.ts", "src/app/account-setup/page.tsx"]) {
+      const source = withoutComments(read(path));
+      assert.ok(!/auth\.signOut\(\)/u.test(source),
+        `${path} must not sign anybody out for lacking a family`);
+    }
   });
 });
 
@@ -390,6 +421,7 @@ describe("privileged operations derive their Area rather than being told it", ()
 describe("Family access is one family's, even though it runs as the service role", () => {
   const gate = read("src/utils/supabase/family-access-admin.ts");
   const route = read("src/app/api/admin/family-access/route.ts");
+  const screen = read("src/app/more/family-access/family-access-client.tsx");
 
   test("the permission check resolves the family on screen, and returns it", () => {
     /*
@@ -423,140 +455,93 @@ describe("Family access is one family's, even though it runs as the service role
     assert.ok(refusals.some((message) => /admin/iu.test(message)));
   });
 
+  test("READING, GRANTING AND REVOKING ARE THE DATABASE'S NOW, not this route's", () => {
+    /*
+     * MIGRATION 052 IS WHAT SHRANK THIS ROUTE FROM 855 LINES TO A COUPLE OF
+     * HUNDRED, and the shrinkage IS the security work. Everything below used to
+     * be done here with the service role -- which bypasses row level security
+     * AND migration 037's write barrier, so every rule it obeyed was a rule it
+     * applied to itself. Now the rules are the database's own.
+     *
+     * The screen calls the three routines directly, through the caller's OWN
+     * session, where `is_area_admin(acting_area())` is checked by the routine.
+     */
+    assert.match(screen, /rpc\("list_area_access"\)/u);
+    assert.match(screen, /rpc\("grant_area_access"/u);
+    assert.match(screen, /rpc\("revoke_area_access"/u);
+    assert.ok(screen.includes('"/api/admin/family-access"'),
+      "and the three Admin-API actions still go through the route");
+  });
+
+  test("AND THE ROUTE WRITES NOTHING AT ALL ANY MORE", () => {
+    /*
+     * THE STRONGEST STATEMENT THIS FILE CAN MAKE ABOUT IT. A read with the
+     * service role that forgets an Area shows one family another family's rows;
+     * a WRITE that forgets one changes them. There are no writes left to
+     * forget: `app_members` is written by `grant_area_access`,
+     * `revoke_area_access` and `claim_app_member`, and by nothing else anywhere.
+     */
+    for (const mutator of [".insert(", ".update(", ".upsert(", ".delete("]) {
+      assert.ok(!route.includes(mutator),
+        `the route must not ${mutator} -- granting and revoking are RPCs now`);
+    }
+  });
+
+  test("NO PROJECT-WIDE AUTH ENUMERATION SURVIVES", () => {
+    /*
+     * `listAllAuthUsers` fetched up to a hundred pages of EVERY ACCOUNT ON THE
+     * INSTALLATION to answer a question about one family, and it is how Family
+     * Access could tell whether an address had an account somewhere its
+     * administrator cannot see. `list_area_access()` takes no email parameter,
+     * so there is nothing left to point anywhere.
+     *
+     * `getUserById` is deliberately still allowed: it asks about the single
+     * account a seat this Area owns is already attached to, which discloses
+     * nothing the seat did not already say.
+     */
+    // The CODE, not the commentary: both files explain what used to be here,
+    // and prose about a removed enumeration is not one.
+    assert.ok(!withoutComments(route).includes("listAllAuthUsers"),
+      "the enumeration must be gone from the route");
+    assert.ok(!withoutComments(gate).includes("listAllAuthUsers"),
+      "and from the helper that used to export it");
+    assert.ok(!withoutComments(route).includes("listUsers"), "and no hand-rolled replacement");
+    assert.ok(!withoutComments(screen).includes("listUsers"));
+  });
+
   test("every read the route makes is narrowed to it", () => {
     // NOTHING UNDERNEATH WILL DO THIS. The service role bypasses row level
     // security, and migration 037's write barrier exempts a caller with no
     // `auth.uid()` -- which is exactly what the service role is. Scoping here
     // is the only scoping there is.
-    const scoped = [...route.matchAll(/\.eq\("area_id", (context\.areaId|areaId)\)/gu)];
-    assert.ok(scoped.length >= 4,
-      "the people list, the membership list, the person gateway and the collision check");
+    const queries = route.split('.from("').slice(1).map((chunk) => chunk.slice(0, chunk.indexOf('"')));
+    assert.deepEqual(queries, ["people", "app_members"],
+      "the two reads in loadTarget are the whole of this route's table access");
+    const scoped = [...route.matchAll(/\.eq\("area_id", areaId\)/gu)];
+    assert.equal(scoped.length, 2, "and both of them name the Area");
   });
 
   test("a person from another family is not found rather than refused", () => {
-    // Every mutation reaches its person through `loadTarget`, so scoping that
-    // one query scopes all of them -- and the answer is the same 404 an id that
-    // names nobody gets, which tells a caller nothing about another family.
+    // Both actions reach their person through `loadTarget`, so scoping that
+    // one query scopes both -- and the answer is the same 404 an id that names
+    // nobody gets, which tells a caller nothing about another family.
     const gateway = route.slice(route.indexOf("async function loadTarget("));
     assert.match(gateway, /\.eq\("id", personId\)\s*\n\s*\.eq\("area_id", areaId\)/u);
     assert.match(gateway, /This family member was not found/u);
   });
 
-  test("a membership is written with the Area named explicitly", () => {
+  test("THE ADDRESS COMES FROM THE SEAT, NEVER FROM THE REQUEST", () => {
     /*
-     * MIGRATION 037 CANNOT FILL IT IN HERE.
-     *
-     * `default_area_for_new_row` reads the caller's membership -- and this route
-     * calls with the service role, which has none. The trigger refuses the row
-     * rather than guessing, so an invite fails with 23502 unless the Area
-     * arrives with it. This is the line that makes inviting somebody work at
-     * all once 037 is applied.
+     * The old route took an `email` in the body and would create or re-address
+     * an account from it. Sending an invitation to an address the request chose
+     * is sending somebody a way into this family; sending it to the address the
+     * SEAT already names cannot be, because `grant_area_access` is where an
+     * administrator types one and where the database checks it.
      */
-    assert.match(route, /area_id: person\.area_id,/u);
-    assert.match(route, /select\("id, name, area_id, is_family_contributor"\)/u);
-  });
-
-  test("an email collision is checked within one family, because that is the rule now", () => {
-    // Migration 035 made email and Auth account unique PER AREA, deliberately:
-    // that is what lets one person belong to two families with one login.
-    // Checking across all of them would refuse a legitimate second membership.
-    const collision = route.slice(route.indexOf("async function ensureNoAccountCollision("));
-    assert.match(collision, /\.select\("person_id, user_id, email"\)\s*\n\s*\.eq\("area_id", areaId\)/u);
-  });
-});
-
-describe("every Family Access operation is scoped to one family, one query at a time", () => {
-  const route = read("src/app/api/admin/family-access/route.ts");
-
-  /**
-   * Every read or write this route makes against a family-owned table, split so
-   * one chunk ends exactly where the next begins.
-   *
-   * THE SERVICE ROLE HAS NO BOUNDARY OF ITS OWN. It bypasses row level security
-   * and migration 037's write barrier exempts it (the exemption is "no
-   * auth.uid()", which is precisely what it is). `scripts/tenancy-runtime.test.mjs`
-   * proves both against a real server. So a query here that carries no Area is
-   * a query that can reach every family there is.
-   */
-  const queries = route.split('.from("').slice(1).map((chunk) => ({
-    table: chunk.slice(0, chunk.indexOf('"')),
-    body: chunk.slice(0, 500),
-  })).filter((q) => ["people", "app_members"].includes(q.table));
-
-  test("there are no unscoped reads or writes left, anywhere in the route", () => {
-    const unscoped = queries.filter((q) =>
-      // Named the Area itself...
-      !/\.eq\("area_id", (context\.areaId|areaId)\)/u.test(q.body)
-      // ...or reached a row that `loadTarget` already resolved inside it...
-      && !/\.eq\("id", membership\.id\)/u.test(q.body)
-      // ...or is the one INSERT, which names the Area in its values.
-      && !/\.insert\(values\)/u.test(q.body));
-
-    assert.deepEqual(unscoped.map((q) => q.table), [],
-      "a query with no Area reaches every family the service role can see");
-  });
-
-  test("listing people and memberships names the Area explicitly", () => {
-    const listing = route.slice(route.indexOf("export async function GET"), route.indexOf("export async function POST"));
-    assert.match(listing, /\.from\("people"\)[\s\S]{0,200}?\.eq\("area_id", context\.areaId\)/u);
-    assert.match(listing, /\.from\("app_members"\)[\s\S]{0,200}?\.eq\("area_id", context\.areaId\)/u);
-  });
-
-  test("the target Person and the target Member are both resolved inside it", () => {
-    const gateway = route.slice(route.indexOf("async function loadTarget("));
-    assert.match(gateway, /\.from\("people"\)[\s\S]{0,240}?\.eq\("area_id", areaId\)/u);
-    assert.match(gateway, /\.from\("app_members"\)[\s\S]{0,240}?\.eq\("area_id", areaId\)/u);
-    // A person from another family comes back as "not found" -- the same answer
-    // an id that names nobody gets.
-    assert.match(gateway, /This family member was not found/u);
-  });
-
-  test("and EVERY mutation reaches its person through that one gateway", () => {
-    // Invite, set up, reset, disable, reactivate and change-email. Scoping the
-    // gateway is what scopes all six, so none of them can grow its own lookup.
-    for (const fn of ["createOrSetUpAccount", "resetAccount", "setAccountActive", "updateAccountEmail"]) {
-      const start = route.indexOf(`async function ${fn}(`);
-      assert.ok(start > 0, `${fn} must exist`);
-      const body = route.slice(start, route.indexOf("\n}", start));
-      assert.match(body, /await loadTarget\(admin, areaId, personId\)/u,
-        `${fn} must reach its person through the Area-scoped gateway`);
-    }
-  });
-
-  test("linking a Person names the Area on the membership it writes", () => {
-    // Migration 037 fills a missing Area from the CALLER's membership, and the
-    // service role has none -- so the insert is refused outright without this.
-    assert.match(route, /area_id: person\.area_id,/u);
-  });
-
-  test("the collision check is within one family, because that is the rule now", () => {
-    // Migration 035 made email and Auth account unique PER AREA, deliberately:
-    // it is what lets one person belong to two families with one login.
-    const collision = route.slice(route.indexOf("async function ensureNoAccountCollision("));
-    assert.match(collision, /\.eq\("area_id", areaId\)/u);
-  });
-
-  test("activating and deactivating act on a membership the gateway resolved", () => {
-    const body = route.slice(route.indexOf("async function setAccountActive("), route.indexOf("async function updateAccountEmail("));
-    assert.match(body, /\.eq\("id", membership\.id\)/u);
-    assert.ok(!/\.eq\("person_id", personId\)/u.test(body),
-      "it must not re-find the membership by person id, which would skip the Area");
-  });
-
-  test("nothing in this route changes a role, in either direction", () => {
-    // Roles are not part of Family Access, and must not become part of it by
-    // accident: migration 035 allows exactly one administrator per Area, so a
-    // role write here would either fail or take the family's only one away.
-    //
-    // Asserted against the WRITE PAYLOAD, not the whole file. The route READS
-    // `role === "admin"` in several places, to keep the administrator from
-    // being disabled or re-addressed, and it reports the caller's own role in
-    // its response. Neither of those writes anything.
-    const at = route.indexOf("const values = {");
-    assert.ok(at > 0, "the one write payload must be findable");
-    const values = route.slice(at, route.indexOf("};", at));
-    assert.match(values, /role: "member"/u, "the only role it ever writes is member");
-    assert.ok(!values.includes('"admin"'), "no Family Access action may grant admin");
+    const body = route.slice(route.indexOf("async function readBody("));
+    assert.match(body, /const allowedKeys = new Set\(\["action", "personId"\]\);/u);
+    assert.ok(!route.includes("normalizeEmail"), "there is no address to normalise here any more");
+    assert.match(route, /membership\.email as string/u, "the address is read off the seat");
   });
 });
 

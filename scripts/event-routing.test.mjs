@@ -49,7 +49,20 @@ test("1. GET / renders the Event Dashboard and never redirects into Christmas", 
 
   // ...and is incapable of doing anything else. These are the whole point:
   // "/" is the one route that must never resolve to a particular event.
-  assert.doesNotMatch(rootPage, /redirect\(/, "the root must not redirect anywhere");
+  /*
+   * ...and is incapable of resolving to an EVENT. This used to be "must not
+   * redirect anywhere", and Q19 gave it exactly one exception: an account
+   * migration 052 has not let into Gift Planner is sent to the screen that
+   * explains itself, because there is no dashboard to show it instead. The
+   * destination comes from `destinationFor` -- a pure function over the global
+   * account status, which knows nothing about events, Areas or memberships --
+   * so "/" still cannot resolve to a particular event, which is the rule this
+   * assertion was always for.
+   */
+  const redirects = rootPage.match(/\bredirect\([^)]*\)/gu) ?? [];
+  assert.deepEqual(redirects, ["redirect(destination)"],
+    "the only redirect from the root is the global account status");
+  assert.match(rootPage, /destinationFor\(status\.state, HOME_PATH\)/u);
   assert.doesNotMatch(rootPage, /legacyChristmasEventId/, "the root must not resolve Christmas");
   assert.doesNotMatch(rootPage, /redirectLegacyRoute/, "the root is not a legacy route");
   assert.doesNotMatch(rootPage, /\/events\//, "the root must not forward into a specific event");
@@ -464,7 +477,10 @@ test("the URL is the only source of the current event", () => {
   // Because it is derived, a changed URL cannot leave a stale event behind:
   // the loader is keyed to it, so switching events refetches rather than
   // reusing the previous event's people.
-  assert.match(familyContext, /\}, \[authRoute, eventId, router\]\);/, "the loader is keyed to the event id");
+  // `authRoute` became `bareRoute` in Q19: the global routes
+  // (/account-pending, /account-rejected, /admin/accounts) are signed IN and
+  // still carry no Area, so the provider skips its loader on those too.
+  assert.match(familyContext, /\}, \[bareRoute, eventId, router\]\);/, "the loader is keyed to the event id");
   assert.match(
     familyContext,
     /if \(!eventId\) \{ setPeople\(\[\]\); setEvent\(null\);/,

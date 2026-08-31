@@ -88,6 +88,7 @@
     "test:privileges": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/table-privileges.test.mjs",
     "test:global-approval": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/global-approval.test.mjs",
     "test:global-approval-rollback": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/global-approval-rollback.test.mjs",
+    "test:account-approval-runtime": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/account-approval-runtime.test.mjs",
     "test:all": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/dom/tsx-hook-register.mjs --test scripts/*.test.mjs scripts/qa/*.test.mjs src/lib/*.test.ts"
   },
   "dependencies": {

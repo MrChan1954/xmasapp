@@ -313,8 +313,13 @@ test("the bell never appears on the sign-in screens", () => {
   // hands auth routes their children bare, so neither can reach a login page.
   const topBar = read("src", "app", "components", "top-bar.tsx");
   assert.match(topBar, /<NotificationBell \/>/);
+  // `isAuthRoute` until Q19; `isBareRoute` since, which is the same rule
+  // widened: the global routes (/account-pending, /account-rejected,
+  // /admin/accounts) are signed IN and still carry no family, so the bell --
+  // whose inbox spans every Area the account belongs to -- has no business
+  // there either.
   const frame = read("src", "app", "components", "app-frame.tsx");
-  assert.match(frame, /if \(isAuthRoute\(pathname\)\) return <>\{children\}<\/>;/);
+  assert.match(frame, /if \(isBareRoute\(pathname\)\) return <>\{children\}<\/>;/);
   const shell = read("src", "app", "components", "app-shell.tsx");
   assert.match(shell, /<TopBar/);
 });

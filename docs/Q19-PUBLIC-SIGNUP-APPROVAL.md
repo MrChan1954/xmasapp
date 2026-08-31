@@ -1,7 +1,14 @@
 # Q19 — Public sign-up, global approval and Area onboarding
 
-The record of migration 052. **Built and rehearsed, not applied.** Production
-still ends at 051 and there is still no public sign-up.
+The record of migration 052 **and of the runtime it made possible**.
+
+**052 is applied and verified in production, and Gift Planner has one global
+administrator.** The runtime is **built, tested and held locally** — not pushed,
+not deployed. **Public sign-up is still OFF in the Auth project and Confirm
+Email is unchanged**, so nobody can reach `/sign-up` yet and no confirmation
+email has ever been sent.
+
+The launch checklist is at the end of this document.
 
 ---
 
@@ -418,60 +425,188 @@ instead. Every *subsequent* decision goes through `set_account_status` and
 
 ---
 
-## Runtime implementation plan — DESIGN ONLY
+## The runtime — BUILT, TESTED, AND NOT YET DEPLOYED
 
-Nothing below is built. It is the next session's work, and none of it may be
-deployed before 052 is applied to production.
+Part three. Everything below exists in the repository and passes every local
+gate. **It has not been pushed, public sign-up is still OFF in the Auth project,
+and Confirm Email is unchanged.** Production is still serving the old runtime.
 
-### Screens and routes
+### The one decision, in one place
 
-| Route | State | Behaviour |
+`src/lib/account-status.ts` imports nothing, which is the point: the whole of
+"where does this account belong" is a pure function a test can call.
+
+| State | Meaning | Destination |
 |---|---|---|
-| `/sign-up` | public | email + password. Confirmation email **required**. On success → `/check-email`, never straight into the app. |
-| `/pending` | signed in, `status = 'pending'` (or no row) | "Your account is waiting to be approved." No family data, no navigation into the app. |
-| `/no-access` | `rejected` / `suspended` | One sentence, no reason disclosed, no retry loop. |
-| `/areas/new` | approved, any number of Areas | already exists; now reachable from onboarding |
-| `/areas/choose` | approved, **zero** Areas | "Create a family, or wait to be invited." The approved-with-nothing state is legitimate and must not look like an error. |
-| `/admin/accounts` | `is_global_admin()` | the global queue: approve / reject / suspend / re-open, appoint and stand down administrators. **Global admin only — a family administrator gets a 404-shaped refusal, not a 403 that confirms the route exists.** |
-| `/more/family-access` | Area admin | rewritten onto `list_area_access()` / `grant_area_access()` / `revoke_area_access()` |
+| `signed_out` | `my_account_status()` returned no row | `/login` |
+| `email_unverified` | an address nobody has proved they own | `/check-email` |
+| `pending` | undecided — **including no `app_accounts` row at all** | `/account-pending` |
+| `approved` | let in | the app |
+| `rejected` | refused | `/account-rejected` |
+| `suspended` | refused | `/account-rejected` |
 
-### The guard, in one place
+Three rules are worth stating because getting any of them backwards is a defect:
 
-A single server-side resolver, called from the layout, that asks
-`my_account_status()` **once** per request and returns one of:
-`signed-out` · `unconfirmed` · `pending` · `refused` · `approved-no-areas` ·
-`approved`. Every route decides from that value. No route fetches
-`app_accounts` — it holds no privilege on it and the attempt would fail anyway,
-which is the point.
+1. **A missing row is `pending`, and an unknown status is `pending`.** The
+   routine already coalesces the first; the second is for the migration that
+   adds a sixth status one day and meets a browser that has not been reloaded.
+2. **Refusal beats an unconfirmed address.** A rejected account is refused
+   before its email is even considered — "go and confirm your address" is an
+   instruction that leads nowhere, and it would disclose that the refusal exists.
+3. **`rejected` and `suspended` share one destination AND one screen.** They are
+   distinct in the catalogue; telling them apart on screen would let somebody
+   probe which decision was taken about them.
 
-### Claim on sign-in
+Two adapters fetch the row and do no deciding —
+`account-status-{client,server}.ts` — so a server render and the browser that
+hydrates it cannot disagree. **A failed call reads as `signed_out`, never as
+approved.**
 
-`claim_app_member()` already runs on the normal sign-in path. After 052 it
-returns false for an unconfirmed address, so the onboarding flow must call it
-**after** confirmation, not before — otherwise an invited user who signs up,
-confirms, and returns will not have been attached to their seat.
+### What the runtime adds
 
-### Absorbing Q18's two deferred consolidations
+| Route | Who | What it is |
+|---|---|---|
+| `/sign-up` | public | email + password + confirm. Enumeration-resistant. |
+| `/check-email` | signed in, unconfirmed | the confirmation step, with a way out |
+| `/account-pending` | `pending` | "Waiting for an admin to approve your account." |
+| `/account-rejected` | `rejected` / `suspended` | one neutral sentence |
+| `/admin/accounts` | global admins | the queue — approve / reject / suspend / appoint |
+| `/` | approved | onboarding, **Area chooser**, or the dashboard |
 
-- **`signOut`** — one canonical implementation, used by the pending screen, the
-  refused screen and the account menu. Three screens now need it, which is what
-  makes the consolidation pay for itself.
-- **`createAdminClient`** — the Family Access route stops needing the service
-  role at all once `grant_area_access` and friends exist, so this consolidation
-  is partly a *deletion*.
+### The defect this phase exists to remove
 
-### Rules for the runtime
+Signing in, the auth callback and account setup each read `app_members`, found
+nothing, and called `signOut()`. Under public sign-up that is **wrong in both
+directions at once**:
 
-- No direct `app_accounts` fetch anywhere. Ever.
-- No project-wide Auth enumeration in Family Access — `list_area_access()` takes
-  no Area and no email parameter, so there is nothing to point elsewhere.
-- Family Access must not report whether an address has an account outside this
-  family. Existence is not disclosed.
-- A rejected/suspended account must not be able to tell which it is.
+* an **approved account with no family** was signed out of an account it is
+  perfectly entitled to — which is what everybody is for the first few minutes
+  after being approved, and would have been every single sign-up; and
+* a **rejected account with a family** was let in, because the membership row
+  was all anybody asked about.
+
+Membership is a family's decision. Approval is Gift Planner's, and it is
+upstream. `scripts/account-approval-gate.test.mjs` renders the real
+`FamilyProvider` and measures both, rather than asserting about the source.
+
+### The front door has three shapes
+
+`areaEntryFor(areas, remembered)` — pure, so the rule is testable:
+
+* **no family** → the onboarding, which is the existing `CreateAreaForm`.
+  Legitimate, not an error.
+* **families, no valid choice** → **the chooser, even for exactly one family.**
+  `resolveActiveArea` would happily pick the only one, and for every other
+  screen it should — a bookmarked event with no cookie must show the event. The
+  front door is where the app commits to whose people, money and history it is
+  about, and making that commitment silently is how a stale cookie used to walk
+  a two-family login into the wrong family without ever saying so.
+* **remembered family still theirs** → straight to the dashboard, no extra hop.
+
+`/` performs **exactly one redirect**, and it is the global status. Every Area
+outcome is rendered.
+
+### Family Access, rewritten onto the database
+
+The route was **855 lines and eight actions**; it is a couple of hundred and
+three. Reading is `list_area_access()`, granting is `grant_area_access()`,
+revoking is `revoke_area_access()` — all through the caller's own session, where
+the routine checks `is_area_admin(acting_area())` itself.
+
+**The project-wide Auth enumeration is gone entirely.** `listAllAuthUsers`
+fetched up to a hundred pages of every account on the installation to answer a
+question about one family, and it is how Family Access could tell whether an
+address had an account somewhere its administrator cannot see. It has no caller
+and no longer exists.
+
+**Three elevated actions survive, and only because the Supabase Admin API is the
+only thing that can perform them:** `send-invite`, `copy-setup-link`,
+`copy-reset-link`. Ordinary password reset is a public Auth call the browser
+makes for itself, so routing it through the service role added a privilege and
+no capability. **None of the three writes a row**, and the address they send to
+comes from the seat, never from the request.
+
+Five statuses replace four. The new one is `awaiting_global_approval` — a seat
+that HAS been claimed by an account Gift Planner has not approved. The old
+`pending` was hiding two situations with different people to chase, and in this
+one the family administrator can do nothing at all:
+
+> This family's access is ready. Their Gift Planner account is still waiting for
+> approval, which only a Gift Planner administrator can give.
+
+### Q18's two deferred consolidations, settled
+
+* **`signOut` → `src/utils/supabase/sign-out.ts`.** Q18 left two byte-identical
+  copies because verifying a change to the sign-out path means signing the real
+  family out of the live site. Q19 has **five** callers, three of which have no
+  account menu to reach. Q18 also named the hazard exactly — "if sign-out ever
+  needs to clear the Area cookie, one copy gets it and the other does not". It
+  does need to, because the chooser makes a stale `gp_area` the difference
+  between asking which family and walking into one.
+* **`createAdminClient` → `src/utils/supabase/service-role.ts`.** Q18 could not
+  merge them because each threw its own domain error; a fourth copy had appeared
+  by Q19. The split is what made them mergeable: one module owns the key and
+  throws one low-level `ServiceRoleUnavailableError`, and each boundary
+  translates it into the message its callers already expect. **No injected
+  constructor** — a seam that lets a caller supply its own client is a seam that
+  lets a caller supply one built somewhere else.
+
+`scripts/canonical-paths.test.mjs` counts both: `auth.signOut()` in one file,
+`process.env.SUPABASE_SECRET_KEY` in one file.
+
+### `/admin/accounts` carries no family, and that is walked rather than read
+
+A Gift Planner administrator with **no family** must see no gift, no budget, no
+birthday and no name. The test walks the route's **transitive** import graph —
+a direct import is easy to notice in review; the way this breaks is a helper
+three modules down. One exemption is stated rather than hidden: `client.ts` and
+`server.ts` read `AREA_COOKIE` to attach `x-area-id`, so `@/lib/areas` is
+reachable from anything that talks to the database at all. That header is not a
+family resolution and cannot become one here — `my_account_status()` and
+`list_accounts()` consult no acting Area, and `stamp_audit_area` returns early
+for `app_accounts` and **sets** `area_id` to null.
+
+The walk carries a **positive control**: the same walk from `/more/family-access`
+must find `current-member.ts`, so a resolver that silently returned null for
+everything fails rather than passing vacuously.
+
+A family administrator who finds the route gets `notFound()`, not a 403: a 403
+confirms there is a queue behind it to somebody who has just gone looking.
+
+### Gates — part three
+
+| Gate | Result |
+|---|---|
+| Full regression `test:all` | **2,023 / 2,023** (1,939 before) |
+| New: `test:account-approval-runtime` | 63 |
+| New: the rendered gate + the rendered queue | 9 + 13 |
+| Mutations | **169 / 169**, zero survivors (162 + 7 new) |
+| TypeScript / ESLint / build / Worker bundle | clean |
+| Migrations 001–052 | **untouched**; 052 still `f541b6ee…de61d` |
+| Local browser QA, desktop 1440×900 and 390×844 DPR 3 | **75 / 75** |
+
+**Four mutations had to be RETARGETED, not just added**, and that is the Q15
+rule doing its job: `1`, `Q3-1`, `Q3-2` and `Q3-8` all aimed at Family Access
+code migration 052 deleted, and `Q16-2` anchored on a lucide import this phase
+extended. Every one reported `COULD NOT APPLY — Inconclusive`, which is a
+survivor, not a pass. Each now breaks the same rule in the place it actually
+lives, and each was verified individually before the full run.
+
+### What is NOT tested, and cannot be until the launch
+
+* **No end-to-end sign-up.** Public sign-up is off and Confirm Email is
+  unchanged, so no confirmation email has ever been sent by this runtime.
+* **No live `/admin/accounts` as a real administrator.** The screen is rendered
+  against a fixture and the signed-out refusal is proved in a browser; an actual
+  approval decision has never been taken through the UI.
+* **No live Area chooser and no live Family Access.** Both are covered by unit
+  tests and source assertions, not by a browser.
+* Browser QA ran against **localhost**, because production is still serving the
+  old runtime. Nothing was submitted and no production row was touched.
 
 ---
 
-## Gates, this session
+## Gates — parts one and two (migration 052)
 
 | Gate | Result |
 |---|---|
@@ -490,26 +625,111 @@ confirms, and returns will not have been attached to their seat.
 
 | File | What it is |
 |---|---|
-| `supabase/migrations/202608100052_global_account_approval.sql` | the migration. **Not applied.** |
+| `supabase/migrations/202608100052_global_account_approval.sql` | the migration. **APPLIED 2026-08-31.** |
 | `docs/Q19-052-PRE-APPLY-AUTH-CENSUS.sql` | read-only. Run **before** applying. |
 | `docs/Q19-052-POST-APPLY-CHECKS.sql` | read-only. Run **after** applying, and again after the bootstrap. |
 | `docs/Q19-052-ROLLBACK.sql` | rehearsed. **Read its header before running it.** |
-| `scripts/global-approval.test.mjs` | the rehearsal suite |
+| `scripts/global-approval.test.mjs` | the database rehearsal suite (147) |
 | `scripts/global-approval-rollback.test.mjs` | the rollback, executed and compared to a pre-052 database |
+| `src/lib/account-status.ts` | **the whole decision, as a pure function** |
+| `src/lib/family-access.ts` | one `list_area_access()` row → one of five words |
+| `src/utils/supabase/service-role.ts` | the only module in `src/` that reads the secret key |
+| `src/utils/supabase/sign-out.ts` | the only `auth.signOut()` in the application |
+| `scripts/account-approval-runtime.test.mjs` | the runtime rules, and the import-graph walk (63) |
+| `scripts/account-approval-gate.test.mjs` | the gate, **rendered** (9) |
+| `scripts/global-accounts-screen.test.mjs` | the queue, **rendered** (13) |
 
 ---
 
-## Blockers before production apply
+## The sequence — where it stands
 
-1. The user reviews the census above and **chooses the bootstrap uuid**.
-2. Migration 052 is applied manually in the SQL Editor.
-3. `docs/Q19-052-POST-APPLY-CHECKS.sql` is run and read.
-4. The bootstrap statement is run with the chosen uuid, and recorded above.
-5. Post-apply checks are run **again** — check 504 flips from PASS to REVIEW,
-   which is correct once an administrator exists.
-6. Only then may the runtime be built, and only then may Supabase Auth sign-up
-   and `/sign-up` be enabled.
+Steps 1–6 are **done**. Step 7 is the next session.
 
-**The order matters.** Runtime code that depends on 052 must not reach
-auto-deploy before the database is ready, and `/sign-up` must not be reachable
-before there is an administrator to approve anybody.
+1. ~~The user reviews the census and chooses the bootstrap uuid.~~
+2. ~~Migration 052 applied manually in the SQL Editor.~~ 2026-08-31 01:06:23 UTC.
+3. ~~`docs/Q19-052-POST-APPLY-CHECKS.sql` run and read.~~ 37 PASS / 0 FAIL.
+4. ~~The bootstrap statement run with the chosen uuid, and recorded above.~~
+5. ~~Post-apply checks run again.~~ Check 504 flipped to REVIEW, correctly.
+6. ~~Build the runtime and review it.~~ Built, tested, **committed locally and
+   not pushed**.
+7. **Configure Supabase Auth, push, let Cloudflare deploy, and do live QA.**
+
+**The order matters, and step 7 is where it still bites.** Runtime code that
+depends on 052 must not reach auto-deploy before the database is ready — it is —
+and **`/sign-up` must not be reachable before there is an administrator to
+approve anybody** — there is one.
+
+---
+
+## The launch checklist — NOTHING HERE HAS BEEN CHANGED YET
+
+Every item below is a **manual change in the Supabase dashboard**, and none of
+them has been made. The model has changed no Auth setting and has read none of
+them this session; each is written as something to verify rather than assume.
+
+### Auth settings to set
+
+| Setting | Where | Required value |
+|---|---|---|
+| **Confirm email** | Authentication → Sign In / Providers → Email | **ON** |
+| **Allow new users to sign up** | Authentication → Sign In / Providers | **ON** |
+| **Site URL** | Authentication → URL Configuration | `https://xmas-family.uk` |
+| **Minimum password length** | Authentication → Sign In / Providers → Email | ≤ 8, to match the form |
+
+**Confirm Email ON is not optional.** With it off, `signUp` returns a session
+immediately and `email_confirmed_at` is set without anybody proving they own the
+address — and `claim_app_member()` believes a confirmed address. Signing up as
+somebody else's address would then be enough to walk into their family. The
+runtime survives the misconfiguration (it routes the new session to
+`/account-pending`), but the invitation-claiming rule does not.
+
+### Redirect URLs to allow
+
+Supabase only honours `redirect_to` when it matches an allowed Redirect URL;
+otherwise it silently falls back to the Site URL. All three flows come back
+through the same callback:
+
+```
+https://xmas-family.uk/auth/callback
+https://xmas-family.uk/auth/callback?next=/account-setup
+https://xmas-family.uk/auth/callback?next=/reset-password
+```
+
+Add `https://xmas-family.uk/**` if the project uses wildcards. **Do not remove
+whatever is there today** — the invitation and recovery links already in flight
+depend on it.
+
+### Delivery to test, in this order
+
+1. **Confirmation email** — sign up with a real address you control and confirm
+   it. This is the flow that has never run.
+2. **Forgot / reset password** — re-test, because the redirect list changed.
+3. **Family Access invitation and both copy-link actions** — they use the
+   Supabase Admin API, and the invite redirect is the same one.
+
+### Limits and quota to review
+
+* **Auth rate limits** (Authentication → Rate Limits): sign-ups per hour, and
+  emails per hour. The default email allowance on the built-in SMTP is small and
+  is shared by confirmation, recovery and invitation.
+* **SMTP**: if the project still uses Supabase's built-in sender, the quota is
+  the binding constraint on how many people can sign up in a day. A custom SMTP
+  provider is the fix if it bites.
+
+**No CAPTCHA.** There is no evidence it is needed: this is a private planner for
+one family, the door it opens leads to a screen saying "wait for approval", and
+every account still has to be approved by a person. Add one if the queue starts
+filling with strangers, not before.
+
+### Then, and only then
+
+1. `git push` — the three held commits plus the runtime commit. Cloudflare
+   Workers Builds deploys `main` automatically; **do not also deploy by hand.**
+2. Check the deployment succeeded before touching the Auth settings, so a build
+   failure is never diagnosed at the same time as an Auth change.
+3. Live browser QA on `xmas-family.uk`: the sign-in screen offers **Create
+   account**; a real sign-up; the confirmation email; `/account-pending`;
+   approval through `/admin/accounts` by the bootstrapped administrator; then
+   the Area chooser and Family Access, **in a QA Area only**.
+4. Take the protected fingerprint before and after. `Our family` and Christmas
+   2026 must not move.

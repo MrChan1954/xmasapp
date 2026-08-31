@@ -2,7 +2,10 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { HOME_PATH, destinationFor } from "@/lib/account-status.ts";
 import { INPUT_LIMITS, validateRequiredText } from "@/lib/input-validation";
+import { loadAccountStatusClient } from "@/utils/supabase/account-status-client";
 import { createClient } from "@/utils/supabase/client";
 import { AuthHeading, AuthScreen } from "../components/auth-card";
 import { Button, ButtonLink, Field, Input, Notice } from "../components/ui";
@@ -110,22 +113,53 @@ export default function AccountSetupPage() {
       // their email. /auth/callback does this on the PKCE branch, but invite
       // links use Supabase's implicit grant and land here instead — without the
       // claim, user_id stays NULL, the RLS policy on app_members
-      // (user_id = auth.uid()) hides the row, and the check below would report a
-      // perfectly valid invitee as unapproved.
+      // (user_id = auth.uid()) hides the row, and the person's own name could
+      // not be read to greet them with.
       //
-      // A `false` return just means the row was already claimed; only a genuine
-      // error is worth stopping for, and the membership check is the real gate.
+      // ONE CANONICAL CLAIM AND NO SECOND IMPLEMENTATION. It is the same
+      // `claim_app_member()` the callback and the sign-in form call, and it is
+      // the only routine anywhere that may write `app_members.user_id`.
+      //
+      // A `false` return just means there was nothing waiting on this address,
+      // which is now perfectly ordinary: somebody who signed up on their own
+      // account has no invitation to claim and is still entitled to set a
+      // password. An error is not fatal either, for the same reason.
       const claim = await supabase.rpc("claim_app_member");
       if (claim.error) {
-        await supabase.auth.signOut();
-        setMessage("This account is not approved for Gift Planner. Ask your family’s admin for help.");
-        setStage("error");
+        console.error(`[account-setup] invitation claim failed | code=${claim.error.code}`);
+      }
+
+      /*
+       * WHAT USED TO BE HERE, AND WHY IT HAD TO GO.
+       *
+       * This screen read `app_members` and, finding no active row, called
+       * `signOut()` and said "This account is not approved for Gift Planner."
+       * Two separate faults, and public sign-up makes both of them everyday:
+       *
+       *   1. IT WAS THE WRONG QUESTION. A membership is a FAMILY's decision;
+       *      approval is GIFT PLANNER's. An approved account with no family is
+       *      legitimate -- it is what everybody is for the first few minutes --
+       *      and being thrown out of a password form for it is the lockout this
+       *      phase exists to remove.
+       *   2. IT MISSED THE REAL ONE. A rejected or suspended account holding an
+       *      active membership sailed straight through, because nothing here
+       *      ever asked about the global status.
+       *
+       * `my_account_status()` asks it, and `destinationFor` answers with the
+       * screen that explains itself. Only an approved account stays to choose a
+       * password.
+       */
+      const status = await loadAccountStatusClient();
+      const destination = destinationFor(status.state, "/account-setup");
+      if (destination && destination !== HOME_PATH) {
+        router.replace(destination);
         return;
       }
 
-      // Setting up an account is Area-blind on purpose: it asks only whether
-      // this login has been linked to a person anywhere yet. `.limit(1)` keeps
-      // a second membership from erroring the check.
+      // WHO THIS IS, for the greeting and nothing else. Area-blind on purpose:
+      // it asks only whether this login has been linked to a person anywhere
+      // yet, and a person with no family simply has no name to show.
+      // `.limit(1)` keeps a second membership from erroring the read.
       const membership = await supabase
         .from("app_members")
         .select("person_id, active")
@@ -134,18 +168,13 @@ export default function AccountSetupPage() {
         .limit(1)
         .maybeSingle();
 
-      if (membership.error || !membership.data?.active || !membership.data.person_id) {
-        await supabase.auth.signOut();
-        setMessage("This account is not approved for Gift Planner. Ask your family’s admin for help.");
-        setStage("error");
-        return;
-      }
-
-      const person = await supabase
-        .from("people")
-        .select("name")
-        .eq("id", membership.data.person_id)
-        .maybeSingle();
+      const person = membership.data?.person_id
+        ? await supabase
+          .from("people")
+          .select("name")
+          .eq("id", membership.data.person_id)
+          .maybeSingle()
+        : { data: null };
 
       const candidateName = person.data?.name ?? userResult.data.user.user_metadata?.name;
       const safeName = validateRequiredText(candidateName, { field: "a name", maxLength: INPUT_LIMITS.name });
@@ -157,7 +186,11 @@ export default function AccountSetupPage() {
     // No cancellation flag: the `started` ref already guarantees this runs once,
     // and a flag set by the development re-invoke would suppress the real run's
     // results, leaving the page stuck on "checking".
-  }, [link]);
+    //
+    // `router` joins the list because the status routing above navigates with
+    // it. Harmless: the `started` ref already guarantees the body runs once, so
+    // a re-entry from a changed identity returns immediately.
+  }, [link, router]);
 
   const savePassword = async (event: FormEvent) => {
     event.preventDefault();

@@ -1,12 +1,12 @@
 import "server-only";
 
-import { createClient as createAdminSupabaseClient } from "@supabase/supabase-js";
 import type { PaymentLogReceipt, PaymentLogRecord, PaymentLogResponse } from "@/lib/payment-log";
 import { validateUuid } from "@/lib/input-validation";
 import { paymentStatusOf, type PaymentStatus } from "@/lib/payment-confirmation";
 import { londonToday } from "@/utils/supabase/birthdays-server";
 import { getCurrentMember } from "@/utils/supabase/current-member";
 import { createClient as createSessionClient } from "@/utils/supabase/server";
+import { ServiceRoleUnavailableError, createServiceRoleClient } from "@/utils/supabase/service-role";
 
 export class PaymentLogServerError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -201,12 +201,26 @@ export async function loadPaymentLog(eventId: string): Promise<PaymentLogRespons
 }
 
 async function loadAppMembers(ids: string[]) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
-  if (!supabaseUrl || !supabaseSecretKey) throw new PaymentLogServerError(503, "Payment Log name resolution is not configured on the server.");
-  const admin = createAdminSupabaseClient(supabaseUrl, supabaseSecretKey, {
-    auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false },
-  });
+  /*
+   * The one service-role client, wearing this domain's error. `service-role.ts`
+   * owns the key and throws one low-level `ServiceRoleUnavailableError`; the
+   * 503 a caller sees is unchanged.
+   */
+  let admin;
+  try {
+    admin = createServiceRoleClient();
+  } catch (error) {
+    if (error instanceof ServiceRoleUnavailableError) {
+      throw new PaymentLogServerError(503, "Payment Log name resolution is not configured on the server.");
+    }
+    throw error;
+  }
+  /*
+   * SCOPED BY THE CALLER, NOT BY THE CLIENT. `ids` are the recorder ids already
+   * read from THIS event's payment records through the caller's own session, so
+   * the service role is only ever asked to name memberships the caller could
+   * already see the payments of.
+   */
   const result = await admin.from("app_members").select("id,person_id").in("id", ids);
   if (result.error) throw new PaymentLogServerError(503, "Payment recorder names could not be resolved.");
   return result.data;

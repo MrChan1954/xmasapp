@@ -9,10 +9,13 @@ import {
   validateRecipientAllocationSnapshot,
   type RecipientAllocation,
 } from "@/lib/recipient-allocations";
+// @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
+import { SIGNED_OUT, appEntryDestinationFor } from "@/lib/account-status.ts";
 import { ensureAreaChosen } from "@/utils/supabase/area-choice-client";
+import { loadAccountStatusClient } from "@/utils/supabase/account-status-client";
 import { getCurrentMemberClient } from "@/utils/supabase/current-member-client";
 import { createClient } from "@/utils/supabase/client";
-import { isAuthRoute } from "./components/nav-items";
+import { isBareRoute } from "./components/nav-items";
 import { eventRealtimeSources, useRealtimeRefresh } from "./components/use-realtime-refresh";
 
 export type Person = { id: string; personId: string; name: string; budgetPennies: number; active: boolean; spentPennies: number | null; giftCount: number | null; ideaCount: number | null };
@@ -59,7 +62,14 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
    * a prop or a query string.
    */
   const [areaId, setAreaId] = useState<string | null>(null);
-  const authRoute = isAuthRoute(pathname);
+  /**
+   * A route with no family behind it -- signed-out or global. Q19 widened this
+   * from `isAuthRoute`: `/account-pending`, `/account-rejected` and
+   * `/admin/accounts` are signed IN and still have no Area, and two of the
+   * three are routinely reached by somebody who belongs to no family at all.
+   * Loading a membership for them would be a query that can only fail.
+   */
+  const bareRoute = isBareRoute(pathname);
 
   /**
    * WHICH LOAD IS ALLOWED TO WRITE.
@@ -74,21 +84,62 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
    */
   const latestLoad = useRef(0);
 
+  /**
+   * WHERE THE READER IS *NOW*, for the one redirect that needs to know.
+   *
+   * A ref rather than a dependency, and the distinction is worth the four
+   * lines. `load` re-runs whenever anything in its dependency list changes, so
+   * putting `pathname` there would fire `getUser`, the status RPC and the
+   * membership read on EVERY navigation between ordinary screens -- three
+   * requests a tap, none of which can change the answer, because a route that
+   * carries a family always asks the same question. The one branch that does
+   * care (an approved account with no family, sent to the onboarding at `/`)
+   * wants the path as it is when the await finishes, not as it was when the
+   * request started, which is exactly what a ref gives it.
+   */
+  const herePath = useRef(pathname);
+  // Written in an effect rather than during render: a ref assigned while
+  // rendering is a value React may have to throw away, and the linter is right
+  // to refuse it. An effect is early enough — `load` is itself started from a
+  // `setTimeout(0)` in the effect below this one.
+  useEffect(() => { herePath.current = pathname; }, [pathname]);
+
   // `quiet` skips the loading flag so a background refresh (another device
   // changed something) updates the data in place instead of blanking the page
   // behind a skeleton. Matches the same option on Family Access.
   const load = useCallback(async (quiet = false) => {
     const ticket = ++latestLoad.current;
     const superseded = () => ticket !== latestLoad.current;
-    if (authRoute) { setLoading(false); return; }
+    if (bareRoute) { setLoading(false); return; }
     const db = createClient(); if (!quiet) setLoading(true);
     const auth = await db.auth.getUser();
-    // The signed-out and revoked-member redirects used to live in `proxy.ts`.
-    // They are here now because Cloudflare Workers cannot run Next 16's
-    // Node-runtime proxy. This is a navigation convenience only — it was never
-    // the security boundary. Every row stays behind RLS and every admin route
-    // re-authorizes independently (see the comment in the family-access route).
-    if (!auth.data.user) { setRole(null); setLoading(false); router.replace("/login"); return; }
+
+    /*
+     * THE GLOBAL GATE, ASKED BEFORE ANY FAMILY READ.
+     *
+     * The signed-out and revoked-member redirects used to live in `proxy.ts`.
+     * They are here now because Cloudflare Workers cannot run Next 16's
+     * Node-runtime proxy. This is a navigation convenience only — it was never
+     * the security boundary. Every row stays behind RLS, migration 052 put
+     * `is_globally_approved()` inside every membership predicate the policies
+     * are built from, and every admin route re-authorizes independently.
+     *
+     * ONE RPC, `my_account_status()`, AND NEVER THE TABLE. `app_accounts` holds
+     * no privilege for `authenticated` and has zero policies, so a browser
+     * cannot read it however the query is written.
+     *
+     * The answer decides where this account belongs — the sign-in form, the
+     * confirmation screen, the pending screen or the refused one — and only
+     * `approved` carries on into the family reads below.
+     */
+    const status = auth.data.user ? await loadAccountStatusClient() : SIGNED_OUT;
+    if (superseded()) return;
+    const destination = appEntryDestinationFor(status.state);
+    if (destination) {
+      setRole(null); setAreaId(null); setPeople([]); setEvent(null); setLoading(false);
+      router.replace(destination);
+      return;
+    }
     // The role in the family on screen. A `maybeSingle()` here would error for a
     // login in two families and strip the admin controls from somebody who is
     // an administrator -- in both.
@@ -118,10 +169,27 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
       const outcome = await ensureAreaChosen();
       if (outcome === "chosen") { window.location.reload(); return; }
 
-      await db.auth.signOut();
-      setRole(null);
-      setLoading(false);
-      router.replace("/login?error=access_denied");
+      /*
+       * AND THE THIRD ANSWER, WHICH Q19 ADDED AND WHICH USED TO BE A SIGN-OUT.
+       *
+       *   You belong to no family (yet).   -> onboarding, still signed in.
+       *
+       * This branch used to end `await db.auth.signOut()` and
+       * `/login?error=access_denied`, on the reasoning that a login with no
+       * membership had had its access revoked. Public sign-up makes that
+       * reasoning false in the commonest case there is: somebody approved five
+       * minutes ago has no family and has done nothing wrong, and signing them
+       * out would be the front door locking behind them.
+       *
+       * IT IS ALSO THE RIGHT ANSWER FOR A REVOKED MEMBER NOW. Losing a family
+       * is not losing an account -- their Gift Planner approval is intact, they
+       * may start a family of their own or be invited into another, and `/`
+       * offers exactly that. Access is refused by the database either way; the
+       * status gate above is what turns a genuinely refused ACCOUNT away, and
+       * it has already run.
+       */
+      setRole(null); setAreaId(null); setPeople([]); setEvent(null); setError(null); setLoading(false);
+      if (herePath.current !== "/") router.replace("/");
       return;
     }
     setRole(membership.data.role === "admin" ? "admin" : "member");
@@ -218,7 +286,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
       purchaseRows.error ? "Purchase totals are unavailable until the Purchases migration is applied." : null,
     ].filter(Boolean);
     setError(metricErrors.length ? metricErrors.join(" ") : null); setLoading(false);
-  }, [authRoute, eventId, router]);
+  }, [bareRoute, eventId, router]);
 
   useEffect(() => { const handle = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(handle); }, [load]);
 
@@ -228,7 +296,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
   useRealtimeRefresh(
     eventRealtimeSources(["people", "christmas_recipients", "gift_ideas", "purchases"], eventId),
     () => load(true),
-    { enabled: !authRoute },
+    { enabled: !bareRoute },
   );
 
   const mutate = async (operation: PromiseLike<{ error: unknown | null }>, message: string) => { const result = await operation; if (result.error) { setError(message); throw new Error(message); } await load(); };

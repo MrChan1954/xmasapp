@@ -1096,6 +1096,14 @@ describe("switching family changes who you are, and carries nothing over", () =>
 const source = (relative) =>
   readFileSync(new URL("../" + relative, import.meta.url), "utf8").replace(/\r\n/gu, "\n");
 
+/**
+ * The same source with its commentary removed, so prose ABOUT a rule is never
+ * mistaken for a breach of it. A file that explains why it no longer signs
+ * anybody out has to be allowed to say the words.
+ */
+const withoutComments = (text) =>
+  text.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/^\s*\/\/.*$/gmu, "");
+
 describe("leaving one family leaves the others alone -- in the app, not just the database", () => {
   const route = source("src/app/api/areas/membership/route.ts");
   const leave = route.slice(route.indexOf('if (action === "leave")'), route.indexOf("set_area_archived"));
@@ -1260,10 +1268,35 @@ describe("signing in cannot sign you out again", () => {
       provider.indexOf("setRole(membership.data.role"));
     assert.match(branch, /ensureAreaChosen\(\)/u,
       "the question that was never asked");
-    const asked = branch.indexOf("ensureAreaChosen()");
-    const signedOut = branch.indexOf("db.auth.signOut()");
-    assert.ok(asked > 0 && signedOut > asked,
-      "asking must come BEFORE signing out, or the fix does nothing");
+  });
+
+  test("AND IT NO LONGER SIGNS ANYBODY OUT FOR THE ANSWER", () => {
+    /*
+     * Q2 made this branch ask which family before concluding there was no
+     * access, and then sign out if the answer was "none". Q19 removes the
+     * sign-out entirely, because migration 052 made "no family" and "no
+     * account" two different facts:
+     *
+     *   * An APPROVED account with no family is legitimate -- it is what
+     *     everybody is for the first few minutes -- and signing it out is the
+     *     front door locking behind somebody who has just been let in.
+     *   * A member whose family access was revoked still has an intact Gift
+     *     Planner account. They may start a family of their own or be invited
+     *     into another, and `/` offers exactly that.
+     *   * A genuinely refused ACCOUNT is turned away by the status gate above,
+     *     which has already run by the time this branch is reached.
+     *
+     * So the whole of the provider must be free of it. Asserted against the
+     * code rather than the file, because the comment above the branch has to
+     * keep explaining what used to be here.
+     */
+    assert.ok(!withoutComments(provider).includes("auth.signOut()"),
+      "an approved account with no family must stay signed in");
+    // And the status gate is what decides who leaves, before any family read.
+    const gate = provider.indexOf("appEntryDestinationFor(status.state)");
+    const membershipRead = provider.indexOf("await getCurrentMemberClient()");
+    assert.ok(gate > 0 && membershipRead > gate,
+      "the global status is asked BEFORE the first family read, not after");
   });
 
   test("and reloads rather than re-rendering once one is chosen", () => {
@@ -1275,8 +1308,26 @@ describe("signing in cannot sign you out again", () => {
   test("signing in settles the family, so the first screen is already right", () => {
     assert.match(login, /await ensureAreaChosen\(\);/u);
     const chosen = login.indexOf("await ensureAreaChosen();");
-    const home = login.indexOf('router.push("/")');
+    // `HOME_PATH` rather than a literal since Q19: the sign-in form now routes
+    // by global status, and the one place "/" is written down is the module
+    // that decides every other destination too.
+    const home = login.indexOf("router.push(HOME_PATH)");
     assert.ok(chosen > 0 && home > chosen, "before the app is opened, not after");
+  });
+
+  test("but the family is settled only for an account that is allowed one", () => {
+    /*
+     * THE ORDER Q19 ADDED, and it matters: the global status is read BEFORE the
+     * Area is chosen. Choosing first would write a `gp_area` cookie for an
+     * account that is about to be sent to `/account-pending` -- harmless, since
+     * `claim_active_area` ignores a cookie naming a family the caller is not
+     * really in, but it would leave a stale family selected on a shared device
+     * for whoever signs in next.
+     */
+    const status = login.indexOf("const status = await loadAccountStatusClient();");
+    const chosen = login.indexOf("await ensureAreaChosen();");
+    assert.ok(status > 0 && chosen > status, "status first, family second");
+    assert.match(login, /if \(destination && destination !== HOME_PATH\) \{ router\.replace\(destination\); return; \}/u);
   });
 
   test("THE CHOICE IS THE SWITCHER'S OWN RULE, not a second one invented here", () => {
