@@ -1,6 +1,7 @@
 # Current State
 
-**Last updated:** 2026-08-31, after Q19's migration-052 build and rehearsal.
+**Last updated:** 2026-08-31, after migration 052 was applied to production and
+the first global administrator was bootstrapped.
 
 The handoff between phases. Current facts only — history lives in git.
 
@@ -9,19 +10,19 @@ The handoff between phases. Current facts only — history lives in git.
 | Fact | Value |
 | ---- | ----- |
 | Live site | `https://xmas-family.uk/` |
-| Last completed phase | **Q19 — migration 052 built and rehearsed. NOT APPLIED.** |
-| Q19 verdict | `Q19 BUILD PASS — 052 READY FOR PRODUCTION APPROVAL` |
-| Next phase | **Q19 part two — apply 052, bootstrap, then build the runtime** |
+| Last completed phase | **Q19 part two — 052 APPLIED and verified; first global administrator bootstrapped.** |
+| Q19 verdict | `BOOTSTRAP PASS — RUNTIME IMPLEMENTATION UNBLOCKED` |
+| Next phase | **Q19 part three — build the sign-up / approval / Area-onboarding runtime** |
 | Branch | `main` |
-| Local HEAD | Q18's closeout plus Q19's build, **held back deliberately** — none of it may deploy before 052 is applied |
+| Local HEAD | Q18's closeout plus Q19's build and this closeout, **still held back** — nothing deploys until the runtime is built and reviewed |
 | origin/main | `d36d47d` — Q18's consolidation, deployed. It carried Q17's held docs commit `e38e8a2`. |
 | Serving Worker | **not read this phase** — `wrangler deployments list` was blocked by the sandbox. The push deployed and the live site was verified end-to-end at both viewports; the version id is unrecorded. |
 | Product name | **Gift Planner** |
-| Migrations applied | **001–051**, immutable. 051 applied manually 2026-08-30. |
-| Migration **052** | **written, rehearsed, NOT APPLIED.** Production still ends at 051. |
-| Public sign-up | **still off.** No `/sign-up`, no global administrator, no runtime. |
+| Migrations applied | **001–052**, immutable. 052 applied manually 2026-08-31 01:06:23 UTC. |
+| Migration **052** | **APPLIED and verified.** 37 PASS / 0 FAIL across its 40 post-apply checks. |
+| Public sign-up | **still off**, and Confirm Email is unchanged. No `/sign-up` and no runtime — but Gift Planner now has **one** global administrator. |
 
-## Q19 — migration 052 is built and rehearsed, and waiting on you
+## Q19 — migration 052 is applied, and Gift Planner has an administrator
 
 `docs/Q19-PUBLIC-SIGNUP-APPROVAL.md` is the record, and it carries the census
 rows, the bootstrap statement and the runtime plan. Read it before doing
@@ -31,8 +32,14 @@ anything to production.
 allowed in. A new table, `public.app_accounts`, sits **upstream of every Area** —
 `auth.users` → `app_accounts` → `app_members` → role.
 
-**Nothing is applied.** The database is untouched; the only production activity
-this phase was two read-only fingerprints and one read-only census.
+**052 is applied.** Production ran it at 2026-08-31 01:06:23 UTC and the first
+global administrator was appointed at 01:18:25 UTC. Both were run by hand in the
+Supabase SQL Editor; everything the model did was a GET. The full record —
+timestamps, uuid, verification outcome — is in
+`docs/Q19-PUBLIC-SIGNUP-APPROVAL.md`.
+
+**Public sign-up is still off**, and Supabase's Confirm Email setting is
+unchanged. 052 built the door; nothing has opened it.
 
 ### What 052 is
 
@@ -79,15 +86,18 @@ left ungated**, with reasons, and a named test locks that choice in.
 is one of the five** and is approved by the backfill like any other — correct,
 and worth knowing rather than discovering.
 
-The five candidate uuids are in `docs/Q19-PUBLIC-SIGNUP-APPROVAL.md`. **Choosing
-the bootstrap administrator is yours, not the model's.**
+The five candidates were in `docs/Q19-PUBLIC-SIGNUP-APPROVAL.md`, and the user
+chose. **Gift Planner now has exactly one global administrator.** A second is
+appointed with `grant_global_admin(uuid)` by a caller who already is one — the
+bootstrap statement refuses to run again.
 
-### Before production apply
+### Where that leaves the sequence
 
-1. Review the census. 2. Apply 052 by hand. 3. Run
-`docs/Q19-052-POST-APPLY-CHECKS.sql`. 4. Run the bootstrap statement with your
-chosen uuid and record it. 5. Run the checks again. 6. Only then build the
-runtime, and only then enable Supabase Auth sign-up and `/sign-up`.
+Steps 1–5 are **done**: census reviewed, 052 applied, post-apply checks run,
+bootstrap run and recorded, checks re-run after it. What remains is step 6 —
+**build the runtime, and only after it is built and reviewed enable Supabase
+Auth sign-up and `/sign-up`.** In that order. Confirm Email must not change
+before the runtime launch stage.
 
 ## Q18 — one implementation per concept
 
@@ -725,11 +735,11 @@ In a **fresh** Claude session (Opus 5, High):
 > `docs/SECURITY-AND-QA.md` if this phase touches security, data or live QA.
 > Then execute this phase. \<phase prompt\>
 
-**Do NOT push Q19's work until 052 is applied.** It is not docs-only: it adds a
-migration and rewrites test harness expectations. Pushing `main` auto-deploys,
-and while the deployed code does not yet depend on 052, holding the whole
-change together keeps the database and the repository describing the same thing.
-Q18's closeout commit rides along with it.
+**Q19's work is still held back, and 052 being applied is no longer the reason.**
+The database is now ahead of the repository, which is the safe direction. What
+holds the push is that the sign-up runtime is unbuilt: pushing `main`
+auto-deploys, and the right moment to deploy is once the runtime exists and has
+been reviewed, not before. Q18's closeout commit rides along with it.
 
 **Q17's two open questions are both answered and closed** — pnpm is the package
 manager, and the `*-taylor*` scripts were unwanted and are deleted. Q18 leaves

@@ -298,7 +298,17 @@ numbers are from 2026-08-31 and a new sign-up would change them.
 
 ---
 
-## The bootstrap — NOT RUN
+## The bootstrap — RUN AND VERIFIED, 2026-08-31
+
+> **Applied.** Migration 052 was applied to production by hand on 2026-08-31 at
+> 01:06:23 UTC, and the first global administrator was appointed at 01:18:25
+> UTC. The record is at the end of this section; the statement below is kept
+> verbatim because it is what was run, and because `revoke_global_admin`
+> refusing to remove the last administrator means this is the only path back if
+> the role is ever emptied.
+>
+> **It will not run a second time.** Guard 1 raises as soon as any
+> administrator exists. Do not re-run it; use `grant_global_admin(uuid)`.
 
 Migration 052 finishes with **zero** global administrators, by design, and its
 own end-state block refuses to complete if that is not true. The first one
@@ -365,10 +375,46 @@ recorded in the deployment documentation instead** — write down the date, the
 uuid, and who ran it, here:
 
 ```
-Bootstrap performed:  <date>
-Target uuid:          <uuid>
-Run by:               <who>
+Migration 052 applied:  2026-08-31 01:06:23 UTC  (Supabase SQL Editor, by hand)
+Bootstrap performed:    2026-08-31 01:18:25 UTC  (Supabase SQL Editor, by hand)
+Target uuid:            285861da-27cd-44fa-899c-8f4e6e46ca36
+Target email:           tstward10@hotmail.co.uk   (human-readable note only --
+                        the statement takes the uuid, never the address, and
+                        neither value appears in runtime code or a migration)
+Run by:                 the project owner
+SQL Editor result:      Success. No rows returned
 ```
+
+**Verification outcome — PASS.** Read-only, through the two approved production
+read paths (a post-apply schema dump for the catalogue, PostgREST and the Auth
+Admin API for rows). Every request a GET.
+
+- **052 post-apply:** all 40 checks of `docs/Q19-052-POST-APPLY-CHECKS.sql`
+  executed — 37 PASS, 0 FAIL, 0 REVIEW, 3 INFO. `app_accounts` exists with RLS
+  on, zero policies and no privilege of any kind for `anon` or `authenticated`;
+  the ten new routines are all `SECURITY DEFINER` with `search_path` pinned,
+  executable by `authenticated` and by **no** `anon`; the nine redefinitions
+  carry the gate; 049's acting-Area logic survived the redefinition of
+  `stamp_audit_area`; 050's audit policy is untouched and the action vocabulary
+  was widened, not replaced; every 051 invariant still holds.
+- **Backfill:** 5 accounts, all `approved`, none with an unconfirmed address.
+- **Bootstrap:** exactly one row updated. Exactly one global administrator, and
+  it is the uuid above — approved, email confirmed 2026-08-10. `decided_at`
+  still shows the 052 backfill; only `updated_at` moved.
+- **Nothing else moved.** The target's memberships stayed 3 active of 4;
+  `app_members` stayed at 10 rows with no timestamp touched; the protected
+  fingerprint stayed at notifications 37, people 19, events 15, appMembers 4,
+  recipients 35, Christmas 2026 active with 19 recipients; cross-Area total 0.
+- **Census unchanged:** 5 auth users, A 5, B 0, C 0, 0 unclaimed invitations.
+
+**The bootstrap intentionally produced no application audit actor.** `audit_log`
+holds **zero** rows with `table_name = 'app_accounts'`, and no row of any kind
+was written during the window — the newest entry is still 2026-08-30 13:33:20
+UTC, out of 464. That is the designed behaviour: there was no acting global
+administrator to name, and inventing one would have put a false entry in the
+table whose only job is recording who decided what. This document is the record
+instead. Every *subsequent* decision goes through `set_account_status` and
+`grant_global_admin`, which do write an audit row, with a real actor.
 
 ---
 
