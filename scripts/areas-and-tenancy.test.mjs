@@ -86,9 +86,12 @@ describe("an account with no family is offered one", () => {
     // The setup screen is the absence of a family, not a permission check: it
     // must be guarded by the entry classification and nothing else.
     const source = read("src/app/page.tsx");
-    const line = source.split(String.fromCharCode(10)).find((l) => l.includes("<CreateAreaForm first />"));
-    assert.ok(line, "the setup screen should be rendered from the root");
-    assert.ok(line.trim().startsWith('if (entry === "onboarding")'));
+    const branch = source.slice(source.indexOf('if (entry === "onboarding")'));
+    const create = branch.indexOf("<CreateAreaForm first />");
+    assert.ok(create > -1, "the setup screen should be rendered from the onboarding branch");
+    // Nothing between the branch and the form may end it, so the form is
+    // genuinely inside the no-family case rather than merely after it.
+    assert.ok(!branch.slice(0, create).includes('if (entry === "chooser")'));
   });
 
   test("and the root still redirects for NO family reason whatsoever", () => {
@@ -109,8 +112,12 @@ describe("an account with no family is offered one", () => {
     assert.deepEqual(calls, ["redirect(destination)"],
       "the only redirect from the root is the global account status");
     assert.match(source, /const destination = destinationFor\(status\.state, HOME_PATH\)/u);
-    assert.ok(source.includes('if (entry === "onboarding") return <CreateAreaForm first />;'));
-    assert.ok(source.includes('if (entry === "chooser") return <AreaChooser areas={areas} />;'));
+    // All three Area outcomes still RENDER. 053 added an invitation above two
+    // of them, which changes what they render and not whether they redirect.
+    assert.match(source, /if \(entry === "onboarding"\) \{/u);
+    assert.match(source, /<CreateAreaForm first \/>/u);
+    assert.ok(source.includes('if (entry === "chooser") return <ChooserWithInvitations areas={areas} />;'));
+    assert.match(source, /<AreaChooser areas=\{areas\} \/>/u);
   });
 
   test("and an approved account is never signed out for having no family", () => {

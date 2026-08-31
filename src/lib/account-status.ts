@@ -151,6 +151,15 @@ export const GLOBAL_ROUTES: readonly string[] = [
   "/account-pending",
   "/account-rejected",
   "/admin/accounts",
+  /*
+   * MIGRATION 053. An invitation must be readable by somebody who is NOT IN
+   * THE FAMILY YET, which is what puts it here rather than anywhere inside
+   * one. `/invitations` resolves no membership, no acting Area and no
+   * `gp_area`; `list_my_family_invitations()` takes no parameter and resolves
+   * the caller from `auth.uid()`, so there is nothing on this path for a stale
+   * cookie to point at.
+   */
+  "/invitations",
 ];
 
 function matches(routes: readonly string[], pathname: string): boolean {
@@ -203,6 +212,26 @@ const UNVERIFIED_ALLOWED: readonly string[] = [
 ];
 
 /**
+ * WHERE A GLOBALLY PENDING ACCOUNT MAY BE, WHICH USED TO BE ONE SCREEN.
+ *
+ * `/invitations` joins it because answering an invitation is the one useful
+ * thing such an account can do while it waits, and migration 053 permits
+ * exactly that: `accept_family_invitation` refuses `rejected` and `suspended`
+ * and allows `pending`, because the membership it creates grants NOTHING until
+ * approval -- every permission predicate in the schema already carries
+ * `is_globally_approved()` (052 section 9). So this widens where they may
+ * stand, and not one row of what they may read.
+ *
+ * The alternative was to make them wait, then approve them, then make them
+ * chase the family for a second invitation. That is worse for the person and
+ * no safer for the data.
+ */
+const PENDING_ALLOWED: readonly string[] = [
+  ACCOUNT_PENDING_PATH,
+  "/invitations",
+];
+
+/**
  * The screens an APPROVED account is sent away from. Everything else is theirs,
  * including `/admin/accounts` -- which then asks the database whether they
  * administer Gift Planner and answers a 404 if not.
@@ -236,7 +265,7 @@ export function destinationFor(state: AccountState, pathname: string): string | 
   }
 
   if (state === "pending") {
-    return pathname === ACCOUNT_PENDING_PATH ? null : ACCOUNT_PENDING_PATH;
+    return matches(PENDING_ALLOWED, pathname) ? null : ACCOUNT_PENDING_PATH;
   }
 
   if (isRefused(state)) {

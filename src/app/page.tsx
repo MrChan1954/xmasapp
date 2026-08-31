@@ -2,7 +2,7 @@
 import { upcomingBirthdays, type UpcomingBirthday } from "@/lib/birthdays.ts";
 import { loadFamilyBirthdays, londonToday, type BirthdayPlanning } from "@/utils/supabase/birthdays-server";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { areaEntryFor, areaLabel } from "@/lib/areas.ts";
+import { areaEntryFor, areaLabel, type Area } from "@/lib/areas.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { HOME_PATH, destinationFor } from "@/lib/account-status.ts";
 import { redirect } from "next/navigation";
@@ -11,6 +11,7 @@ import { loadAreaContext, rememberedAreaId } from "@/utils/supabase/areas-server
 import { getCurrentMember } from "@/utils/supabase/current-member";
 import { listEvents } from "@/utils/supabase/events-server";
 import { AreaChooser } from "./area-chooser";
+import { FamilyInvitations } from "./invitations/family-invitations";
 import { CreateAreaForm } from "./areas/new/create-area-form";
 import { EventsDashboard, type DashboardEvent } from "./events-dashboard";
 
@@ -80,7 +81,28 @@ export default async function EventsPage() {
    * also where a member who has just lost their last family lands, which is
    * correct -- losing a family is not losing an account.
    */
-  if (entry === "onboarding") return <CreateAreaForm first />;
+  /*
+   * BUT FIRST: HAS SOMEBODY ALREADY ASKED THEM TO JOIN ONE?
+   *
+   * The zero-family branch used to offer exactly one way forward -- start a
+   * family of your own -- which is the wrong first suggestion for the commonest
+   * newcomer there is: somebody a family invited, who has just confirmed their
+   * address. `list_my_family_invitations()` is the only thing that can tell
+   * them apart, and it needs no Area, so it is safe to ask here.
+   *
+   * `compact` renders NOTHING when there is nothing waiting, so the person with
+   * no invitation sees exactly the screen they saw before.
+   */
+  if (entry === "onboarding") {
+    return (
+      <div>
+        <div className="mx-auto w-full max-w-2xl px-5 pt-8 sm:px-6">
+          <FamilyInvitations compact reloadOnAccept />
+        </div>
+        <CreateAreaForm first />
+      </div>
+    );
+  }
 
   /*
    * FAMILIES, BUT NO VALID CHOICE AMONG THEM. Ask, rather than pick one
@@ -88,7 +110,7 @@ export default async function EventsPage() {
    * `getCurrentMember` refuses to guess between several memberships and
    * therefore answers nothing in exactly the case the chooser exists for.
    */
-  if (entry === "chooser") return <AreaChooser areas={areas} />;
+  if (entry === "chooser") return <ChooserWithInvitations areas={areas} />;
 
   /*
    * A REMEMBERED FAMILY THIS ACCOUNT IS IN, AND STILL NO MEMBERSHIP RESOLVED.
@@ -96,7 +118,7 @@ export default async function EventsPage() {
    * so this should be unreachable -- which is exactly why it is worth refusing
    * to guess about rather than rendering an empty dashboard that says nothing.
    */
-  if (!member) return <AreaChooser areas={areas} />;
+  if (!member) return <ChooserWithInvitations areas={areas} />;
 
   const today = londonToday();
   let events: DashboardEvent[] = [];
@@ -143,5 +165,30 @@ export default async function EventsPage() {
       areaName={areaLabel(active)}
       error={error}
     />
+  );
+}
+
+/**
+ * THE CHOOSER, WITH ANYTHING STILL BEING OFFERED ABOVE IT.
+ *
+ * An account can be in one family and invited to another at the same time, and
+ * the chooser is exactly where that person looks. Rendering the invitation here
+ * means the choice is between the families they are in AND the ones asking --
+ * rather than the invitation being visible only on a screen they have no reason
+ * to visit.
+ *
+ * `compact` renders nothing when nothing is pending, so the ordinary chooser is
+ * untouched for everybody else. Accepting reloads: which of the three shapes
+ * the front door takes is decided on the server from `areas`, and that list has
+ * just changed.
+ */
+function ChooserWithInvitations({ areas }: { areas: Area[] }) {
+  return (
+    <div>
+      <div className="mx-auto w-full max-w-2xl px-5 pt-8 sm:px-6">
+        <FamilyInvitations compact reloadOnAccept />
+      </div>
+      <AreaChooser areas={areas} />
+    </div>
   );
 }

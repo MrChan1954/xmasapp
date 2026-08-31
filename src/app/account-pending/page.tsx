@@ -1,8 +1,10 @@
 "use client";
 
+import { INVITATION_COPY, INVITATIONS_PATH } from "@/lib/invitations";
 import { signOut } from "@/utils/supabase/sign-out";
 import { AuthHeading, AuthScreen } from "../components/auth-card";
-import { Button } from "../components/ui";
+import { FamilyInvitations } from "../invitations/family-invitations";
+import { Button, ButtonLink } from "../components/ui";
 
 /**
  * APPROVED TO SIGN IN, NOT APPROVED TO BE HERE.
@@ -54,11 +56,32 @@ export default function AccountPendingPage() {
           decision is made.
         </p>
       </div>
+
+      {/*
+        AND THE ONE THING THIS ACCOUNT CAN ACTUALLY DO WHILE IT WAITS.
+        `accept_family_invitation` permits `pending` deliberately: the membership
+        it creates grants nothing at all until approval, because every permission
+        predicate in the schema already carries `is_globally_approved()`. So
+        answering here costs nothing and saves the person being approved, then
+        having to chase the family for a second invitation.
+
+        `compact` renders NOTHING when nothing is pending, so the screen is
+        unchanged for everybody who was not invited.
+      */}
+      <div className="mt-7">
+        <FamilyInvitations compact />
+      </div>
+
+      <p className="mt-4 text-xs leading-5 text-ink-600">{INVITATION_COPY.pendingNote}</p>
+
+      <ButtonLink href={INVITATIONS_PATH} variant="secondary" size="lg" className="mt-6 w-full">
+        {INVITATION_COPY.title}
+      </ButtonLink>
       <Button
         variant="secondary"
         size="lg"
         onClick={() => { void signOut(); }}
-        className="mt-6 w-full"
+        className="mt-3 w-full"
       >
         Sign out
       </Button>

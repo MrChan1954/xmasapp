@@ -310,7 +310,13 @@ describe("where each state may be, and where it is sent instead", () => {
 
 describe("the routes with no family behind them", () => {
   test("the three global routes are recognised, including below themselves", () => {
-    assert.deepEqual([...GLOBAL_ROUTES], [ACCOUNT_PENDING_PATH, ACCOUNT_REJECTED_PATH, GLOBAL_ADMIN_PATH]);
+    /*
+     * FOUR SINCE 053. `/invitations` is global for the same reason the other
+     * three are, and for one more: an invitation has to be readable by
+     * somebody who is NOT IN THE FAMILY YET, so a screen that resolves an
+     * acting Area first is a screen they can never open.
+     */
+    assert.deepEqual([...GLOBAL_ROUTES], [ACCOUNT_PENDING_PATH, ACCOUNT_REJECTED_PATH, GLOBAL_ADMIN_PATH, "/invitations"]);
     for (const route of GLOBAL_ROUTES) {
       assert.ok(isGlobalRoute(route));
       assert.ok(isGlobalRoute(route + "/anything"), "a child of a global route is still global");
@@ -666,8 +672,17 @@ describe("what the front door renders", () => {
 
   test("the root renders all three rather than redirecting to any of them", () => {
     const page = read("src/app/page.tsx");
-    assert.ok(page.includes('if (entry === "onboarding") return <CreateAreaForm first />;'));
-    assert.ok(page.includes('if (entry === "chooser") return <AreaChooser areas={areas} />;'));
+    /*
+     * 053 PUT AN INVITATION ABOVE TWO OF THE THREE. The onboarding branch used
+     * to offer exactly one way forward -- start a family of your own -- to the
+     * commonest newcomer there is: somebody a family invited. Both branches
+     * still RENDER, which is the rule this test protects; what they render now
+     * carries the offer, and `compact` draws nothing when none is waiting.
+     */
+    assert.ok(page.includes(String.raw`if (entry === "onboarding") {`));
+    assert.ok(page.includes(String.raw`<CreateAreaForm first />`));
+    assert.ok(page.includes('if (entry === "chooser") return <ChooserWithInvitations areas={areas} />;'));
+    assert.ok(page.includes(String.raw`<AreaChooser areas={areas} />`));
     assert.match(page, /<EventsDashboard/u);
     // The one redirect it performs is the global status, and nothing else.
     assert.deepEqual(page.match(/\bredirect\([^)]*\)/gu), ["redirect(destination)"]);

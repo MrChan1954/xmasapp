@@ -24,22 +24,36 @@ export async function loadAccountStatus(): Promise<AccountStatus> {
 }
 
 /**
- * Attach this login to any invitation waiting on its confirmed address.
+ * ==========================================================================
+ *  THIS JOINS NOBODY TO ANYTHING. IT RETURNS `false`, ALWAYS.
+ * ==========================================================================
  *
- * THE ONE ROUTINE THAT MAY WRITE `app_members.user_id`, and the only supported
- * way to do it -- `grant_area_access` deliberately never writes that column,
- * because only the claimant can prove which login is theirs.
+ * READ THIS BEFORE "FIXING" IT. Everything the name promises was true until
+ * migration 053 and is now false. `claim_app_member()` is
+ * `$$ select false $$` -- `language sql`, `immutable`, so PostgreSQL folds it
+ * away entirely. There is no UPDATE left in it to narrow, and NOTHING here
+ * writes `app_members.user_id`.
  *
- * SAFE TO CALL WHENEVER, AND CALLED ON EVERY SIGN-IN ON PURPOSE. It returns
- * `false` for an unconfirmed address (052 added that conjunct: signing up as
- * somebody else's address used to be enough to walk into their family), `false`
- * when there is nothing to claim, and it refuses a second seat in a family this
- * login already sits in. So an invitation issued AFTER somebody signed up is
- * picked up the next time they sign in, instead of needing a fresh email.
+ * WHY IT WAS RETIRED. The old body was one UPDATE with no `where id =`, so
+ * confirming an email address joined you to EVERY family that had ever typed it
+ * into Family Access, in every Area, with no consent step and no way to learn
+ * which families you had just joined. That was coherent while invitations were
+ * private and issued by one trusted person; public sign-up made it wrong.
  *
- * A FAILURE IS NEVER FATAL. The claim is an improvement to the caller's
- * situation, not a permission check; swallowing the error keeps a database
- * hiccup from turning a legitimate sign-in into a lockout.
+ * WHAT REPLACED IT is an explicit answer the invitee gives themselves:
+ * `accept_family_invitation(id)` and `decline_family_invitation(id)`, called
+ * from `/invitations` and from nowhere else in this application.
+ *
+ * WHY THE CALL IS STILL HERE. 053 retired the behaviour and kept the name and
+ * the EXECUTE grant on purpose, so an in-flight browser session could not start
+ * erroring mid-deploy. Every caller already treated `false` as the ordinary
+ * case -- "nothing was waiting on this address" -- so they all kept working and
+ * simply stopped joining anybody. The call sites are harmless and are removed
+ * with the routine itself, in one change, once no deployed client can still
+ * reach it.
+ *
+ * DO NOT restore an automatic claim, and do not "repair" this by pointing it at
+ * `accept_family_invitation`. Joining a family requires the invitee to say yes.
  */
 export async function claimInvitations(): Promise<boolean> {
   const db = await createClient();
