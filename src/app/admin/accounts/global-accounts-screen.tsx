@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { HOME_PATH } from "@/lib/account-status";
 import { INPUT_LIMITS } from "@/lib/input-validation";
 import { describeSupabaseError, describeThrown } from "@/lib/supabase-error";
 import { createClient } from "@/utils/supabase/client";
@@ -9,6 +10,7 @@ import { IconSearch, IconShield } from "../../components/icons";
 import {
   Badge,
   Button,
+  ButtonLink,
   ConfirmDialog,
   Field,
   FilterChip,
@@ -233,14 +235,47 @@ export function GlobalAccountsScreen() {
             family, and it shows you nothing about the families they are in.
           </p>
         </div>
-        <Button
-          variant="secondary"
-          size="lg"
-          onClick={() => { void signOut(); }}
-          className="w-full sm:w-auto"
-        >
-          Sign out
-        </Button>
+        {/*
+          * THE WAY BACK, AND WHY IT IS A LINK RATHER THAN A ROUTER CALL.
+          *
+          * This screen used to offer one exit: sign out. A Gift Planner
+          * administrator who came here to approve somebody had no way back into
+          * their own family without ending their session and starting again --
+          * the rail and the account menu are deliberately absent, because they
+          * are built from an Area and this route has none.
+          *
+          * IT STILL HAS NONE. `ButtonLink` is an anchor with the button's
+          * classes, so the destination is a plain href: no Area is resolved
+          * here, no membership is read, and nothing on this page learns which
+          * family the reader is in. It is also right-clickable, middle-clickable
+          * and announced as a link, which a button that calls `router.push`
+          * is not.
+          *
+          * AND IT POINTS AT THE ROOT ON PURPOSE, not at a remembered family.
+          * `/` is the one place that decides between the dashboard, the Area
+          * chooser and first-family onboarding -- see `areaEntryFor`. An
+          * administrator who belongs to no family at all is the commonest
+          * visitor here, and sending them "back" to a family they do not have
+          * would be the dead end again in the other direction.
+          */}
+        <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
+          <ButtonLink
+            href={HOME_PATH}
+            variant="secondary"
+            size="lg"
+            className="w-full sm:w-auto"
+          >
+            Back to Gift Planner
+          </ButtonLink>
+          <Button
+            variant="secondary"
+            size="lg"
+            onClick={() => { void signOut(); }}
+            className="w-full sm:w-auto"
+          >
+            Sign out
+          </Button>
+        </div>
       </header>
 
       <div className="mt-7 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">

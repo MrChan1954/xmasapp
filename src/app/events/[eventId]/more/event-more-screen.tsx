@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventSettingsFor, scopeReminder } from "@/lib/settings-scopes.ts";
+import { useFamily } from "../../../family-context";
 import { AppShell, PageHeader } from "../../../components/app-shell";
 import { IconReceipt, IconSettings } from "../../../components/icons";
 import { SettingsGroup, SettingsRow } from "../../../components/settings-list";
@@ -35,30 +35,53 @@ export function EventMoreScreen({
   eventId: string;
   eventName: string;
 }) {
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-  const [checkFailed, setCheckFailed] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-
-    void (async () => {
-      try {
-        const response = await fetch("/api/admin/family-access", { method: "GET", cache: "no-store" });
-        if (!active) return;
-        if (response.ok) setIsAdmin(true);
-        else if (response.status === 401 || response.status === 403) setIsAdmin(false);
-        else { setIsAdmin(false); setCheckFailed(true); }
-      } catch {
-        if (active) { setIsAdmin(false); setCheckFailed(true); }
-      }
-    })();
-
-    return () => { active = false; };
-  }, []);
+  /*
+   * WHO IS ASKING, ANSWERED BY THE PROVIDER THAT ALREADY KNOWS.
+   *
+   * THIS USED TO GUESS FROM A STATUS CODE. The screen sent a GET to
+   * `/api/admin/family-access` and read administration off the response:
+   * `ok` meant admin, 401/403 meant not, anything else meant "we could not
+   * check". Q19 then rewrote that route -- migration 052 moved every read into
+   * `list_area_access()` -- and its GET handler went with the rest, leaving
+   * only a POST. Next answers a GET to a POST-only route with 405, which is
+   * none of the three cases, so EVERY reader landed in the third: an
+   * administrator and an ordinary member alike were told their role could not
+   * be checked, and the admin entries were hidden from the people they exist
+   * for. Live symptom of a probe that inferred a role from a transport detail.
+   *
+   * A ROLE IS NOT A STATUS CODE, and it never was. `FamilyProvider` resolves
+   * the membership for the family ON SCREEN and hands it down; the navigation
+   * chrome has read it all along. Asking the same question of the same source
+   * is what makes this screen agree with the rest of the app instead of
+   * running a second, weaker check of its own.
+   *
+   * WHAT THAT SOURCE GUARANTEES, and why nothing here needs to re-check it:
+   *
+   *   THE SELECTED AREA DECIDES.  `getCurrentMemberClient` returns the
+   *   membership for the remembered Area and, for an account in several
+   *   families with no choice remembered, REFUSES TO GUESS and returns null.
+   *   So administering one family can never grant admin entries in another.
+   *
+   *   GLOBAL ADMIN IS NOT FAMILY ADMIN.  `role` is `app_members.role` in this
+   *   Area. `is_global_admin()` is a different question with a different
+   *   answer and does not reach this value.
+   *
+   *   AND IT IS NOT THE BOUNDARY.  Every destination below re-authorises on
+   *   its own, in the database. This decides what is worth OFFERING.
+   *
+   * FAIL CLOSED, TWICE. Nothing is admin-only until the role has actually
+   * arrived, and a role that never arrives is not an administrator -- a
+   * membership read that fails returns null exactly like a member with no seat,
+   * and both hide the entries. The warning below now means what it says.
+   */
+  const { role, loading } = useFamily();
+  const settled = !loading;
+  const isAdmin = role === "admin";
+  const checkFailed = settled && role === null;
 
   // Built from the model rather than written out here, so the rule about what
   // belongs in this scope lives in one file and a test can run it.
-  const entries = isAdmin === null ? [] : eventSettingsFor(eventId, eventName, { isAdmin });
+  const entries = settled ? eventSettingsFor(eventId, eventName, { isAdmin }) : [];
 
   return (
     <AppShell width="narrow">
@@ -75,7 +98,7 @@ export function EventMoreScreen({
       )}
 
       <SettingsGroup label={eventName}>
-        {isAdmin === null
+        {!settled
           ? <Skeleton className="h-16" />
           : entries.map((entry) => (
             <SettingsRow

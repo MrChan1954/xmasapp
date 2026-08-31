@@ -280,3 +280,69 @@ describe("making a decision", () => {
     await view.unmount();
   });
 });
+
+// ===========================================================================
+// THE WAY OUT. The queue used to have exactly one exit, and it was sign out.
+// ===========================================================================
+
+describe("getting back into the app", () => {
+  /*
+   * A Gift Planner administrator who came here to approve somebody had no way
+   * back to their own family: the rail and the account menu are deliberately
+   * absent, because both are built from an Area and this route has none. So
+   * the only control on the page ended the session. That is a dead end, and it
+   * was reported as one.
+   *
+   * The fix must not buy the exit with a family resolution -- the import walk in
+   * `scripts/account-approval-runtime.test.mjs` is what holds that line, and it
+   * still passes. Here the question is only whether the door exists, where it
+   * goes, and whether it is a real link.
+   */
+  test("BACK TO GIFT PLANNER IS OFFERED, and it is a real link", async () => {
+    const view = await mount();
+    const back = [...view.container.querySelectorAll("a")]
+      .find((anchor) => /Back to Gift Planner/u.test(anchor.textContent));
+
+    assert.ok(back, "the global admin screen must not be a dead end");
+    assert.equal(back.getAttribute("href"), "/",
+      "it goes to the root, which is the one place that decides between the "
+      + "dashboard, the Area chooser and first-family onboarding");
+    await view.unmount();
+  });
+
+  test("an anchor, so it is keyboard and middle-click reachable", async () => {
+    /*
+     * `ButtonLink` hands the button's classes to a real <a> rather than nesting
+     * one inside a <button>. A <button onClick={router.push}> would look
+     * identical and be none of those things.
+     */
+    const view = await mount();
+    const back = [...view.container.querySelectorAll("a")]
+      .find((anchor) => /Back to Gift Planner/u.test(anchor.textContent));
+    assert.equal(back.tagName, "A");
+    assert.ok(!back.closest("button"), "an anchor inside a button is invalid and unfocusable");
+    await view.unmount();
+  });
+
+  test("AND SIGN OUT IS STILL THERE, as a separate action", async () => {
+    // The new door must be an addition, not a replacement: an administrator
+    // with no family still needs to be able to leave.
+    const view = await mount();
+    const signOut = byRole(view.container, "button", "Sign out");
+    assert.ok(signOut, "sign out must remain available");
+    await view.unmount();
+  });
+
+  test("and the screen still resolves no family to draw either of them", async () => {
+    // The cheap half of the guarantee, next to the control it belongs with.
+    // The transitive import walk is in account-approval-runtime.test.mjs.
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(
+      new URL("../src/app/admin/accounts/global-accounts-screen.tsx", import.meta.url),
+      "utf8",
+    );
+    assert.ok(!source.includes("useFamily("));
+    assert.ok(!source.includes("gp_area"));
+    assert.ok(!source.includes("getCurrentMember"));
+  });
+});
