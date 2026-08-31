@@ -271,6 +271,141 @@ comment on function public.accept_family_invitation(uuid) is
 
 
 -- ---------------------------------------------------------------------------
+-- 1b. THE PEOPLE WHO ALREADY SAID YES
+--
+-- WHY A BACKFILL IS NOT OPTIONAL. Section 1 fixes every future accept. It fixes
+-- nobody who has already accepted -- and those are exactly the people this
+-- architecture exists for. They will not call `accept_family_invitation` again:
+-- their invitation is claimed, it is gone from their list, and there is nothing
+-- left for them to press. Without this block they wait for a platform
+-- administrator forever, which is the precise problem 054 was written to end.
+--
+-- ==========================================================================
+--  WHAT COUNTS AS PROOF THAT SOMEBODY EXPLICITLY ACCEPTED
+-- ==========================================================================
+--
+-- NOT `app_members.user_id is not null`. That is true of every membership this
+-- installation has ever had, including the ones that predate consent entirely:
+-- seats an administrator attached by hand, and seats the retired auto-join
+-- claimed on somebody's behalf without ever asking. Approving those would be
+-- inventing a sponsorship that never happened.
+--
+-- The proof is the audit entry `accept_family_invitation` writes, and the four
+-- things about it that no other path produces together:
+--
+--   record_id = the seat        it is about THAT membership;
+--   actor_user_id = seat.user_id  THE INVITEE performed it -- an administrator
+--                               creating or restoring a seat is logged as the
+--                               administrator, so this is what separates
+--                               "they accepted" from "somebody added them";
+--   area_id = seat.area_id      the Area agrees with the seat's;
+--   summary LIKE 'Joined %'     the sentence only this routine writes.
+--
+-- THE SUMMARY IS LOAD-BEARING, and this is the subtle one. `record_audit_event`
+-- (015) writes `format('%s %s', TG_TABLE_NAME, resolved_action)` -- literally
+-- `app_members added` -- for every trigger-generated entry. So the founder of a
+-- family, whose own admin seat IS inserted by themselves and therefore matches
+-- actor = user_id, is excluded by the summary and by nothing else. Verified
+-- against production before this was written.
+--
+-- AND THE AUTO-JOIN LEFT NO ENTRY AT ALL. It was a bare UPDATE of `user_id`,
+-- which never crosses the `active` boundary `record_audit_event` watches, so a
+-- silently claimed seat has no `added` row of its own to match. Those people are
+-- invisible to this block, which is correct: nobody asked them anything.
+--
+-- ==========================================================================
+--  WHAT THIS BLOCK WILL NOT DO
+-- ==========================================================================
+--
+--   * It touches `app_members` NOT AT ALL -- no membership is created, changed,
+--     re-accepted, or given a role. It settles the global account and stops.
+--   * It only ever moves `pending` (or a missing row) to `approved`. An
+--     `approved`, `rejected` or `suspended` row is left exactly as it is, both
+--     by the CTE's filter and again by the `where` on the conflict path.
+--   * It grants no global administration.
+--   * IT IS IDEMPOTENT. After it runs, its own candidates are `approved`, so a
+--     second run selects nothing and writes nothing -- which matters because
+--     the rehearsal harness applies this file on every build.
+-- ---------------------------------------------------------------------------
+
+do $$
+declare
+  sponsored record;
+  approved_count integer := 0;
+begin
+  for sponsored in
+    -- ONE ROW PER ACCOUNT, and where somebody accepted into two families
+    -- before 054, the EARLIEST acceptance is the one recorded as the sponsor.
+    select distinct on (m.user_id)
+      m.user_id,
+      m.id        as seat_id,
+      m.area_id   as area_id,
+      l.id        as acceptance_id,
+      l.occurred_at as accepted_at
+    from public.app_members m
+    join public.audit_log l
+      on l.table_name = 'app_members'
+     and l.record_id = m.id
+     and l.action = 'added'
+     and l.actor_user_id = m.user_id
+     and l.area_id = m.area_id
+     and l.summary like 'Joined %'
+    join auth.users u
+      on u.id = m.user_id
+     and u.email_confirmed_at is not null
+    left join public.app_accounts a on a.user_id = m.user_id
+    where m.user_id is not null
+      and m.active = true
+      and m.declined_at is null
+      and (a.user_id is null or a.status = 'pending')
+    order by m.user_id, l.occurred_at
+  loop
+    insert into public.app_accounts as a
+      (user_id, status, is_global_admin, decided_at, decided_by, decision_note, updated_at)
+    values
+      (sponsored.user_id, 'approved', false, now(), null,
+       'Approved by family invitation sponsorship (accepted before sponsorship existed)', now())
+    on conflict (user_id) do update
+      set status        = 'approved',
+          decided_at    = now(),
+          decided_by    = null,
+          decision_note = excluded.decision_note,
+          updated_at    = now()
+      where a.status = 'pending';
+
+    -- Only audit what was actually decided. If the conflict `where` refused --
+    -- because the row stopped being `pending` between the select and the write
+    -- -- there is no decision to record.
+    if found then
+      insert into public.audit_log (
+        table_name, record_id, action, actor_user_id, actor_name,
+        summary, subject, context, amount_pennies, details,
+        area_id, celebrant_person_id, birthday_privacy_unknown
+      ) values (
+        'app_accounts', sponsored.user_id, 'decided', null, null,
+        'Global account set to approved',
+        null, null, null,
+        jsonb_build_object(
+          'status', 'approved',
+          'note', 'Approved by family invitation sponsorship (accepted before sponsorship existed)',
+          'source', 'family_invitation_backfill',
+          'sponsor_area_id', sponsored.area_id,
+          'sponsor_app_member_id', sponsored.seat_id,
+          'accepted_at', sponsored.accepted_at,
+          'acceptance_audit_id', sponsored.acceptance_id
+        ),
+        null, null, false
+      );
+      approved_count := approved_count + 1;
+    end if;
+  end loop;
+
+  raise notice 'MIGRATION 054: % account(s) approved by pre-existing accepted invitations', approved_count;
+end;
+$$;
+
+
+-- ---------------------------------------------------------------------------
 -- 2. WHAT MUST BE TRUE AFTERWARDS
 --
 -- Run at the end of the apply, in the same transaction, so a migration that
@@ -321,12 +456,47 @@ begin
     problems := problems || 'accept_family_invitation is not a pinned SECURITY DEFINER'::text;
   end if;
 
-  -- 054 writes no rows of its own. Nobody should be approved by it yet.
+  -- EVERY BACKFILLED APPROVAL MUST HAVE ITS PROOF STILL STANDING. Section 1b
+  -- approves only accounts whose invitee-authored acceptance entry it just
+  -- matched; if any approved row carries the backfill note without such an
+  -- entry, the predicate let somebody through it should not have.
+  if exists (
+    select 1
+    from public.app_accounts a
+    where a.decision_note like 'Approved by family invitation sponsorship (accepted before%'
+      and not exists (
+        select 1
+        from public.app_members m
+        join public.audit_log l
+          on l.table_name = 'app_members'
+         and l.record_id = m.id
+         and l.action = 'added'
+         and l.actor_user_id = m.user_id
+         and l.area_id = m.area_id
+         and l.summary like 'Joined %'
+        where m.user_id = a.user_id
+      )
+  ) then
+    problems := problems || 'a backfilled approval has no explicit acceptance behind it'::text;
+  end if;
+
+  -- AND THE BACKFILL TOUCHED NOBODY IT MUST NOT. No rejected or suspended
+  -- account may carry a sponsorship note, by either route.
   if exists (
     select 1 from public.app_accounts
-    where decision_note = 'Approved by family invitation sponsorship'
+    where status in ('rejected', 'suspended')
+      and decision_note like 'Approved by family invitation sponsorship%'
   ) then
-    problems := problems || 'sponsored approvals already exist -- 054 grants none itself'::text;
+    problems := problems || 'a refused account was sponsored'::text;
+  end if;
+
+  -- Sponsorship never hands out administration.
+  if exists (
+    select 1 from public.app_accounts
+    where is_global_admin = true
+      and decision_note like 'Approved by family invitation sponsorship%'
+  ) then
+    problems := problems || 'a sponsored account was made a global administrator'::text;
   end if;
 
   if array_length(problems, 1) is not null then
