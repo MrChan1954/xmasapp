@@ -604,9 +604,27 @@ describe("claiming an invitation", () => {
       values ($1, $2, 'newcomer@example.test', 'member', true) returning id`, [f.areas.alpha, person]);
   });
 
-  test("an account with no membership claims the invitation addressed to it", async () => {
+  test("SIGNING IN DOES NOT JOIN THEM; ACCEPTING DOES", async () => {
+    /*
+     * 053. The old invariant was that `claim_app_member()` -- which the auth
+     * callback calls on every single sign-in -- attached the caller to every
+     * unclaimed invitation addressed to their confirmed address, in every
+     * family, with nobody ever being asked. That is exactly the behaviour 053
+     * exists to remove, so the assertion that pinned it is now inverted.
+     *
+     * The new invariant: sign-in changes nothing, and membership begins with a
+     * deliberate accept naming ONE invitation.
+     */
     const claimed = await probe(db, { user: newcomer }, "select public.claim_app_member() as got");
-    assert.equal(claimed.rows[0].got, true);
+    assert.equal(claimed.rows[0].got, false, "the sign-in stub must join nobody");
+    await asOwner(db);
+    assert.equal(await value(db, "select user_id from public.app_members where id = $1", [pendingAlpha]), null,
+      "signing in must leave the invitation exactly as it was");
+
+    const accepted = await probe(db, { user: newcomer },
+      "select public.accept_family_invitation($1) as area", [pendingAlpha]);
+    assert.equal(accepted.ok, true, accepted.error);
+    assert.equal(accepted.rows[0].area, f.areas.alpha);
 
     await asOwner(db);
     assert.equal(await value(db, "select user_id from public.app_members where id = $1", [pendingAlpha]), newcomer);
@@ -671,13 +689,25 @@ describe("claiming an invitation", () => {
       values ($1, $2, 'moved-house@example.test', 'member', true) returning id`,
     [f.areas.bravo, bravoPerson]);
 
-    const claimed = await probe(db, { user: login }, "select public.claim_app_member() as got");
-    assert.equal(claimed.ok, true, "the duplicate must not abort the whole claim");
-    assert.equal(claimed.rows[0].got, true);
+    /*
+     * 053 CLOSES IT STRUCTURALLY RATHER THAN CAREFULLY. There is no longer a
+     * statement that touches several rows at once, so there is nothing for the
+     * stale row to abort. Accepting names ONE invitation, and the stale one is
+     * refused on its own terms -- the caller already holds a seat in Alpha.
+     */
+    const acceptedGenuine = await probe(db, { user: login },
+      "select public.accept_family_invitation($1) as area", [genuine]);
+    assert.equal(acceptedGenuine.ok, true, "the stale row in another family cannot interfere");
+    assert.equal(acceptedGenuine.rows[0].area, f.areas.bravo);
+
+    const acceptedStale = await probe(db, { user: login },
+      "select public.accept_family_invitation($1) as area", [stale]);
+    assert.equal(acceptedStale.ok, false, "a second seat in a family they are already in must be refused");
+    assert.match(acceptedStale.error, /that invitation is not yours/iu);
 
     await asOwner(db);
     assert.equal(await value(db, "select user_id from public.app_members where id = $1", [genuine]), login,
-      "the genuine invitation in the other family was claimed");
+      "the genuine invitation in the other family was accepted");
     assert.equal(await value(db, "select user_id from public.app_members where id = $1", [stale]), null,
       "and the duplicate in the family they were already in was left alone");
   });
@@ -690,7 +720,11 @@ describe("claiming an invitation", () => {
       insert into public.app_members (area_id, person_id, email, role, active)
       values ($1, $2, 'newcomer@example.test', 'member', false) returning id`, [f.areas.charlie, person]);
 
-    await probe(db, { user: newcomer }, "select public.claim_app_member()");
+    // 053: the refusal has to be proved against the routine that can actually
+    // join somebody now. Asking the `select false` stub would prove nothing.
+    const accepted = await probe(db, { user: newcomer },
+      "select public.accept_family_invitation($1)", [disabled]);
+    assert.equal(accepted.ok, false, "a revoked invitation must not be acceptable");
     await asOwner(db);
     assert.equal(await value(db, "select user_id from public.app_members where id = $1", [disabled]), null);
   });
@@ -706,8 +740,13 @@ describe("claiming an invitation", () => {
       insert into public.app_members (area_id, person_id, email, role, active)
       values ($1, $2, 'somebody-else@example.test', 'member', true) returning id`, [f.areas.charlie, person]);
 
-    const claimed = await probe(db, { user: stranger }, "select public.claim_app_member() as got");
-    assert.equal(claimed.rows[0].got, false);
+    // 053: the invitation UUID is a SELECTOR, not an authorization. Knowing it
+    // -- and this test hands it over -- buys the stranger nothing, because the
+    // address on the row must match their own confirmed address.
+    const accepted = await probe(db, { user: stranger },
+      "select public.accept_family_invitation($1)", [notTheirs]);
+    assert.equal(accepted.ok, false, "knowing the id must not be enough");
+    assert.match(accepted.error, /that invitation is not yours/iu);
     await asOwner(db);
     assert.equal(await value(db, "select user_id from public.app_members where id = $1", [notTheirs]), null);
   });
@@ -892,9 +931,13 @@ describe("becoming a member is the one write the barrier lets a stranger make", 
   });
 
   test("but the routine written for it works", async () => {
-    const claimed = await probe(db, { user: outsider }, "select public.claim_app_member() as got");
-    assert.equal(claimed.ok, true, claimed.error);
-    assert.equal(claimed.rows[0].got, true);
+    // 053 moved the write out of `claim_app_member()` and into an accept that
+    // names one invitation. The barrier exemption is unchanged: two columns,
+    // on a row addressed to the caller's own confirmed address.
+    const accepted = await probe(db, { user: outsider },
+      "select public.accept_family_invitation($1) as area", [invitation]);
+    assert.equal(accepted.ok, true, accepted.error);
+    assert.equal(accepted.rows[0].area, f.areas.charlie);
 
     await asOwner(db);
     assert.equal(await value(db, "select user_id from public.app_members where id = $1", [invitation]), outsider);
@@ -913,7 +956,7 @@ describe("becoming a member is the one write the barrier lets a stranger make", 
     assert.ok(!grab.ok || grab.count === 0);
   });
 
-  test("claiming gave them a family, and only the one they were invited to", async () => {
+  test("accepting gave them a family, and only the one they were invited to", async () => {
     assert.equal(await seen(db, who(outsider, f.areas.charlie), "areas", "id = $1", [f.areas.charlie]), 1);
     assert.equal(await seen(db, who(outsider, f.areas.charlie), "areas", "id = $1", [f.areas.alpha]), 0);
     assert.equal(await seen(db, who(outsider, f.areas.charlie), "people", "area_id = $1", [f.areas.alpha]), 0);

@@ -475,7 +475,22 @@ describe("the Q3 check file actually runs, against a 044+045 database", () => {
   let result;
 
   before(async () => {
-    db = await buildRehearsal({});
+    /*
+     * PINNED TO ITS OWN ERA, and 053 is why it had to be said out loud.
+     *
+     * A post-apply file is a question asked of the database THE MIGRATION IT
+     * BELONGS TO just produced. It is pasted into production once, immediately
+     * after that apply, and never again. Running Q3's file against a database
+     * carrying every later migration asks it about a world it was never
+     * written for -- 053 removes the auto-join Q3's sweep counted on, so the
+     * file would report FAIL for a change that is deliberate and correct.
+     *
+     * Pinning here weakens nothing: the file must still pass COMPLETELY at 045,
+     * and the CURRENT-era version of the same sweep -- with 053's two invitee
+     * routines allowlisted and justified -- is enforced against the full stack
+     * by `scripts/area-mutation-security.test.mjs`.
+     */
+    db = await buildRehearsal({ through: "202608100045_area_scoped_mutation_hardening.sql" });
     await asOwner(db);
     result = await db.query(readFileSync(Q3_CHECKS, "utf8"));
   });
@@ -596,12 +611,23 @@ describe("the Q6 check file cannot change anything either", () => {
   });
 });
 
-describe("the Q6 check file actually runs, against a 047 database", () => {
+describe("the Q6 check file actually runs, against a 052 database", () => {
   let db;
   let result;
 
   before(async () => {
-    db = await buildRehearsal({});
+    /*
+     * Pinned to its own era, for the reason spelled out above the Q3 block --
+     * and note WHICH era that is. Q6's file was extended at Q19: its drift
+     * sweep names `set_account_status`, `grant_global_admin` and
+     * `revoke_global_admin`, which 052 introduced, so the database it actually
+     * describes is 052's, not 047's. That is the state production is in today.
+     *
+     * 053 adds two more deliberately unguarded definer writers -- the invitee
+     * routines -- and they are justified and swept separately, against the full
+     * stack, in `scripts/area-mutation-security.test.mjs`.
+     */
+    db = await buildRehearsal({ through: "202608100052_global_account_approval.sql" });
     await asOwner(db);
     result = await db.query(readFileSync(Q6_CHECKS, "utf8"));
   });
@@ -725,7 +751,14 @@ describe("the Q19 post-apply check file actually runs, against a 052 database", 
   let result;
 
   before(async () => {
-    db = await buildRehearsal({});
+    // Pinned to its own era, for the reason spelled out above the Q3 block, and
+    // here it is the sharpest case: Q19's file asserts that
+    // `claim_app_member()` demands a confirmed email and that all nine
+    // redefined routines are SECURITY DEFINERs. Both were true of 052 and both
+    // are deliberately false after 053, which reduces that routine to
+    // `select false` and takes its privilege away. This is the state PRODUCTION
+    // is in today, and the file must still pass completely against it.
+    db = await buildRehearsal({ through: "202608100052_global_account_approval.sql" });
     await asOwner(db);
     result = await db.query(readFileSync(Q19_CHECKS, "utf8"));
   });

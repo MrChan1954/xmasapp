@@ -734,7 +734,15 @@ describe("create_area and claim_app_member", () => {
     });
   });
 
-  describe("claim_app_member will not believe an unconfirmed address", () => {
+  /*
+   * 053 MOVED THE JOIN, NOT THE RULE. Every assertion below used to be made of
+   * `claim_app_member()`, which joined you to every matching open invitation on
+   * every sign-in. 053 reduces that routine to `select false` and puts the join
+   * behind `accept_family_invitation(uuid)`, so the same questions are now
+   * asked of the routine that can actually write. The rule being tested --
+   * A CONFIRMED ADDRESS, MATCHING THE ROW, OR NOTHING -- is unchanged.
+   */
+  describe("accept_family_invitation will not believe an unconfirmed address", () => {
     let unconfirmed, confirmed, seatUnconfirmed, seatConfirmed;
 
     before(async () => {
@@ -759,31 +767,40 @@ describe("create_area and claim_app_member", () => {
         values ($1, $2, 'claim-confirmed@example.test', 'member', true) returning id`, [f.areas.bravo, p2]);
     });
 
-    test("AN UNCONFIRMED ACCOUNT CLAIMS NOTHING, and the seat stays open", async () => {
+    test("AN UNCONFIRMED ACCOUNT JOINS NOTHING, and the seat stays open", async () => {
+      // Signing in is inert now, and accepting is refused outright.
       const claimed = await probe(db, who(unconfirmed, null), "select public.claim_app_member() as got");
       assert.equal(claimed.ok, true, claimed.error);
-      assert.equal(claimed.rows[0].got, false, "an unconfirmed address claimed a family seat");
+      assert.equal(claimed.rows[0].got, false, "the sign-in stub must join nobody, ever");
+
+      const accepted = await probe(db, who(unconfirmed, null),
+        "select public.accept_family_invitation($1)", [seatUnconfirmed]);
+      assert.equal(accepted.ok, false, "an unconfirmed address accepted a family seat");
+      assert.match(accepted.error, /confirm your email address first/iu);
 
       await asOwner(db);
       assert.equal(await value(db,
         "select user_id from public.app_members where id = $1", [seatUnconfirmed]), null);
     });
 
-    test("the same account, once confirmed, claims it", async () => {
+    test("the same account, once confirmed, may accept it", async () => {
       await asOwner(db);
       await db.query("update auth.users set email_confirmed_at = now() where id = $1", [unconfirmed]);
 
-      const claimed = await probe(db, who(unconfirmed, null), "select public.claim_app_member() as got");
-      assert.equal(claimed.rows[0].got, true, claimed.error);
+      const accepted = await probe(db, who(unconfirmed, null),
+        "select public.accept_family_invitation($1) as area", [seatUnconfirmed]);
+      assert.equal(accepted.ok, true, accepted.error);
+      assert.equal(accepted.rows[0].area, f.areas.bravo);
 
       await asOwner(db);
       assert.equal(await value(db,
         "select user_id from public.app_members where id = $1", [seatUnconfirmed]), unconfirmed);
     });
 
-    test("a confirmed account claims only the seat addressed to it", async () => {
-      const claimed = await probe(db, who(confirmed, null), "select public.claim_app_member() as got");
-      assert.equal(claimed.rows[0].got, true, claimed.error);
+    test("a confirmed account takes only the seat addressed to it", async () => {
+      const accepted = await probe(db, who(confirmed, null),
+        "select public.accept_family_invitation($1) as area", [seatConfirmed]);
+      assert.equal(accepted.ok, true, accepted.error);
 
       await asOwner(db);
       assert.equal(await value(db,
@@ -804,21 +821,27 @@ describe("create_area and claim_app_member", () => {
         insert into public.app_members (area_id, person_id, email, role, active)
         values ($1, $2, 'claim-revoked@example.test', 'member', false) returning id`, [f.areas.bravo, person]);
 
-      const claimed = await probe(db, who(user, null), "select public.claim_app_member() as got");
-      assert.equal(claimed.rows[0].got, false);
+      const accepted = await probe(db, who(user, null),
+        "select public.accept_family_invitation($1)", [seat]);
+      assert.equal(accepted.ok, false, "a revoked invitation must not be acceptable");
+      assert.match(accepted.error, /that invitation is not yours/iu);
       await asOwner(db);
       assert.equal(await value(db, "select user_id from public.app_members where id = $1", [seat]), null);
     });
 
-    test("a seat in a family they are already in is skipped, not doubled", async () => {
+    test("a seat in a family they are already in is refused, not doubled", async () => {
       /*
        * THE ONLY WAY THIS CASE CAN ARISE, and it is worth spelling out. The
        * unique index on (area_id, lower(email)) makes two seats with the SAME
        * address in one family impossible -- so the guard inside
        * `claim_app_member` is not about that. It is about an account whose
-       * address has CHANGED: the old seat is claimed and caches the old
-       * address, and a second invitation goes out to the new one. Same family,
-       * two rows, two different addresses, one login.
+       * address has CHANGED: the old seat is taken and caches the old address,
+       * and a second invitation goes out to the new one. Same family, two rows,
+       * two different addresses, one login.
+       *
+       * 053 makes the refusal EXPLICIT rather than silent. The old routine
+       * skipped the row and reported success for the others; the new one is
+       * asked about one invitation and says no to it.
        */
       await asOwner(db);
       await db.query("update auth.users set email = 'moved-on@example.test' where id = $1", [confirmed]);
@@ -828,7 +851,11 @@ describe("create_area and claim_app_member", () => {
         insert into public.app_members (area_id, person_id, email, role, active)
         values ($1, $2, 'moved-on@example.test', 'member', true) returning id`, [f.areas.bravo, person]);
 
-      await probe(db, who(confirmed, null), "select public.claim_app_member()");
+      const accepted = await probe(db, who(confirmed, null),
+        "select public.accept_family_invitation($1)", [secondSeat]);
+      assert.equal(accepted.ok, false, "a second seat in one family must be refused");
+      assert.match(accepted.error, /that invitation is not yours/iu);
+
       await asOwner(db);
       assert.equal(await value(db,
         "select user_id from public.app_members where id = $1", [secondSeat]), null,
@@ -1741,7 +1768,15 @@ describe("EXECUTE, measured against the catalogue rather than assumed", () => {
     }
   });
 
-  test("the nine redefined routines are still pinned definers", async () => {
+  test("the eight redefined routines 053 left elevated are still pinned definers", async () => {
+    /*
+     * 052 REDEFINED NINE. 053 DELIBERATELY TOOK THE NINTH BACK DOWN.
+     *
+     * `claim_app_member()` was a SECURITY DEFINER routine because it wrote to
+     * `app_members` on the caller's behalf. 053 removed that write, so the
+     * privilege has nothing left to justify it -- and the next test proves it
+     * is gone, rather than this one quietly tolerating either answer.
+     */
     for (const signature of [
       "public.is_active_app_member()",
       "public.is_area_member(uuid)",
@@ -1750,7 +1785,6 @@ describe("EXECUTE, measured against the catalogue rather than assumed", () => {
       "public.is_app_admin()",
       "public.is_area_contributor_member(uuid)",
       "public.create_area(text, text)",
-      "public.claim_app_member()",
       "public.stamp_audit_area()",
     ]) {
       assert.equal(await value(db, `
@@ -1763,5 +1797,55 @@ describe("EXECUTE, measured against the catalogue rather than assumed", () => {
             and cfg in ('search_path=', 'search_path=""'))`), true,
       `${signature} lost its pinned search_path`);
     }
+  });
+
+  test("AND claim_app_member IS A HARMLESS STUB, NOT A DEFINER, AND STAYS CALLABLE", async () => {
+    /*
+     * THE ONE ROUTINE 053 TOOK PRIVILEGE AWAY FROM, asserted in the positive so
+     * that restoring SECURITY DEFINER to satisfy an old catalogue expectation
+     * fails here loudly.
+     *
+     * It cannot simply be dropped: the auth callback the deployed Worker is
+     * running still calls it on every sign-in, and a missing routine would be
+     * an error on the way in rather than a no-op. So it stays, reachable and
+     * inert, until the runtime stops asking.
+     */
+    await asOwner(db);
+    const [proc] = await rows(db, `
+      select p.prosecdef, p.prosrc, p.provolatile, l.lanname
+      from pg_proc p join pg_language l on l.oid = p.prolang
+      where p.oid = 'public.claim_app_member()'::regprocedure`);
+
+    assert.equal(proc.prosecdef, false, "claim_app_member must NOT be SECURITY DEFINER any more");
+    assert.equal(proc.lanname, "sql", "it is a one-line SQL stub, not a procedural body");
+    assert.match(proc.prosrc, /select\s+false/iu);
+    for (const forbidden of ["update ", "insert into", "delete from", "app_members"]) {
+      assert.ok(!proc.prosrc.toLowerCase().includes(forbidden),
+        `the stub must not mention ${forbidden}`);
+    }
+
+    // Still reachable by exactly the role the runtime signs in as, and by
+    // nobody else -- so the legacy caller keeps working and nothing widens.
+    assert.equal(await value(db,
+      "select has_function_privilege('authenticated', 'public.claim_app_member()', 'execute')"), true);
+    // `anon` is revoked explicitly. `service_role` keeps it from Supabase's own
+    // default privileges, as it does for every routine in this schema, and 053
+    // deliberately grants it nothing new -- there is nothing left to grant.
+    assert.equal(await value(db,
+      "select has_function_privilege('anon', 'public.claim_app_member()', 'execute')"), false,
+    "claim_app_member must not be executable by anon");
+
+    // And calling it as a signed-in stranger joins them to nothing.
+    const stranger = await value(db, `
+      insert into auth.users (email, email_confirmed_at)
+      values ('stub-caller@example.test', now()) returning id`);
+    const before = Number(await value(db, "select count(*)::int from public.app_members where user_id is not null"));
+    const called = await probe(db, who(stranger, null), "select public.claim_app_member() as got");
+    assert.equal(called.ok, true, called.error);
+    assert.equal(called.rows[0].got, false);
+    await asOwner(db);
+    assert.equal(
+      Number(await value(db, "select count(*)::int from public.app_members where user_id is not null")), before,
+      "signing in must not attach a single login to a single seat");
   });
 });

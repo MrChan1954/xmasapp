@@ -146,8 +146,15 @@ test("the authorization migration explicitly enables RLS on every application ta
   // never consulted for. It creates no table, defines no function, adds no
   // policy and grants nothing to anybody. The behaviour it produces is proved
   // against a real PostgreSQL in `scripts/table-privileges.test.mjs`.
-  assert.equal(migrationFiles.at(-13), wishlistMigrationName);
-  assert.equal(migrationFiles.at(-14), areaAuthMigrationName);
+  //
+  // 053 IS REVIEWED AND ADDS NO POLICY AND NO TABLE. It adds one nullable
+  // column (`app_members.declined_at`), a `not valid` CHECK, one partial index,
+  // four invitee routines, and reduces `claim_app_member()` to `select false`.
+  // It creates no policy, enables RLS on nothing new, and grants nothing to
+  // `anon` or `service_role`. Its own behaviour is proved against a real
+  // PostgreSQL in `scripts/family-invitations.test.mjs`.
+  assert.equal(migrationFiles.at(-14), wishlistMigrationName);
+  assert.equal(migrationFiles.at(-15), areaAuthMigrationName);
 
   // What 050 introduces, security-wise: a strictly narrower read policy.
   const birthdayPrivacyMigration = readFileSync(

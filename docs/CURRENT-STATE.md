@@ -10,9 +10,10 @@ The handoff between phases. Current facts only — history lives in git.
 | Fact | Value |
 | ---- | ----- |
 | Live site | `https://xmas-family.uk/` |
-| Last completed phase | **Roadmap Phase 2 — the family invitation architecture design, decisions closed.** Design only: nothing was migrated, changed or deployed. The design is `docs/PHASE-2-FAMILY-INVITATION-DESIGN.md`; the five product decisions are in its §16. |
+| Last completed phase | **Roadmap Phase 3B — the pre-053 test assertions reconciled, and production confirmed still on 052.** The whole suite is green on a 053 database. Nothing was applied, pushed or deployed. |
 | Q19 verdict | `LAUNCH STEP 1 PASS — READY FOR LIVE SIGN-UP E2E` |
-| Next phase | **Roadmap Phase 3 — write and rehearse migration 053.** Exact scope is fixed in `docs/PHASE-2-FAMILY-INVITATION-DESIGN.md` §17. **No open questions remain** — all five decisions are closed and recorded in §16. |
+| Next phase | **Roadmap Phase 4 — apply migration 053 to production, manually.** Nothing else blocks it: see "Roadmap Phase 3B" below for the exact apply scope. |
+| Migration 053 | **WRITTEN, REHEARSED, GREEN — AND NOT APPLIED.** Production carries 001–052 only, re-confirmed read-only on 2026-08-31. |
 | Cleanup hold | **QA Alpha, QA Charlie and Tricketts must not be deleted** until the live invitation tests complete. QA Bravo stays unless explicitly requested. |
 | Branch | `main` |
 | Local HEAD | `b21b798` plus this docs commit. |
@@ -1013,3 +1014,142 @@ green — before Phase 4 applies anything to production.
   inactive→active crossing as `restored`, Area-attributed. Adding an explicit
   row would have written two audit rows for one event. The reissue is audited;
   the `previous_state` detail is not stored.
+
+## Roadmap Phase 3B — the twenty stale assertions, and the production preflight
+
+**Verdict: `PHASE 3B PASS`.** The full suite is **2115/2115, 0 fail** against a
+database carrying 001–053. Production was inspected read-only and is still on
+052. **053 remains unapplied.**
+
+### The Phase 3 blocker said thirteen. The suite said twenty.
+
+Phase 3 counted assertions by reading the six files it knew about; running
+`npm run test:all` found **twenty failing tests across eight files**, including
+three the report never named. All twenty were tests pinning the world 053
+exists to change. **Not one was a defect in 053, and not one security rule was
+relaxed to make it pass.**
+
+| Category | Where | Old invariant | New invariant |
+| -------- | ----- | ------------- | ------------- |
+| **Migration inventory** (6 tests) | `migration-execution` ×2, `event-model`, `event-administration`, `birthday-wishlist`, `rls-security` | 052 is the newest; there are 52 migrations; every positional offset counts back from 052 | 053 is the newest; there are 53; every offset moved together by one, and 053 is named with a review note saying what it adds — one nullable column, four routines, no table, no policy, no grant to `anon` or `service_role` |
+| **Sign-in no longer joins you** (7 tests) | `area-lifecycle` ×3, `global-approval` ×4 | `claim_app_member()` attaches the caller to every open invitation addressed to their confirmed address, in every family, on every sign-in | Signing in joins nobody. Membership begins with `accept_family_invitation(uuid)` naming **one** invitation, and every old refusal — unconfirmed address, revoked seat, somebody else's row, a second seat in a family they are already in — is now asked of the routine that can actually write |
+| **`claim_app_member()` is not a definer** (1 test) | `global-approval` | all **nine** routines 052 redefined are pinned SECURITY DEFINERs | **eight** are. The ninth deliberately is not — see below |
+| **The pre-member exemption** (1 test) | `area-mutation-security` | *every* authenticated mutation either derives its target Area or calls `require_acting_area()` | the blanket rule is unchanged; two routines are allowlisted **by name, with a reason, and with a test that makes them earn it** |
+| **Post-apply files, run out of their era** (5 tests) | `production-checks` ×5 | Q3's, Q6's and Q19's check files are run against the *full* migration stack | each is run against **the database its own migration produced** — Q3 at 045, Q6 at **052** (its drift sweep names 052's routines, so "against a 047 database" was already stale), Q19 at 052. That is the state production is in, and each file must still pass completely there |
+
+### `claim_app_member()` stays a non-definer stub. Deliberately.
+
+Restoring SECURITY DEFINER to satisfy the old catalogue expectation was
+**refused**. The privilege existed to let the routine write `app_members` on the
+caller's behalf; 053 removed that write, so nothing justifies it any more.
+
+It cannot simply be dropped either: the deployed Worker's auth callback still
+calls it on every sign-in, and a missing routine would be an error on the way in
+rather than a no-op. So it stays — reachable and inert.
+
+A new focused test asserts this **in the positive**, so restoring the privilege
+fails loudly: not a definer; `language sql`; the body is `select false` and
+mentions no `update`, no `insert into`, no `delete from`, not even
+`app_members`; `authenticated` can still execute it and `anon` cannot; and a
+signed-in stranger calling it leaves the count of attached seats unchanged.
+`service_role` keeps execute from Supabase's own default privileges, as it does
+for every routine in this schema — 053 grants it nothing new.
+
+### The `require_acting_area()` exception is two names wide
+
+`accept_family_invitation` and `decline_family_invitation` are allowlisted in
+`scripts/area-mutation-security.test.mjs`. The guard is not merely unnecessary
+for them, it is **unaskable**: an acting Area can only be claimed by an existing
+member, so it would refuse every caller these routines exist for.
+
+What stands in for it is narrower, and a new three-test block proves it against
+the catalogue and against a real call:
+
+- each takes **exactly one uuid** (`p_invitation_id uuid`) — no email
+  parameter, no user uuid parameter;
+- the caller comes from `auth.uid()`, the address from `auth.users`, and only
+  with `email_confirmed_at is not null`;
+- `m.id = p_invitation_id` **alongside** `lower(m.email) = caller_email`, never
+  instead of it — the id **selects**, the address **authorizes**;
+- neither mentions `acting_area`, and the Area is read **off the selected row**;
+- both are still pinned definers with a pinned `search_path`, unreachable by
+  `anon`;
+- and cross-Area targeting is proved impossible behaviourally: an account
+  genuinely invited to Bravo, **handed the id** of an open Alpha invitation, is
+  refused by both routines, and the Alpha row is left unclaimed, undeclined and
+  active.
+
+The blanket rule still covers every other Area-scoped mutation.
+
+### Reissue → `restored`. One audit row, and no second one added.
+
+Confirmed and left as 053 wrote it. A reissued invitation crosses the `active`
+boundary, `record_audit_event` already reports that crossing as a single
+Area-attributed **`restored`** row, and adding an explicit `invitation_reissued`
+row would have written two audit rows for one event. The audit action vocabulary
+is **not** widened. The mapping is:
+
+> product event **invitation reissued** → canonical audit action **`restored`**
+
+`scripts/family-invitations.test.mjs` holds it: exactly one row, correct Area,
+correct target, no duplicate, no address or other sensitive metadata in it.
+
+### Test totals
+
+| Run | Result |
+| --- | ------ |
+| Full regression, `npm run test:all` | **2115 pass / 0 fail**, 284 suites, ~42 s |
+| Before reconciliation, same command | 2111 pass / **20 fail** |
+| `family-invitations` + rollback | 62 + 12, unchanged and still green |
+| Migrations 001–040 checksum manifest | matches; **no applied migration edited** |
+| Migration inventory | 053 is newest; **no 054**; 041–053 correctly unpinned |
+| Mutation suite | **NOT RUN.** No migration and no runtime source changed — only test definitions. One residual noted below |
+
+### Production read-only preflight — 2026-08-31 17:11 UTC
+
+GET only, service key, PostgREST. No RPC was invoked and nothing was written.
+
+| Check | Result |
+| ----- | ------ |
+| `app_members.declined_at` | **absent** — `column app_members.declined_at does not exist` |
+| 053's four routines exposed | **none** of them |
+| `claim_app_member` exposed | yes — the 052-era routine, as expected |
+| Migration state | **001–052 only. 053 IS NOT APPLIED.** |
+
+**Protected fingerprint — unchanged, every value:** notifications 37, people 19,
+events 15, appMembers 4, recipients 35, Christmas 2026 active with 19
+recipients, `crossAreaTotal` **0**.
+
+**QA Area census — all five Areas present, none deleted:** `Our family`,
+`QA Alpha`, `QA Bravo`, `QA Charlie`, `Tricketts`. None archived. The cleanup
+hold stands: QA Alpha, QA Charlie and Tricketts go at the final closeout, QA
+Bravo stays unless asked otherwise.
+
+**Unclaimed invitation census — RUN, and safely.** Classified **by Area id
+only**; no address was selected or printed. Production holds **one** open
+unclaimed invitation (`user_id is null and active`), and it is in
+**`Tricketts`** — the USER-CONFIRMED throwaway. **Zero in `Our family`, and zero
+unexpected non-QA invitations.** 12 `app_members` rows across all five Areas.
+
+### The one residual, and it is not a blocker
+
+The mutation suite was not run, and one target is worth naming: a mutation that
+stripped `security definer` from `claim_app_member` **in 052** was previously
+killed by the nine-definer assertion. It no longer can be — but not because of
+anything Phase 3B changed. 053 redefines that routine as a non-definer on top of
+052, so on a full-stack rehearsal the mutation is invisible whatever the tests
+say. The 052-era version of that assertion is still enforced, against a 052
+database, by `docs/Q19-052-POST-APPLY-CHECKS.sql` in `production-checks`.
+
+### Exact Phase 4 scope
+
+1. Apply `supabase/migrations/202608100053_family_invitation_consent.sql` to
+   production **manually**, as every migration before it.
+2. Run `docs/Q20-053-POST-APPLY-CHECKS.sql` — 30 checks, 0 FAIL expected.
+3. Re-take the protected fingerprint and confirm all seven values unchanged.
+4. `docs/Q20-053-ROLLBACK.sql` is the escape hatch, rehearsed in full.
+5. **Only then** push the local commits, because nothing in the runtime depends
+   on 053 yet — the invitation UI is a later phase.
+
+**Not done in Phase 3B, deliberately:** no apply, no push, no deploy, no runtime
+or UI change, no QA Area deleted, no invitation UI.

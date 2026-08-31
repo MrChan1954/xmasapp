@@ -421,6 +421,21 @@ describe("the schema itself says every targeted mutation is guarded", () => {
       set_account_status: "global, not Area-scoped; gated on is_global_admin()",
       grant_global_admin: "global, not Area-scoped; gated on is_global_admin()",
       revoke_global_admin: "global, not Area-scoped; gated on is_global_admin()",
+      // 053. THE TWO ROUTINES AN INVITEE CALLS BEFORE THEY ARE A MEMBER OF
+      // ANYTHING. `require_acting_area()` is not merely unnecessary here, it is
+      // unaskable: an acting Area can only be claimed by an existing member, so
+      // the guard would refuse every single caller these routines exist for.
+      //
+      // WHAT STANDS IN FOR IT IS NARROWER, NOT LOOSER. The invitation id is a
+      // SELECTOR; the authorization is the caller's own confirmed auth address
+      // matching the address on the row. The Area is then read OFF that row,
+      // so it can never be aimed anywhere the invitation does not already
+      // point. The test immediately below proves every part of that, and it is
+      // what makes these two entries safe rather than merely declared.
+      accept_family_invitation:
+        "pre-member; the invitation id selects, the caller's own confirmed auth email authorizes (053)",
+      decline_family_invitation:
+        "pre-member; the invitation id selects, the caller's own confirmed auth email authorizes (053)",
     };
 
     await asOwner(db);
@@ -438,6 +453,94 @@ describe("the schema itself says every targeted mutation is guarded", () => {
     const unexplained = suspects.map((row) => row.proname).filter((name) => !(name in EXEMPT));
     assert.deepEqual(unexplained, [],
       "a new mutation that neither derives its target Area nor calls the guard");
+  });
+
+  describe("THE TWO PRE-MEMBER EXEMPTIONS ARE NARROW, AND THEY EARN IT", () => {
+    /*
+     * The blanket rule above stays blanket. This is the price of the two names
+     * written into it: each one has to prove, against the catalogue and against
+     * a real call, that dropping `require_acting_area()` gave a stranger
+     * nothing. If one of them ever grows an email parameter, a user uuid
+     * parameter, or a second table, this fails.
+     */
+    const INVITEE_ROUTINES = ["accept_family_invitation", "decline_family_invitation"];
+
+    test("neither takes a user uuid or an email -- only the invitation id", async () => {
+      await asOwner(db);
+      for (const name of INVITEE_ROUTINES) {
+        const [proc] = await rows(db, `
+          select pg_get_function_identity_arguments(p.oid) as args
+          from pg_proc p
+          where p.pronamespace = 'public'::regnamespace and p.proname = $1`, [name]);
+        assert.equal(proc.args, "p_invitation_id uuid",
+          `${name} must take exactly one uuid and nothing else -- no email, no user id`);
+      }
+    });
+
+    test("the caller comes from auth.uid(), and the address from auth.users", async () => {
+      await asOwner(db);
+      for (const name of INVITEE_ROUTINES) {
+        const [proc] = await rows(db, `
+          select p.prosrc, p.prosecdef, coalesce(array_to_string(p.proconfig, ','), '') as config
+          from pg_proc p
+          where p.pronamespace = 'public'::regnamespace and p.proname = $1`, [name]);
+
+        assert.match(proc.prosrc, /auth\.uid\(\)/u, `${name} must take its identity from auth context`);
+        assert.match(proc.prosrc, /auth\.users/u, `${name} must read the address from auth.users`);
+        assert.match(proc.prosrc, /email_confirmed_at is not null/u,
+          `${name} must refuse an unconfirmed address`);
+        assert.match(proc.prosrc, /lower\(m\.email\) = caller_email/u,
+          `${name} must match the row's address against the caller's own`);
+        assert.match(proc.prosrc, /m\.id = p_invitation_id/u,
+          `${name} must use the id as a selector, alongside the address, never instead of it`);
+        // The Area is read off the selected row, never taken from the caller.
+        assert.ok(!proc.prosrc.includes("acting_area"),
+          `${name} must not consult an acting Area it cannot have`);
+        assert.equal(proc.prosecdef, true, `${name} must still be a definer`);
+        assert.match(proc.config, /search_path=/u, `${name} must still pin its search_path`);
+        assert.equal(await value(db,
+          `select has_function_privilege('anon', 'public.${name}(uuid)', 'execute')`), false,
+        `${name} must not be reachable by anon`);
+      }
+    });
+
+    test("AND CROSS-AREA TARGETING IS IMPOSSIBLE, id in hand", async () => {
+      /*
+       * The behavioural half. An account genuinely invited to Bravo is handed
+       * the id of somebody else's open invitation in Alpha. Both routines must
+       * refuse it, and the Alpha row must be untouched afterwards.
+       */
+      await asOwner(db);
+      const invitee = await value(db, `
+        insert into auth.users (email, email_confirmed_at)
+        values ('cross-area-invitee@example.test', now()) returning id`);
+      const bravoPerson = await value(db,
+        "insert into public.people (area_id, name) values ($1, 'Cross invitee') returning id", [f.areas.bravo]);
+      await db.query(`
+        insert into public.app_members (area_id, person_id, email, role, active)
+        values ($1, $2, 'cross-area-invitee@example.test', 'member', true)`, [f.areas.bravo, bravoPerson]);
+
+      const alphaPerson = await value(db,
+        "insert into public.people (area_id, name) values ($1, 'Not for them') returning id", [f.areas.alpha]);
+      const alphaSeat = await value(db, `
+        insert into public.app_members (area_id, person_id, email, role, active)
+        values ($1, $2, 'someone-in-alpha@example.test', 'member', true) returning id`,
+      [f.areas.alpha, alphaPerson]);
+
+      for (const name of INVITEE_ROUTINES) {
+        const attempted = await probe(db, who(invitee, null),
+          `select public.${name}($1)`, [alphaSeat]);
+        assert.equal(attempted.ok, false, `${name} accepted an invitation in another family`);
+        assert.match(attempted.error, /that invitation is not yours/iu);
+      }
+
+      await asOwner(db);
+      const [seat] = await rows(db,
+        "select user_id, declined_at, active from public.app_members where id = $1", [alphaSeat]);
+      assert.equal(seat.user_id, null, "the Alpha invitation must be untouched");
+      assert.equal(seat.declined_at, null, "and not declined out from under its real invitee");
+      assert.equal(seat.active, true);
+    });
   });
 
   test("and every guarded routine is still a pinned definer that anon cannot call", async () => {

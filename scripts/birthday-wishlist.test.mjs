@@ -89,7 +89,11 @@ describe("migrations 001-038 are applied and immutable", () => {
     // table and changes no wishlist routine -- 040 still owns every one of
     // them. What it DOES change is who counts as a member at all, and that
     // is proved against a real database rather than counted here.
-    assert.equal(migrationFiles.length, 52);
+    // Roadmap Phase 3 adds 053: family invitation consent. It creates no policy
+    // on this table and changes no wishlist routine -- 040 still owns every one
+    // of them. What it changes is how an invited account BECOMES a member: by
+    // accepting, rather than by signing in.
+    assert.equal(migrationFiles.length, 53);
   });
 
   test("no earlier migration mentions the new ones", () => {
