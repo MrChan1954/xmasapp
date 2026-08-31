@@ -46,6 +46,23 @@
 --   `every new routine is SECURITY DEFINER with a pinned search_path` -- a
 --   definer routine with a mutable search_path is the classic escalation shape.
 --
+-- THE EVENT-TRIGGER EXCEPTION, AND WHY IT IS NOT A WEAKENING
+--   The schema-wide sweep, `NO callable SECURITY DEFINER routine anywhere has a
+--   mutable search_path`, skips exactly one thing: functions returning
+--   `pg_catalog.event_trigger`. Nothing else. A definer with `search_path=public`
+--   still FAILs; a definer with no proconfig at all still FAILs.
+--
+--   The first production run of this file reported one FAIL, `rls_auto_enable`,
+--   and it was a false positive of the predicate, not a defect of 053. That
+--   function returns `event_trigger`, so it cannot be invoked by any caller in
+--   any call shape -- it is not a routine an attacker can point at anything --
+--   and it is pinned, to `pg_catalog` rather than to `''`. It is Supabase
+--   platform state: no migration in this repository creates it, and 053 did not
+--   touch it. All four of 053's own routines passed the strict rule.
+--
+--   It is not filtered away. The row below the sweep names every definer event
+--   trigger with its pinning, and turns REVIEW if one is unpinned.
+--
 --   `no unclaimed non-QA invitation is left stranded` -- REVIEW, not PASS/FAIL.
 --   From the instant 053 applies, an outstanding invitation stops being
 --   auto-claimable and starts requiring Accept. The count is reported so a
@@ -283,18 +300,109 @@ select * from (
     'audit_log_action_check was NOT widened by 053',
     ''
 
+  -- THE SWEEP IS OVER CALLABLE ROUTINES, AND THE EXCEPTION IS ONE RETURN TYPE.
+  --
+  -- A function returning `event_trigger` is not a routine anybody can call: the
+  -- DDL machinery invokes it and nothing else can, in any call shape, which the
+  -- test suite proves rather than asserts. It is therefore not the escalation
+  -- shape this check exists to catch, and the empty search_path this rule
+  -- demands of ordinary definers is not the convention such functions use.
+  --
+  -- `prorettype <> 'pg_catalog.event_trigger'::regtype` is the WHOLE of the
+  -- exception. Every other SECURITY DEFINER routine in public -- every routine
+  -- 053 added, every routine it redefined, every routine before it -- must still
+  -- be pinned to `search_path=""` or this line reports FAIL. A definer with
+  -- `search_path=public`, or with no proconfig at all, still fails. Event
+  -- triggers are not waved through: they are reported by name, with their
+  -- pinning, in the REVIEW row immediately below.
   union all
   select
     case when not exists (
       select 1 from pg_proc p
       where p.pronamespace = 'public'::regnamespace
         and p.prosecdef
+        and p.prorettype <> 'pg_catalog.event_trigger'::regtype
         and not ('search_path=""' = any(coalesce(p.proconfig, array[]::text[])))
     ) then 'PASS' else 'FAIL' end,
-    'NO SECURITY DEFINER routine anywhere has a mutable search_path',
-    coalesce((select string_agg(proname, '; ') from pg_proc
+    'NO callable SECURITY DEFINER routine anywhere has a mutable search_path',
+    coalesce((select string_agg(proname || ' -> ' || coalesce(array_to_string(proconfig, ','), 'UNPINNED'), '; ' order by proname)
+              from pg_proc
               where pronamespace = 'public'::regnamespace and prosecdef
+                and prorettype <> 'pg_catalog.event_trigger'::regtype
                 and not ('search_path=""' = any(coalesce(proconfig, array[]::text[])))), 'none')
+
+  -- THE OTHER HALF OF THE SAME INVARIANT: what the sweep above stepped over.
+  --
+  -- Nothing is filtered out silently. Every SECURITY DEFINER function in public
+  -- that returns `event_trigger` is named here with its pinning, so a person
+  -- reads it rather than a predicate deciding for them.
+  --
+  -- In production this row reports exactly one function, `rls_auto_enable`:
+  -- SECURITY DEFINER, returns `event_trigger`, pinned `search_path=pg_catalog`,
+  -- not directly callable as an ordinary routine or RPC, and Supabase platform
+  -- state -- it is created by no migration in this repository and 053 did not
+  -- introduce it. It is documented, with the verbatim body out of the
+  -- production schema dump, in `scripts/pg/production-objects.sql`.
+  --
+  -- INFO while every such function is pinned. REVIEW the moment one is not --
+  -- an unpinned definer event trigger is a person's decision, not a predicate's.
+  union all
+  select
+    case when not exists (
+      select 1 from pg_proc p
+      where p.pronamespace = 'public'::regnamespace
+        and p.prosecdef
+        and p.prorettype = 'pg_catalog.event_trigger'::regtype
+        and not ('search_path=""' = any(coalesce(p.proconfig, array[]::text[])))
+        and not ('search_path=pg_catalog' = any(coalesce(p.proconfig, array[]::text[])))
+    ) then 'INFO' else 'REVIEW' end,
+    'event-trigger SECURITY DEFINER functions, reviewed separately from the sweep',
+    coalesce((select string_agg(
+                p.proname || ' -> returns event_trigger, SECURITY DEFINER, '
+                || coalesce(array_to_string(p.proconfig, ','), 'UNPINNED')
+                || ', not directly callable as an ordinary routine or RPC'
+                || case when p.proname = 'rls_auto_enable'
+                        then ', platform/Supabase state and not introduced by migration 053'
+                        else ', NOT a known platform object -- look at it' end,
+                '; ' order by p.proname)
+              from pg_proc p
+              where p.pronamespace = 'public'::regnamespace
+                and p.prosecdef
+                and p.prorettype = 'pg_catalog.event_trigger'::regtype), 'none')
+
+  -- WHAT THE ROLLBACK LEAVES BEHIND IF IT IS EVER RUN.
+  --
+  -- `docs/Q20-053-ROLLBACK.sql` copies every membership row into
+  -- `public.app_members_053_backup` before it undoes anything, and does not
+  -- remove that copy afterwards -- deliberately, because a rollback that
+  -- destroys its own evidence is worthless. The copy carries real email
+  -- addresses, so its presence is a REVIEW: somebody has to decide when the
+  -- apply is settled enough for it to go.
+  --
+  -- Presence is not exposure. It is read out of the catalogue rather than by
+  -- touching the table, and the two facts that matter -- row level security on,
+  -- no policy attached -- are reported with it. That combination is deny-all for
+  -- `anon` and `authenticated` whatever the platform's blanket GRANT says.
+  union all
+  select
+    case when to_regclass('public.app_members_053_backup') is null
+    then 'PASS' else 'REVIEW' end,
+    'no rollback residue is left holding a copy of every membership row',
+    case when to_regclass('public.app_members_053_backup') is null
+    then 'app_members_053_backup does not exist'
+    else 'app_members_053_backup EXISTS -- row level security '
+         -- `to_regclass`, never a `::regclass` literal: a literal cast is
+         -- resolved when this file is PARSED, so on a database without the
+         -- table the whole report would stop with an error instead of
+         -- reporting PASS.
+         || case when (select c.relrowsecurity from pg_class c
+                       where c.oid = to_regclass('public.app_members_053_backup'))
+                 then 'ON' else 'OFF' end
+         || ', policies attached: '
+         || (select count(*)::text from pg_policies
+             where schemaname = 'public' and tablename = 'app_members_053_backup')
+         || '. It is a copy of every membership row, addresses included. '
+            'Decide whether to remove it.' end
 
   union all
   select

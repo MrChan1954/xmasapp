@@ -1,7 +1,7 @@
 # Current State
 
-**Last updated:** 2026-08-31, after roadmap Phase 1 fixed the two live
-navigation/admin regressions and deployed them.
+**Last updated:** 2026-08-31, after roadmap Phase 4B closed out the production
+apply of migration 053.
 
 The handoff between phases. Current facts only — history lives in git.
 
@@ -10,17 +10,17 @@ The handoff between phases. Current facts only — history lives in git.
 | Fact | Value |
 | ---- | ----- |
 | Live site | `https://xmas-family.uk/` |
-| Last completed phase | **Roadmap Phase 3B — the pre-053 test assertions reconciled, and production confirmed still on 052.** The whole suite is green on a 053 database. Nothing was applied, pushed or deployed. |
+| Last completed phase | **Roadmap Phase 4B — migration 053 applied to production, and the one post-apply FAIL diagnosed as a false positive and corrected.** |
 | Q19 verdict | `LAUNCH STEP 1 PASS — READY FOR LIVE SIGN-UP E2E` |
-| Next phase | **Roadmap Phase 4 — apply migration 053 to production, manually.** Nothing else blocks it: see "Roadmap Phase 3B" below for the exact apply scope. |
-| Migration 053 | **WRITTEN, REHEARSED, GREEN — AND NOT APPLIED.** Production carries 001–052 only, re-confirmed read-only on 2026-08-31. |
+| Next phase | **The family invitation runtime.** The database is ready; **no invitation UI exists yet** — nothing in the runtime lists, sends, accepts or declines an invitation. |
+| Migration 053 | **APPLIED TO PRODUCTION**, 2026-08-31, between 17:31 and 18:30 UTC. Verified live read-only: `app_members.declined_at` exists and all four routines are exposed, SECURITY DEFINER, `search_path=""`. |
 | Cleanup hold | **QA Alpha, QA Charlie and Tricketts must not be deleted** until the live invitation tests complete. QA Bravo stays unless explicitly requested. |
 | Branch | `main` |
-| Local HEAD | `b21b798` plus this docs commit. |
-| origin/main | `b21b798` — Phase 1, deployed 2026-08-31 ~15:12 UTC. |
+| Local HEAD | see git; Phase 4B pushed the three held commits plus its own. |
+| origin/main | the Phase 4B commit. The three commits held back since Phase 3 are no longer held. |
 | Serving Worker | **the Q19 runtime.** `/sign-up` returns 200 live; `/login` offers *Create an account*. |
 | Product name | **Gift Planner** |
-| Migrations applied | **001–052**, immutable. 052 applied manually 2026-08-31 01:06:23 UTC. |
+| Migrations applied | **001–053**, immutable. 053 applied manually 2026-08-31; there is no 054. |
 | Migration **052** | **APPLIED and verified.** 37 PASS / 0 FAIL across its 40 post-apply checks. |
 | Public sign-up | **ON**, and **Confirm Email is ON**. Both machine-read from GoTrue, not taken on trust. |
 | Global administrators | **one**, bootstrapped 2026-08-31 01:18:25 UTC. |
@@ -29,6 +29,90 @@ The handoff between phases. Current facts only — history lives in git.
 > front door is open and Auth email now reaches a real address — but **nobody
 > has ever completed a real sign-up**. That is the next phase, and it needs one
 > email address the user chooses.
+
+## Roadmap Phase 4 and 4B — migration 053 applied, and the one FAIL explained
+
+**Migration 053 is live.** It was applied manually on 2026-08-31, in the window
+between the 17:31 UTC backup (which has no `declined_at`) and the 18:30 UTC one
+(which has it, and all four routines). Verified independently and read-only
+against the live database: `app_members.declined_at` is selectable, and
+`list_my_family_invitations`, `accept_family_invitation`,
+`decline_family_invitation` and `record_invitation_delivery` are all exposed,
+all `SECURITY DEFINER`, all pinned to the empty search path.
+
+**The backup reference.** Backup workflow run `33419857093`,
+`2026-08-31T17:31:11Z`, taken before the apply — 1111 data rows, 23 public COPY
+blocks. The post-apply dump is run `33425294174`, `2026-08-31T18:30:37Z` — 1124
+rows, 24 blocks.
+
+**The rollback mishap, factually.** `docs/Q20-053-ROLLBACK.sql` was run against
+production by accident after the apply, and **053 was re-applied successfully
+afterwards**. No membership row was created or destroyed: the rollback copies
+every row into `public.app_members_053_backup` before it touches anything, and
+that copy is still there — see the open item below.
+
+### The one FAIL was a false positive, and the predicate was wrong
+
+The first production run of `docs/Q20-053-POST-APPLY-CHECKS.sql` reported
+exactly one FAIL, from the schema-wide check `NO SECURITY DEFINER routine
+anywhere has a mutable search_path`, naming `rls_auto_enable`.
+
+**The cause.** That check treated every `SECURITY DEFINER` routine in `public`
+as unsafe unless its `proconfig` contained `search_path=""`.
+`public.rls_auto_enable` is a definer, and it *is* pinned — but to `pg_catalog`,
+not to the empty string. It also **returns `event_trigger`**, so it is not a
+routine anybody can call: no call shape reaches it, which
+`migration-execution.test.mjs` proves by trying three of them. It is Supabase
+platform state — no migration in this repository creates it, and 053 did not
+touch it. All four of 053's own routines passed the strict rule.
+
+**The correction**, in `docs/Q20-053-POST-APPLY-CHECKS.sql`:
+
+| Change | What it is |
+| ------ | ---------- |
+| The sweep is now over **callable** routines | one clause added: `and p.prorettype <> 'pg_catalog.event_trigger'::regtype` |
+| Nothing else was relaxed | a definer with `search_path=public`, one with `search_path=pg_catalog`, and one with no `proconfig` at all all still FAIL |
+| The exception is by return type, never by name | no check excuses a routine because of what it is called |
+| Event triggers are reviewed, not hidden | a new row names every definer event trigger with its pinning: **INFO** while each is pinned, **REVIEW** the moment one is not |
+
+Evaluated against production's own post-apply schema dump, the corrected sweep
+reports **PASS, detail `none`**, over 102 callable definers; the old predicate
+reports FAIL naming `rls_auto_enable`, which is the reported failure reproduced
+exactly. The review row reports INFO, naming the one definer event trigger in
+`public`.
+
+**No migration 054 was written**, and none is needed. Repinning
+`rls_auto_enable` to the empty search path would adopt platform state into
+migration-owned schema for no security gain.
+
+### The rehearsal now carries the platform object too
+
+Phase 3 missed this because the rehearsal builds its schema from migrations
+alone, and production also holds objects no migration creates.
+`scripts/pg/production-objects.sql` — the function and its event trigger,
+verbatim from the production dump — is now loaded by
+`family-invitations-rollback.test.mjs` for both the post-apply run and the
+rollback run. A PASS there now means what a PASS in the SQL editor means. It
+also reproduces a second production fact: the rollback's backup table came out
+with row level security already on, because this trigger turned it on.
+
+### Open item — the rollback residue
+
+`public.app_members_053_backup` **exists in production**, holding 13 membership
+rows with addresses in them. It is **not exposed**: row level security is on and
+no policy is attached, so `anon` and `authenticated` read zero rows — confirmed
+live with the publishable key, which returned `[]`. `service_role` bypasses RLS,
+as it does everywhere. The post-apply checks now report the table as **REVIEW**,
+with its RLS and policy state read out of the catalogue.
+
+**Somebody has to decide when to drop it. It was not dropped in Phase 4B**,
+which altered no production schema.
+
+### What is NOT done
+
+**There is no invitation runtime.** Nothing in the UI lists, sends, accepts or
+declines a family invitation, and no real invitation has been sent. 053 gave the
+database the routines and the consent rule, and that is all it gave.
 
 ## Roadmap Phase 1 — two live regressions, and what caused them
 
@@ -1020,6 +1104,9 @@ green — before Phase 4 applies anything to production.
 **Verdict: `PHASE 3B PASS`.** The full suite is **2115/2115, 0 fail** against a
 database carrying 001–053. Production was inspected read-only and is still on
 052. **053 remains unapplied.**
+
+> **Superseded.** 053 was applied in Phase 4. See "Roadmap Phase 4 and 4B"
+> above for the current state.
 
 ### The Phase 3 blocker said thirteen. The suite said twenty.
 
