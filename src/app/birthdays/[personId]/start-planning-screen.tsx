@@ -45,7 +45,7 @@ export function StartPlanningScreen({
   year,
   occurrenceDate,
   contributors,
-  isAdmin,
+  canStartPlanning,
 }: {
   personId: string;
   personName: string;
@@ -53,7 +53,7 @@ export function StartPlanningScreen({
   year: number;
   occurrenceDate: string | null;
   contributors: EligibleContributor[];
-  isAdmin: boolean;
+  canStartPlanning: boolean;
 }) {
   const router = useRouter();
   const firstName = personName.split(" ")[0];
@@ -114,7 +114,7 @@ export function StartPlanningScreen({
           className="mt-8"
           illustration="star"
           title="No birthday saved"
-          body={isAdmin
+          body={canStartPlanning
             ? "Add the date on the Birthdays page first — planning is for a date the family knows."
             : "An admin has not recorded this birthday yet."}
         />
@@ -125,7 +125,7 @@ export function StartPlanningScreen({
     );
   }
 
-  if (!isAdmin) {
+  if (!canStartPlanning) {
     return (
       <AppShell width="narrow">
         <PageHeader
@@ -134,7 +134,7 @@ export function StartPlanningScreen({
           description={withTurning(`${formatBirthday(birthday.month, birthday.day)}${next ? ` · ${describeDaysAway(next.daysAway)}` : ""}`)}
         />
         <Notice tone="info" className="mt-6">
-          Nothing has been planned for {firstName}&apos;s {year} birthday yet. An admin starts the
+          Nothing has been planned for {firstName}&apos;s {year} birthday yet. Your family&apos;s admin or a contributor starts the
           planning, and it will appear here once they have.
         </Notice>
         <WishlistPanel

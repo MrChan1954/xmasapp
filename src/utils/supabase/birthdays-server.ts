@@ -1,7 +1,7 @@
 import "server-only";
 
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { nextBirthdayOccurrence, personBirthdayFromRow, type PersonBirthday } from "@/lib/birthdays.ts";
+import { mayStartBirthdayPlanning, nextBirthdayOccurrence, personBirthdayFromRow, type PersonBirthday } from "@/lib/birthdays.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { canWriteWishlist, sortWishlist, toWishlistEntry, wishlistYear, type WishlistEntry } from "@/lib/wishlist.ts";
 import { getCurrentMember } from "./current-member";
@@ -369,6 +369,13 @@ export type BirthdayWorkspace = {
    */
   unused: BirthdayOccurrence[];
   isAdmin: boolean;
+  /**
+   * May the reader start this birthday's planning? The family's administrator
+   * or one of its contributors -- the same pair `start_birthday_planning`
+   * accepts (migration 043), which decides for real. Never true for the
+   * celebrant, who is never shown the setup at all.
+   */
+  canStartPlanning: boolean;
   today: string;
   /**
    * WHAT THIS PERSON HAS SAID THEY WOULD LIKE.
@@ -504,6 +511,13 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
   const isSelf = (member.person_id as string | null) !== null
     && member.person_id === person.personId;
 
+  const canStartPlanning = mayStartBirthdayPlanning({
+    isAdmin,
+    isSelf,
+    viewerPersonId: (member.person_id as string | null) ?? null,
+    eligibleContributors,
+  });
+
   /**
    * May the reader add to this list? Only the birthday person, resolved inside
    * this Area. The database decides for real (migration 040); this decides
@@ -522,7 +536,7 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
       // Nobody is offered as a contributor to the reader's own birthday,
       // because the reader is never setting it up.
       eligibleContributors: isSelf ? [] : eligibleContributors,
-      previous: [], unused: [], isSelf, isAdmin, today,
+      previous: [], unused: [], isSelf, isAdmin, canStartPlanning, today,
       wishlist, wishlistYear: listYear, canWriteWishlist: mayWriteWishlist,
     };
   }
@@ -639,7 +653,7 @@ export async function loadBirthdayWorkspace(personId: string): Promise<BirthdayW
 
   return {
     person, current, currentYear, nextOccurrenceDate, eligibleContributors,
-    previous, unused, isSelf, isAdmin, today,
+    previous, unused, isSelf, isAdmin, canStartPlanning, today,
     wishlist, wishlistYear: listYear, canWriteWishlist: mayWriteWishlist,
   };
 }

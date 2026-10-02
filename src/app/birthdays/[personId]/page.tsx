@@ -20,7 +20,8 @@ export const dynamic = "force-dynamic";
  *   then gets out of the way:
  *
  *     planning exists      -> redirect to its Event Home
- *     planning does not    -> the focused setup screen, for the Global Admin
+ *     planning does not    -> the focused setup screen, for the family's admin
+ *                             or any of its contributors
  *
  *   There used to be a financial landing page in between, with its own budget,
  *   spend and links to Ideas, Add, Owed and Payments. It was a second copy of
@@ -87,7 +88,7 @@ export default async function BirthdayPage({ params }: PageProps<"/birthdays/[pe
       year={workspace.currentYear}
       occurrenceDate={workspace.nextOccurrenceDate}
       contributors={workspace.eligibleContributors}
-      isAdmin={workspace.isAdmin}
+      canStartPlanning={workspace.canStartPlanning}
     />
   );
 }

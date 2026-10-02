@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { BUDGET_NOT_SET, MILESTONE_AGES, REMINDER_STAGES, SELF_PRIVATE_DETAIL, SELF_PRIVATE_HEADLINE, addCalendarMonths, ageOnOccurrence, birthdayBudgetLabel, birthdayCardState, birthdayOccurrence, birthdaysWithinWindow, describeDaysAway, describeTurningAge, dueReminderStages, formatBirthday, isMilestoneAge, isValidBirthday, isValidBirthYear, nextBirthdayOccurrence, peopleWithoutBirthdays, personBirthdayFromRow, suggestedBirthdayEventName, upcomingBirthdays, type PersonBirthday } from "./birthdays.ts";
+import { BUDGET_NOT_SET, MILESTONE_AGES, REMINDER_STAGES, SELF_PRIVATE_DETAIL, SELF_PRIVATE_HEADLINE, addCalendarMonths, ageOnOccurrence, birthdayBudgetLabel, birthdayCardState, birthdayOccurrence, birthdaysWithinWindow, describeDaysAway, describeTurningAge, dueReminderStages, formatBirthday, isMilestoneAge, mayStartBirthdayPlanning, isValidBirthday, isValidBirthYear, nextBirthdayOccurrence, peopleWithoutBirthdays, personBirthdayFromRow, suggestedBirthdayEventName, upcomingBirthdays, type PersonBirthday } from "./birthdays.ts";
 
 // ---------------------------------------------------------------------------
 // What this file is for
@@ -730,5 +730,52 @@ test("a non-integer budget is refused rather than rounded", () => {
   assert.throws(
     () => birthdayBudgetLabel({ isSelf: false, planning: setTo(12.5) }),
     /integer number of pennies/u,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Who is offered "Start planning"
+//
+// Migration 043 lets the family's admin OR any of its contributors start a
+// birthday. The screen used to offer it to the admin alone, so contributors
+// were told "an admin starts the planning" for an action the database would
+// have accepted from them.
+// ---------------------------------------------------------------------------
+
+const pool = [{ personId: "jade" }, { personId: "kirsten" }, { personId: "paige" }];
+
+test("a contributor who is not the admin may start somebody else's birthday", () => {
+  assert.equal(
+    mayStartBirthdayPlanning({ isAdmin: false, isSelf: false, viewerPersonId: "jade", eligibleContributors: pool }),
+    true,
+  );
+});
+
+test("the admin may start a birthday even when not in the contributor pool", () => {
+  assert.equal(
+    mayStartBirthdayPlanning({ isAdmin: true, isSelf: false, viewerPersonId: "taylor", eligibleContributors: pool }),
+    true,
+  );
+});
+
+test("an ordinary member outside the pool is still not offered it", () => {
+  assert.equal(
+    mayStartBirthdayPlanning({ isAdmin: false, isSelf: false, viewerPersonId: "ben", eligibleContributors: pool }),
+    false,
+  );
+  assert.equal(
+    mayStartBirthdayPlanning({ isAdmin: false, isSelf: false, viewerPersonId: null, eligibleContributors: pool }),
+    false,
+  );
+});
+
+test("nobody is offered their OWN birthday's setup -- not even the admin", () => {
+  assert.equal(
+    mayStartBirthdayPlanning({ isAdmin: true, isSelf: true, viewerPersonId: "taylor", eligibleContributors: pool }),
+    false,
+  );
+  assert.equal(
+    mayStartBirthdayPlanning({ isAdmin: false, isSelf: true, viewerPersonId: "jade", eligibleContributors: pool }),
+    false,
   );
 });

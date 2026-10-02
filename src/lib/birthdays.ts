@@ -534,6 +534,27 @@ export function peopleWithoutBirthdays(people: readonly PersonBirthday[]): Perso
     .sort((left, right) => left.name.localeCompare(right.name, "en-GB"));
 }
 
+/**
+ * May the reader be offered the form that starts a birthday's planning?
+ *
+ * The family's administrator, or any of its contributors -- the same pair
+ * `start_birthday_planning` accepts (migration 043), which is what decides for
+ * real. Never the celebrant: their own birthday's setup is the one surprise
+ * they are not shown, admin or not. `eligibleContributors` is this family's
+ * pool with the celebrant already removed.
+ */
+export function mayStartBirthdayPlanning(input: {
+  isAdmin: boolean;
+  isSelf: boolean;
+  viewerPersonId: string | null;
+  eligibleContributors: ReadonlyArray<{ personId: string }>;
+}): boolean {
+  if (input.isSelf) return false;
+  if (input.isAdmin) return true;
+  return input.viewerPersonId !== null
+    && input.eligibleContributors.some((entry) => entry.personId === input.viewerPersonId);
+}
+
 /** The name a Birthday Event gets by default. */
 export function suggestedBirthdayEventName(personName: string, year: number): string {
   const trimmed = personName.trim();

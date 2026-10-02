@@ -60,7 +60,7 @@ test("1. a permanent birthday with no occurrence at all is a valid page", () => 
   // than a failure path.
   assert.ok(
     workspaceServer.includes("if (isSelf || events.length === 0) {")
-    && workspaceServer.includes("previous: [], unused: [], isSelf, isAdmin, today,"),
+    && workspaceServer.includes("previous: [], unused: [], isSelf, isAdmin, canStartPlanning, today,"),
     "no occurrences is an ordinary return, not a failure",
   );
 
