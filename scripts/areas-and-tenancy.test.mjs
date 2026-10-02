@@ -684,14 +684,30 @@ describe("nothing in the app assumes one login means one membership", () => {
       ["src/utils/supabase/payment-log-server.ts", "getCurrentMember"],
       ["src/utils/supabase/notifications-server.ts", "getCurrentMember"],
       ["src/utils/supabase/family-access-admin.ts", "getCurrentMember"],
-      ["src/app/owed/owed-data.ts", "getCurrentMemberClient"],
-      ["src/app/family-context.tsx", "getCurrentMemberClient"],
-      ["src/app/add-purchase/purchase-form.tsx", "getCurrentMemberClient"],
+      // These four share one answer per burst through `sharedMember`, which is
+      // itself nothing but the one resolver behind a short-lived share.
+      ["src/utils/supabase/shared-session.ts", "getCurrentMemberClient"],
+      ["src/app/owed/owed-data.ts", "sharedMember"],
+      ["src/app/family-context.tsx", "sharedMember"],
+      ["src/app/add-purchase/purchase-form.tsx", "sharedMember"],
       ["src/app/more/notifications/page.tsx", "getCurrentMemberClient"],
     ]) {
       assert.match(read(file), new RegExp(`${resolver}\\(`, "u"),
         `${file} must resolve the membership for the family on screen`);
     }
+  });
+
+  test("a shared membership is never shared across families or sessions", () => {
+    // `sharedMember` hands one answer to every caller in a burst. Its key is the
+    // session token AND the remembered Area, so switching family, signing in or
+    // out, or a refreshed token is always a fresh read -- never the previous
+    // family's membership.
+    const source = withoutComments(read("src/utils/supabase/shared-session.ts"));
+    assert.match(source, /share\("member", `\$\{token\}\|\$\{rememberedAreaId\(\) \?\? ""\}`/u);
+    assert.match(source, /share\("user", token,/u);
+    assert.match(source, /share\("status", token,/u);
+    // And a missing membership is never what gets shared.
+    assert.match(source, /if \(!member\) throw new NothingToShare\(\);/u);
   });
 
   test("the two resolvers refuse to guess, rather than picking one", () => {

@@ -4,8 +4,7 @@ import { Check, Home, LogOut, Plus, Settings, ShieldCheck, Snowflake, User, User
 import { useEffect, useState } from "react";
 import { CREATE_AREA_LABEL, CREATE_AREA_PATH } from "@/lib/areas";
 import { GLOBAL_ADMIN_PATH } from "@/lib/account-status";
-import { loadAccountStatusClient } from "@/utils/supabase/account-status-client";
-import { createClient } from "@/utils/supabase/client";
+import { sharedAccountStatus, sharedUser } from "@/utils/supabase/shared-session";
 import { signOut } from "@/utils/supabase/sign-out";
 import { useFamily } from "../family-context";
 import { useFestive } from "./festive/festive-context";
@@ -39,8 +38,10 @@ export function AccountMenu() {
 
   useEffect(() => {
     let live = true;
-    void createClient().auth.getUser().then(({ data }) => { if (live) setEmail(data.user?.email ?? ""); });
-    void loadAccountStatusClient().then((status) => { if (live) setIsGlobalAdmin(status.isGlobalAdmin); });
+    // The same answers the family context has just asked for; this menu
+    // re-mounts on every navigation, so it shares them rather than re-asking.
+    void sharedUser().then((user) => { if (live) setEmail(user?.email ?? ""); });
+    void sharedAccountStatus().then((status) => { if (live) setIsGlobalAdmin(status.isGlobalAdmin); });
     return () => { live = false; };
   }, []);
 

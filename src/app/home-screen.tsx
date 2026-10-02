@@ -58,20 +58,44 @@ export function EventHome({ eventId, eventName, eventType, eventDate }: {
     return () => { mountedRef.current = false; };
   }, []);
 
+  // The half of `load` that needs nothing from the family context: this event's
+  // contributors and the Owed balances. Both are scoped by `eventId` alone.
+  const fetchContributorsAndOwed = useCallback(() => {
+    const db = createClient();
+    return Promise.all([
+      db.from("contributors").select("id,person_id").eq("christmas_event_id", eventId).eq("active", true),
+      loadOwedData(eventId)
+        .then((data) => ({ data, failed: false }))
+        .catch(() => ({ data: null, failed: true })),
+    ]);
+  }, [eventId]);
+
+  /*
+   * STARTED AT ONCE, CONSUMED BY THE FIRST LOAD.
+   *
+   * The rest of `load` needs the event's active recipients, which arrive with
+   * the family context. It used to run immediately anyway, with an empty list,
+   * and then run again in full when the context landed -- every Owed and
+   * contributor query twice on every visit. Now the first load waits for the
+   * context, and this half is already in flight while it does.
+   */
+  const prefetched = useRef<{ eventId: string; result: ReturnType<typeof fetchContributorsAndOwed> } | null>(null);
+  useEffect(() => {
+    prefetched.current = { eventId, result: fetchContributorsAndOwed() };
+  }, [eventId, fetchContributorsAndOwed]);
+
   // `quiet` leaves the current figures on screen while a background refresh runs,
   // so a change made on another device swaps the numbers in place instead of
-  // flashing the Owed panel back to its loading state.
+  // flashing the Owed panel back to its loading state. A quiet load is a
+  // refresh, so it never reuses the prefetched answer.
   const load = useCallback(async (quiet = false) => {
     const mounted = () => mountedRef.current;
     {
       const db = createClient();
       if (!quiet) setOwedSnapshot({ summary: null, unavailable: false, loading: true });
-      const [contributorRows, owedResult] = await Promise.all([
-        db.from("contributors").select("id,person_id").eq("christmas_event_id", eventId).eq("active", true),
-        loadOwedData(eventId)
-          .then((data) => ({ data, failed: false }))
-          .catch(() => ({ data: null, failed: true })),
-      ]);
+      const early = !quiet && prefetched.current?.eventId === eventId ? prefetched.current.result : null;
+      prefetched.current = null;
+      const [contributorRows, owedResult] = await (early ?? fetchContributorsAndOwed());
       if (!mounted()) return;
       if (contributorRows.error) {
         setFinancialError("Contributor totals could not be loaded.");
@@ -139,14 +163,17 @@ export function EventHome({ eventId, eventName, eventType, eventDate }: {
         ? "Contributor spending totals are unavailable until the Purchases migration is applied."
         : null);
     }
-  }, [active, eventId]);
+  }, [active, eventId, fetchContributorsAndOwed]);
 
   // Deferred to a timeout for the same reason as the family context: it keeps
   // the first paint free of a synchronous state update from an effect body.
+  // Held until the family context has loaded, so `active` is this event's real
+  // recipient list and the load runs once rather than twice.
   useEffect(() => {
+    if (loading) return;
     const handle = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(handle);
-  }, [load]);
+  }, [load, loading]);
 
   // Contributor cards and the Owed panel are derived from these tables, so a
   // change on another device should land here without a reload. `people` and

@@ -2063,6 +2063,32 @@ on conflict (user_id) do nothing;`,
 const signOut = async () => { await createClient().auth.signOut(); void canonicalSignOut; };`,
     suites: ["scripts/canonical-paths.test.mjs"],
   },
+
+  // -------------------------------------------------------------------------
+  // PERF-1: duplicate lookups removed. Sharing an answer is only safe while the
+  // key says WHOSE answer and WHICH family's; these put that back in doubt.
+  // -------------------------------------------------------------------------
+  {
+    name: "PERF-1. a shared answer is handed to a caller asking under a different key",
+    file: "src/lib/shared-lookup.ts",
+    from: "    if (hit && hit.key === key && now() - hit.at < shareForMs) return hit.value as Promise<T>;",
+    to: "    if (hit && now() - hit.at < shareForMs) return hit.value as Promise<T>;",
+    suites: ["src/lib/shared-lookup.test.ts"],
+  },
+  {
+    name: "PERF-2. the shared membership forgets which family is on screen",
+    file: "src/utils/supabase/shared-session.ts",
+    from: "    return await share(\"member\", `${token}|${rememberedAreaId() ?? \"\"}`, async () => {",
+    to: "    return await share(\"member\", token, async () => {",
+    suites: ["scripts/areas-and-tenancy.test.mjs"],
+  },
+  {
+    name: "PERF-3. Event Home uses an answer prefetched for a different event",
+    file: "src/app/home-screen.tsx",
+    from: "      const early = !quiet && prefetched.current?.eventId === eventId ? prefetched.current.result : null;",
+    to: "      const early = !quiet && prefetched.current ? prefetched.current.result : null;",
+    suites: ["scripts/event-routing.test.mjs"],
+  },
 ];
 
 function runSuite(suite) {

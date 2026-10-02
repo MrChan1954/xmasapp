@@ -196,10 +196,8 @@ export async function loadPersonProfile(personId: string): Promise<PersonProfile
   const db = await createClient();
   const today = londonToday();
 
-  const { data: auth } = await db.auth.getUser();
-  if (!auth.user) return null;
-
-  const { member } = await getCurrentMember();
+  const { user, member } = await getCurrentMember();
+  if (!user) return null;
   const areaId = (member?.area_id as string | null) ?? null;
   if (!member || !areaId) return null;
 

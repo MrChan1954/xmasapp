@@ -1,4 +1,5 @@
 import { SIGNED_OUT, accountStatusFrom, type AccountStatus } from "@/lib/account-status";
+import { cache } from "react";
 import { firstRow } from "./account-status-client";
 import { createClient } from "./server";
 
@@ -16,12 +17,14 @@ import { createClient } from "./server";
  * exactly what lets `/admin/accounts` authorise itself for a Gift Planner
  * administrator who belongs to no family at all.
  */
-export async function loadAccountStatus(): Promise<AccountStatus> {
+export const loadAccountStatus = cache(async (): Promise<AccountStatus> => {
+  // Once per request; `getAuthUser` in `current-member.ts` explains why React's
+  // server `cache` cannot carry an answer into anybody else's request.
   const db = await createClient();
   const { data, error } = await db.rpc("my_account_status");
   if (error) return SIGNED_OUT;
   return accountStatusFrom(firstRow(data));
-}
+});
 
 /**
  * ==========================================================================

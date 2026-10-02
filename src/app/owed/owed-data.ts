@@ -1,5 +1,5 @@
 import { createClient } from "@/utils/supabase/client";
-import { getCurrentMemberClient } from "@/utils/supabase/current-member-client";
+import { sharedMember, sharedUser } from "@/utils/supabase/shared-session";
 import {
   calculateNetOwedBalances,
   type NetOwedBalance,
@@ -67,13 +67,15 @@ export type OwedData = {
  */
 export async function loadOwedData(eventId: string): Promise<OwedData> {
   const db = createClient();
-  const authResult = await db.auth.getUser();
+  // Shared with the family context, which has usually just asked the same
+  // two questions. See `shared-session.ts`.
+  const user = await sharedUser();
+  if (!user) throw new Error("Your signed-in account could not be verified.");
 
-  const user = authResult.data.user;
-  if (authResult.error || !user) throw new Error("Your signed-in account could not be verified.");
-
+  // The membership runs BESIDE the two event reads. It used to be awaited
+  // inside this array, which made the other two wait for it.
   const [memberResult, contributorResult, recipientResult] = await Promise.all([
-    Promise.resolve({ data: await getCurrentMemberClient(), error: null }),
+    sharedMember().then((data) => ({ data, error: null })),
     db.from("contributors").select("id,person_id,active").eq("christmas_event_id", eventId),
     db.from("christmas_recipients").select("id,person_id").eq("christmas_event_id", eventId),
   ]);

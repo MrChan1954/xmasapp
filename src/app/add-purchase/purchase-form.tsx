@@ -19,7 +19,7 @@ import {
   splitPurchaseByWeights,
   type PurchaseStatus,
 } from "@/lib/purchases";
-import { getCurrentMemberClient } from "@/utils/supabase/current-member-client";
+import { sharedMember, sharedUser } from "@/utils/supabase/shared-session";
 import { createClient } from "@/utils/supabase/client";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { eventPath } from "@/lib/events.ts";
@@ -144,7 +144,8 @@ export function PurchaseForm({ eventId }: { eventId: string }) {
       const [recipientRows, contributorRows, auth] = await Promise.all([
         db.from("christmas_recipients").select("id,person_id,budget_pennies,active").eq("christmas_event_id", eventId).order("created_at"),
         db.from("contributors").select("id,person_id,active").eq("christmas_event_id", eventId),
-        db.auth.getUser(),
+        // Shared with the family context; see `shared-session.ts`.
+        sharedUser().then((user) => ({ data: { user } })),
       ]);
       if (!active) return;
       if (recipientRows.error || contributorRows.error || !auth.data.user) {
@@ -162,7 +163,7 @@ export function PurchaseForm({ eventId }: { eventId: string }) {
         db.from("people").select("id,name").in("id", personIds),
         // Which contributor the buyer is IN THIS FAMILY. A login in two has one
         // in each, and `maybeSingle()` would error rather than choose.
-        getCurrentMemberClient().then((member) => ({ data: member, error: null })),
+        sharedMember().then((member) => ({ data: member, error: null })),
         recipientIds.length
           ? db.from("purchases").select("christmas_recipient_id,actual_price_pennies").in("christmas_recipient_id", recipientIds).is("deleted_at", null)
           : Promise.resolve({ data: [], error: null }),

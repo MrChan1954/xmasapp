@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { getCurrentMemberClient } from "@/utils/supabase/current-member-client";
+import { sharedMember } from "@/utils/supabase/shared-session";
 import { createClient } from "@/utils/supabase/client";
 import { AppShell, PageHeader } from "../../components/app-shell";
 import { Button, Notice, Skeleton, cx } from "../../components/ui";
@@ -50,12 +51,11 @@ export default function NotificationsPage() {
 
     const load = async () => {
       const db = createClient();
-      const auth = await db.auth.getUser();
-      if (!auth.data.user) return;
-
       // The membership in the family on screen: preferences are stored per
-      // membership, so a login in two families has a set in each.
-      const member = { data: await getCurrentMemberClient() };
+      // membership, so a login in two families has a set in each. Shared with
+      // the family context, which has just asked the same thing (and which
+      // returns null for nobody signed in); the write below still asks itself.
+      const member = { data: await sharedMember() };
       if (!active || !member.data) return;
 
       const stored = await db

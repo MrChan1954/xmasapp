@@ -27,16 +27,17 @@ export async function loadPaymentLog(eventId: string): Promise<PaymentLogRespons
   if (!validEventId.ok) throw new PaymentLogServerError(404, "That event could not be found.");
 
   const session = await createSessionClient();
-  const auth = await session.auth.getUser();
-  if (auth.error || !auth.data.user) throw new PaymentLogServerError(401, "You must sign in to view the Payment Log.");
 
   // The membership in the family on screen. `maybeSingle()` here would error
   // for a login that belongs to two, which would read as "not a member" and
-  // close the Payment Log to somebody who is one.
-  const [{ member }, eventResult] = await Promise.all([
+  // close the Payment Log to somebody who is one. It also answers who is signed
+  // in, so there is no separate `getUser` round trip before it; the event read
+  // beside it is RLS-scoped and discarded unless both checks pass.
+  const [{ user, member }, eventResult] = await Promise.all([
     getCurrentMember(),
     session.from("events").select("id,name,year,area_id").eq("id", validEventId.value).maybeSingle(),
   ]);
+  if (!user) throw new PaymentLogServerError(401, "You must sign in to view the Payment Log.");
   if (!member) throw new PaymentLogServerError(403, "Your active family membership could not be verified.");
   // And the event is reached through that family or not at all: a login in two
   // must not open one family's Payment Log while looking at the other.

@@ -1,5 +1,7 @@
 import { cookies } from "next/headers";
+import { cache } from "react";
 import { AREA_COOKIE, areaFromRow, needsFirstArea, resolveActiveArea, type Area } from "@/lib/areas";
+import { getAuthUser } from "./current-member";
 import { createClient } from "./server";
 
 export type AreaContext = {
@@ -21,10 +23,13 @@ export type AreaContext = {
  *
  * A SIGNED-OUT CALLER GETS AN EMPTY CONTEXT, not an error. Callers render the
  * signed-out experience from that rather than from a thrown exception.
+ *
+ * Once per request, sharing the request's one `getUser`. `getAuthUser` in
+ * `current-member.ts` explains why `cache()` cannot carry this across requests.
  */
-export async function loadAreaContext(): Promise<AreaContext> {
+export const loadAreaContext = cache(async (): Promise<AreaContext> => {
   const db = await createClient();
-  const { data: { user } } = await db.auth.getUser();
+  const user = await getAuthUser();
   if (!user) return { areas: [], active: null, needsSetup: false };
 
   const { data, error } = await db.from("areas").select("id,name,archived_at");
@@ -39,7 +44,7 @@ export async function loadAreaContext(): Promise<AreaContext> {
     active: resolveActiveArea(areas, remembered),
     needsSetup: needsFirstArea(areas),
   };
-}
+});
 
 /**
  * The Area the browser last chose, straight from the cookie.

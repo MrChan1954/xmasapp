@@ -1368,7 +1368,7 @@ describe("signing in cannot sign you out again", () => {
       "an approved account with no family must stay signed in");
     // And the status gate is what decides who leaves, before any family read.
     const gate = provider.indexOf("appEntryDestinationFor(status.state)");
-    const membershipRead = provider.indexOf("await getCurrentMemberClient()");
+    const membershipRead = provider.indexOf("await sharedMember()");
     assert.ok(gate > 0 && membershipRead > gate,
       "the global status is asked BEFORE the first family read, not after");
   });

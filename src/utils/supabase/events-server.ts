@@ -181,13 +181,12 @@ export async function getEvent(eventId: string): Promise<EventSummary | null> {
  * exists but is not yours" is itself a disclosure.
  */
 export async function requireEvent(eventId: string): Promise<EventSummary> {
-  const db = await createClient();
-  const { data: auth } = await db.auth.getUser();
-  if (!auth.user) redirect("/login");
-
   // `maybeSingle()` would ERROR for a login that belongs to two families, which
-  // turns a legitimate member into a 404 on every event route.
-  const { member } = await getCurrentMember();
+  // turns a legitimate member into a 404 on every event route. This one
+  // per-request answer also says who is signed in, and `getEvent` below and the
+  // page itself reuse it rather than asking again.
+  const { user, member } = await getCurrentMember();
+  if (!user) redirect("/login");
   if (!member) notFound();
 
   const event = await getEvent(eventId);

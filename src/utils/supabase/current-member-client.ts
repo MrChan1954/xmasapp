@@ -46,15 +46,19 @@ export function rememberedAreaId(): string | null {
   return found ? decodeURIComponent(found.slice(AREA_COOKIE.length + 1)) : null;
 }
 
-export async function getCurrentMemberClient(): Promise<ClientMember | null> {
+/**
+ * `knownUser` lets a caller that has already asked who is signed in skip a
+ * second `getUser` round trip (`sharedMember` does). Omitted, it asks itself.
+ */
+export async function getCurrentMemberClient(knownUser?: { id: string } | null): Promise<ClientMember | null> {
   const db = createClient();
-  const { data: auth } = await db.auth.getUser();
-  if (!auth.user) return null;
+  const user = knownUser === undefined ? (await db.auth.getUser()).data.user : knownUser;
+  if (!user) return null;
 
   const { data } = await db
     .from("app_members")
     .select("id,person_id,contributor_id,role,active,area_id")
-    .eq("user_id", auth.user.id)
+    .eq("user_id", user.id)
     .eq("active", true);
 
   const rows = (data ?? []) as ClientMember[];

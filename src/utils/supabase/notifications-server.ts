@@ -109,15 +109,15 @@ const createPushSender: CreatePushSender = () => {
 /** The signed-in member, or a refusal. Every entry point starts here. */
 export async function requireNotificationMember() {
   const session = await createSessionClient();
-  const auth = await session.auth.getUser();
-  if (auth.error || !auth.data.user) {
-    throw new NotificationError(401, "You must sign in to manage notifications.");
-  }
 
   // The membership in the family on screen. A `maybeSingle()` here would error
   // for a login that belongs to two, and their notification settings would
-  // simply stop working -- in both families.
-  const { member } = await getCurrentMember();
+  // simply stop working -- in both families. It also answers who is signed in,
+  // so there is no separate `getUser` round trip before it.
+  const { user, member } = await getCurrentMember();
+  if (!user) {
+    throw new NotificationError(401, "You must sign in to manage notifications.");
+  }
   if (!member) {
     throw new NotificationError(403, "Your active family membership could not be verified.");
   }

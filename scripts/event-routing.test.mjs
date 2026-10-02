@@ -187,7 +187,9 @@ test("5. an invalid, unknown or unauthorized event id fails safely", () => {
   // And the event itself is reached through the family on screen or not at all.
   assert.match(server, /\.eq\("area_id", areaId\)/);
   assert.match(server, /const event = await getEvent\(eventId\);\s*\n\s*if \(!event\) notFound\(\);/);
-  assert.match(server, /if \(!auth\.user\) redirect\("\/login"\);/);
+  // Signed out is the sign-in screen. The user comes from the same per-request
+  // `getCurrentMember` answer as the membership, not a second `getUser`.
+  assert.match(server, /const \{ user, member \} = await getCurrentMember\(\);\s*\n\s*if \(!user\) redirect\("\/login"\);\s*\n\s*if \(!member\) notFound\(\);/);
   // Reading an event is behind the same RLS as everything else; this module
   // never uses a service-role client to look one up.
   assert.doesNotMatch(server, /SUPABASE_SECRET_KEY|createAdminSupabaseClient|service_role/);
@@ -490,7 +492,7 @@ test("the URL is the only source of the current event", () => {
   // Every event-scoped screen takes the id as a prop from the validated route
   // and keys its own loaders to it, so none can hold a previous event's data.
   const keyedLoaders = [
-    [["home-screen.tsx"], /\}, \[active, eventId\]\);/],
+    [["home-screen.tsx"], /\}, \[active, eventId, fetchContributorsAndOwed\]\);/],
     [["people", "people-screen.tsx"], /\}, \[eventId\]\);/],
     [["add-purchase", "purchase-form.tsx"], /\}, \[editId, eventId, ideaId, queryError, requestedRecipientId\]\);/],
     [["owed", "owed-screen.tsx"], /\}, \[eventId\]\);/],
@@ -500,6 +502,15 @@ test("the URL is the only source of the current event", () => {
   for (const [parts, pattern] of keyedLoaders) {
     assert.match(read(...APP, ...parts), pattern, `${parts.join("/")} must refetch when the event changes`);
   }
+
+  // Event Home starts its contributor and Owed reads before the family context
+  // lands. That early answer is keyed to the event it was asked for and used
+  // only by a load for the same event, so a changed URL never inherits it.
+  const home = read(...APP, "home-screen.tsx");
+  assert.match(home, /const fetchContributorsAndOwed = useCallback\([\s\S]*?\}, \[eventId\]\);/u);
+  assert.match(home, /prefetched\.current = \{ eventId, result: fetchContributorsAndOwed\(\) \};/u);
+  assert.match(home, /!quiet && prefetched\.current\?\.eventId === eventId \? prefetched\.current\.result : null/u,
+    "a prefetched answer is only ever used for the event it was fetched for");
 
   // And nothing anywhere persists a "current event" outside the URL.
   for (const parts of [

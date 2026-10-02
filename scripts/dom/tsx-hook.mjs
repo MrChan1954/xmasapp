@@ -22,7 +22,7 @@ const ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "..", "..");
  *
  * A stub only bites when a test imports something that reaches it, so this map
  * is not as broad as it looks: `next/link` is here because Next resolves it
- * through its bundler rather than plain Node, and the four below are here so
+ * through its bundler rather than plain Node, and the five below are here so
  * `FamilyProvider` -- the global Area/event context -- can be RENDERED against
  * a fixture instead of a network. Nothing else in the repository imports them
  * from a test.
@@ -36,6 +36,7 @@ const STUBS = new Map([
   ["@/utils/supabase/client", "scripts/dom/stubs/supabase-client.mjs"],
   ["@/utils/supabase/current-member-client", "scripts/dom/stubs/current-member-client.mjs"],
   ["@/utils/supabase/area-choice-client", "scripts/dom/stubs/area-choice-client.mjs"],
+  ["@/utils/supabase/shared-session", "scripts/dom/stubs/shared-session.mjs"],
 ]);
 
 const EXTENSIONS = [".tsx", ".ts", ".mjs", ".js", "/index.tsx", "/index.ts"];

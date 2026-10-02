@@ -12,9 +12,8 @@ import {
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { SIGNED_OUT, appEntryDestinationFor } from "@/lib/account-status.ts";
 import { ensureAreaChosen } from "@/utils/supabase/area-choice-client";
-import { loadAccountStatusClient } from "@/utils/supabase/account-status-client";
-import { getCurrentMemberClient } from "@/utils/supabase/current-member-client";
 import { createClient } from "@/utils/supabase/client";
+import { sharedAccountStatus, sharedMember, sharedUser } from "@/utils/supabase/shared-session";
 import { isBareRoute } from "./components/nav-items";
 import { eventRealtimeSources, useRealtimeRefresh } from "./components/use-realtime-refresh";
 
@@ -112,7 +111,9 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     const superseded = () => ticket !== latestLoad.current;
     if (bareRoute) { setLoading(false); return; }
     const db = createClient(); if (!quiet) setLoading(true);
-    const auth = await db.auth.getUser();
+    // Shared with the account menu, the bell and the screen below, which used
+    // to ask the same three questions for themselves. See `shared-session.ts`.
+    const user = await sharedUser();
 
     /*
      * THE GLOBAL GATE, ASKED BEFORE ANY FAMILY READ.
@@ -132,7 +133,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
      * confirmation screen, the pending screen or the refused one — and only
      * `approved` carries on into the family reads below.
      */
-    const status = auth.data.user ? await loadAccountStatusClient() : SIGNED_OUT;
+    const status = user ? await sharedAccountStatus() : SIGNED_OUT;
     if (superseded()) return;
     const destination = appEntryDestinationFor(status.state);
     if (destination) {
@@ -143,7 +144,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     // The role in the family on screen. A `maybeSingle()` here would error for a
     // login in two families and strip the admin controls from somebody who is
     // an administrator -- in both.
-    const membership = { data: await getCurrentMemberClient() };
+    const membership = { data: await sharedMember() };
     if (!membership.data) {
       /*
        * "NO MEMBERSHIP" IS TWO DIFFERENT ANSWERS, AND THIS USED TO CONFLATE

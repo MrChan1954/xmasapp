@@ -632,7 +632,9 @@ describe("/admin/accounts", () => {
     // A 404 is the right refusal and a terrible way to find a screen: without a
     // link the only route to it is knowing the path and typing it.
     const menu = read("src/app/components/account-menu.tsx");
-    assert.match(menu, /loadAccountStatusClient\(\)/u);
+    // Shared with the family context; `sharedAccountStatus` is
+    // `loadAccountStatusClient` behind a short-lived, session-keyed share.
+    assert.match(menu, /sharedAccountStatus\(\)/u);
     assert.match(menu, /\{isGlobalAdmin && \(/u);
     assert.match(menu, /href=\{GLOBAL_ADMIN_PATH\}/u);
     // And it is NOT the family admin flag beside it, which is a different question.
